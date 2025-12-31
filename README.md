@@ -1,6 +1,8 @@
 # Virtual Lab - Interactive Learning Platform
 
-A modern virtual laboratory platform for interactive experiments and simulations, built with Next.js 15, React 19, Supabase, and Clerk.
+A modern virtual laboratory platform for interactive experiments and simulations, built with **Next.js 16**, React 19, Supabase, and Clerk.
+
+> **Updated for Next.js 16** - Now with stable Turbopack, proxy.ts, and React Compiler support!
 
 ## 🚀 Quick Start
 
@@ -26,8 +28,11 @@ Before you begin, make sure you have:
 
 ## 🛠️ Technology Stack
 
-- **Frontend**: Next.js 15, React 19, TypeScript
-- **Styling**: TailwindCSS, shadcn/ui
+- **Frontend**: Next.js 16, React 19, TypeScript
+  - ⚡ Turbopack (stable) - 5-10x faster Fast Refresh
+  - 🚀 React Compiler support
+  - 💾 New caching model with PPR
+- **Styling**: TailwindCSS 3.4, shadcn/ui
 - **Database**: Supabase (PostgreSQL)
 - **Authentication**: Clerk
 - **Simulations**: React Konva, Recharts

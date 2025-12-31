@@ -1,11 +1,13 @@
 # Virtual Lab - Complete Setup Guide
 
+> **Updated for Next.js 16** (Released October 2025)
+
 ## 🚀 Quick Setup (Follow These Steps)
 
-### Step 1: Initialize Next.js 15 Project
+### Step 1: Initialize Next.js 16 Project
 
 ```bash
-# Create Next.js project with latest versions
+# Create Next.js 16 project with latest versions
 npx create-next-app@latest . --typescript --tailwind --app --use-npm
 
 # When prompted, choose:
@@ -14,9 +16,15 @@ npx create-next-app@latest . --typescript --tailwind --app --use-npm
 # ✅ Tailwind CSS: Yes
 # ✅ `src/` directory: No
 # ✅ App Router: Yes
-# ✅ Turbopack: Yes (for faster dev)
+# ✅ Turbopack: Yes (now stable and default in Next.js 16!)
 # ✅ Customize import alias: Yes (@/*)
 ```
+
+**What's New in Next.js 16:**
+- ⚡ **Turbopack is now stable** - 5-10x faster Fast Refresh
+- 🔄 **proxy.ts replaces middleware.ts** - Clearer network boundaries
+- 🚀 **React Compiler support** - Now stable
+- 💾 **New caching model** - Cache Components with PPR
 
 ### Step 2: Install shadcn/ui
 
@@ -393,10 +401,11 @@ INSERT INTO categories (name, slug, description) VALUES
 
 Now I'll create only the essential configuration files manually:
 
-### Create middleware.ts
+### Create proxy.ts (New in Next.js 16!)
 
 ```bash
-cat > middleware.ts << 'EOF'
+# Note: Next.js 16 uses proxy.ts instead of middleware.ts
+cat > proxy.ts << 'EOF'
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
 const isPublicRoute = createRouteMatcher([
@@ -407,11 +416,16 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks(.*)',
 ])
 
-export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    await auth.protect()
-  }
-})
+// Next.js 16: Export function named 'proxy' (not 'default')
+export async function proxy(auth: any, request: Request) {
+  const clerkProxy = clerkMiddleware(async (auth, request) => {
+    if (!isPublicRoute(request)) {
+      await auth.protect()
+    }
+  })
+
+  return clerkProxy(auth, request)
+}
 
 export const config = {
   matcher: [
@@ -421,6 +435,8 @@ export const config = {
 }
 EOF
 ```
+
+**Important:** Next.js 16 renamed `middleware.ts` → `proxy.ts` to clarify network boundaries. The proxy runs on **Node.js runtime** (not Edge).
 
 ### Create Supabase client utilities
 
@@ -679,7 +695,7 @@ Your `package.json` should look like this after all installations:
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -694,7 +710,7 @@ Your `package.json` should look like this after all installations:
     "clsx": "^2.1.1",
     "konva": "^9.3.16",
     "lucide-react": "latest",
-    "next": "^15.1.3",
+    "next": "^16.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.2",
@@ -710,13 +726,15 @@ Your `package.json` should look like this after all installations:
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "^15.1.3",
+    "eslint-config-next": "^16.1.1",
     "postcss": "^8",
     "tailwindcss": "^3.4",
     "typescript": "^5"
   }
 }
 ```
+
+**Note:** Turbopack is now the default bundler in Next.js 16, so you don't need `--turbopack` flag anymore!
 
 ---
 

@@ -1,13 +1,15 @@
 #!/bin/bash
 
 # Virtual Lab - Quick Setup Script
+# Updated for Next.js 16 (October 2025)
 # Run this script to set up the entire project
 
-echo "🚀 Starting Virtual Lab Setup..."
+echo "🚀 Starting Virtual Lab Setup with Next.js 16..."
 echo ""
 
-# Step 1: Create Next.js Project
-echo "📦 Step 1: Creating Next.js 15 project..."
+# Step 1: Create Next.js 16 Project
+echo "📦 Step 1: Creating Next.js 16 project..."
+echo "   ⚡ Turbopack is now stable and default!"
 npx create-next-app@latest . --typescript --tailwind --app --use-npm
 
 # Step 2: Install shadcn/ui
@@ -68,10 +70,10 @@ CLERK_WEBHOOK_SECRET=your_webhook_secret_here
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 EOF
 
-# Step 6: Create middleware
+# Step 6: Create proxy.ts (Next.js 16)
 echo ""
-echo "🔐 Step 6: Creating middleware..."
-cat > middleware.ts << 'EOF'
+echo "🔐 Step 6: Creating proxy.ts (Next.js 16 network boundary)..."
+cat > proxy.ts << 'EOF'
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
 const isPublicRoute = createRouteMatcher([
@@ -82,11 +84,16 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks(.*)',
 ])
 
-export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    await auth.protect()
-  }
-})
+// Next.js 16: Export function named 'proxy' (not 'default')
+export async function proxy(auth: any, request: Request) {
+  const clerkProxy = clerkMiddleware(async (auth, request) => {
+    if (!isPublicRoute(request)) {
+      await auth.protect()
+    }
+  })
+
+  return clerkProxy(auth, request)
+}
 
 export const config = {
   matcher: [
