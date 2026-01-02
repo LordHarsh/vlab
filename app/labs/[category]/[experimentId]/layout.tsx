@@ -1,7 +1,9 @@
 import Link from 'next/link'
+import { notFound } from 'next/navigation'
 import { ExperimentNav } from '@/components/experiment/experiment-nav'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 export default async function ExperimentLayout({
   children,
@@ -11,6 +13,18 @@ export default async function ExperimentLayout({
   params: Promise<{ category: string; experimentId: string }>
 }) {
   const { category, experimentId } = await params
+  const supabase = await createServerSupabaseClient()
+
+  // Fetch experiment details
+  const { data: experiment, error } = await supabase
+    .from('experiments')
+    .select('id, title, slug, categories(slug)')
+    .eq('slug', experimentId)
+    .single()
+
+  if (error || !experiment) {
+    notFound()
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -25,7 +39,7 @@ export default async function ExperimentLayout({
               </Link>
             </Button>
             <div className="flex-1">
-              <h1 className="text-xl font-semibold">Raspberry Pi Introduction</h1>
+              <h1 className="text-xl font-semibold">{experiment.title}</h1>
             </div>
           </div>
         </div>

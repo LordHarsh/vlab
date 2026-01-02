@@ -2,6 +2,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { notFound } from 'next/navigation'
 
 export default async function AimPage({
   params,
@@ -9,9 +11,27 @@ export default async function AimPage({
   params: Promise<{ category: string; experimentId: string }>
 }) {
   const { category, experimentId } = await params
+  const supabase = await createServerSupabaseClient()
+
+  // Fetch experiment with aim data
+  const { data: experiment, error } = await supabase
+    .from('experiments')
+    .select('id, title, aim')
+    .eq('slug', experimentId)
+    .eq('published', true)
+    .single()
+
+  if (error || !experiment || !experiment.aim) {
+    notFound()
+  }
+
+  const aimData = experiment.aim as {
+    objectives?: string[]
+    outcomes?: string[]
+  }
 
   return (
-    <div className="container max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto">
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2">Aim</h1>
         <p className="text-muted-foreground">Understand the objective of this experiment</p>
@@ -20,28 +40,35 @@ export default async function AimPage({
       <Card>
         <CardContent className="pt-6">
           <div className="prose prose-slate max-w-none">
-            <h3 className="text-xl font-semibold mb-4">Objective</h3>
-            <p className="text-base leading-relaxed mb-4">
-              The aim of this experiment is to gain an understanding of the <strong>Raspberry Pi</strong>,
-              including its features, capabilities, and applications in various real-world scenarios.
-            </p>
+            {aimData.objectives && aimData.objectives.length > 0 && (
+              <>
+                <h3 className="text-xl font-semibold mb-4">Learning Objectives</h3>
+                <p className="text-base leading-relaxed mb-4">
+                  By the end of this experiment, you will be able to:
+                </p>
+                <ul className="space-y-2 text-base mb-6">
+                  {aimData.objectives.map((objective, index) => (
+                    <li key={index}>{objective}</li>
+                  ))}
+                </ul>
+              </>
+            )}
 
-            <p className="text-base leading-relaxed mb-4">
-              By the end of this experiment, you will be able to:
-            </p>
+            {aimData.outcomes && aimData.outcomes.length > 0 && (
+              <>
+                <h3 className="text-xl font-semibold mb-4">Expected Outcomes</h3>
+                <ul className="space-y-2 text-base">
+                  {aimData.outcomes.map((outcome, index) => (
+                    <li key={index}>{outcome}</li>
+                  ))}
+                </ul>
+              </>
+            )}
 
-            <ul className="space-y-2 text-base">
-              <li>Identify the major components and hardware features of the Raspberry Pi</li>
-              <li>Understand the different models and their specifications</li>
-              <li>Recognize common use cases and applications of Raspberry Pi</li>
-              <li>Explain the basic architecture and connectivity options</li>
-              <li>Describe how Raspberry Pi fits into IoT and embedded systems</li>
-            </ul>
-
-            <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-900">
-                <strong>Note:</strong> This experiment provides a foundation for working with Raspberry Pi.
-                Future experiments will build upon this knowledge with hands-on programming and hardware integration.
+            <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg dark:bg-blue-950/20 dark:border-blue-900">
+              <p className="text-sm text-blue-900 dark:text-blue-100">
+                <strong>Note:</strong> This experiment provides hands-on learning experience.
+                Complete all sections to gain comprehensive understanding of the topic.
               </p>
             </div>
           </div>

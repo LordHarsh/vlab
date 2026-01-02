@@ -4,92 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, FlaskConical, Clock } from 'lucide-react'
-
-// Mock data - will be replaced with Supabase queries
-const categories = {
-  iot: {
-    name: 'Internet of Things',
-    description: 'Learn about IoT devices, sensors, and connectivity',
-    icon: '🌐'
-  },
-  electronics: {
-    name: 'Electronics',
-    description: 'Explore circuits, components, and electronic systems',
-    icon: '⚡'
-  },
-  'computer-science': {
-    name: 'Computer Science',
-    description: 'Study algorithms, data structures, and programming',
-    icon: '💻'
-  }
-}
-
-const experiments = [
-  {
-    id: 'raspberry-pi-intro',
-    category: 'iot',
-    title: 'Introduction to Raspberry Pi',
-    description: 'Learn the basics of Raspberry Pi, its components, and how to set it up for your first project.',
-    difficulty: 'beginner' as const,
-    duration: 45
-  },
-  {
-    id: 'arduino-basics',
-    category: 'iot',
-    title: 'Arduino Programming Basics',
-    description: 'Get started with Arduino microcontrollers and learn to program digital circuits.',
-    difficulty: 'beginner' as const,
-    duration: 60
-  },
-  {
-    id: 'mqtt-protocol',
-    category: 'iot',
-    title: 'MQTT Protocol for IoT',
-    description: 'Learn about MQTT, a lightweight messaging protocol perfect for IoT applications.',
-    difficulty: 'intermediate' as const,
-    duration: 90
-  },
-  {
-    id: 'led-circuit',
-    category: 'electronics',
-    title: 'LED Circuit Design',
-    description: 'Learn to design and build basic LED circuits with resistors.',
-    difficulty: 'beginner' as const,
-    duration: 30
-  },
-  {
-    id: 'transistor-basics',
-    category: 'electronics',
-    title: 'Transistor Fundamentals',
-    description: 'Explore how transistors work as switches and amplifiers.',
-    difficulty: 'intermediate' as const,
-    duration: 75
-  },
-  {
-    id: 'binary-search',
-    category: 'computer-science',
-    title: 'Binary Search Algorithm',
-    description: 'Master the binary search algorithm and understand its efficiency.',
-    difficulty: 'beginner' as const,
-    duration: 40
-  },
-  {
-    id: 'sorting-algorithms',
-    category: 'computer-science',
-    title: 'Sorting Algorithms Comparison',
-    description: 'Compare different sorting algorithms and their performance characteristics.',
-    difficulty: 'intermediate' as const,
-    duration: 90
-  },
-  {
-    id: 'data-structures',
-    category: 'computer-science',
-    title: 'Essential Data Structures',
-    description: 'Learn about stacks, queues, linked lists, and trees.',
-    difficulty: 'intermediate' as const,
-    duration: 120
-  }
-]
+import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 const difficultyColors = {
   beginner: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100',
@@ -102,15 +17,32 @@ export default async function CategoryPage({
 }: {
   params: Promise<{ category: string }>
 }) {
-  const { category } = await params
+  const { category: categorySlug } = await params
+  const supabase = await createServerSupabaseClient()
 
-  // Validate category
-  if (!(category in categories)) {
+  // Fetch category by slug
+  const { data: category, error: categoryError } = await supabase
+    .from('categories')
+    .select('*')
+    .eq('slug', categorySlug)
+    .single()
+
+  // If category not found, show 404
+  if (categoryError || !category) {
     notFound()
   }
 
-  const categoryData = categories[category as keyof typeof categories]
-  const categoryExperiments = experiments.filter((exp) => exp.category === category)
+  // Fetch experiments for this category
+  const { data: experiments, error: experimentsError } = await supabase
+    .from('experiments')
+    .select('*')
+    .eq('category_id', category.id)
+    .eq('published', true)
+    .order('created_at', { ascending: false })
+
+  if (experimentsError) {
+    console.error('Error fetching experiments:', experimentsError)
+  }
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
@@ -125,53 +57,52 @@ export default async function CategoryPage({
       {/* Category Header */}
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-2">
-          <span className="text-4xl">{categoryData.icon}</span>
-          <h1 className="text-3xl font-bold">{categoryData.name}</h1>
+          <span className="text-4xl">{category.icon || '📚'}</span>
+          <h1 className="text-3xl font-bold">{category.name}</h1>
         </div>
-        <p className="text-muted-foreground">{categoryData.description}</p>
+        <p className="text-muted-foreground">{category.description}</p>
         <p className="text-sm text-muted-foreground mt-2">
-          {categoryExperiments.length}{' '}
-          {categoryExperiments.length === 1 ? 'experiment' : 'experiments'} available
+          {experiments?.length || 0}{' '}
+          {experiments?.length === 1 ? 'experiment' : 'experiments'} available
         </p>
       </div>
 
       {/* Experiments Grid */}
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {categoryExperiments.map((experiment) => (
-          <Link key={experiment.id} href={`/labs/${category}/${experiment.id}`}>
-            <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
-              <CardHeader>
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <CardTitle className="text-base leading-tight">
-                    {experiment.title}
-                  </CardTitle>
-                  <FlaskConical className="h-5 w-5 text-muted-foreground shrink-0" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    variant="secondary"
-                    className={difficultyColors[experiment.difficulty]}
-                  >
-                    {experiment.difficulty}
-                  </Badge>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    <span>{experiment.duration} min</span>
+      {experiments && experiments.length > 0 ? (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {experiments.map((experiment) => (
+            <Link key={experiment.id} href={`/labs/${categorySlug}/${experiment.slug}`}>
+              <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <CardTitle className="text-base leading-tight">
+                      {experiment.title}
+                    </CardTitle>
+                    <FlaskConical className="h-5 w-5 text-muted-foreground shrink-0" />
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <CardDescription className="line-clamp-3">
-                  {experiment.description}
-                </CardDescription>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
-
-      {/* Empty State */}
-      {categoryExperiments.length === 0 && (
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant="secondary"
+                      className={difficultyColors[experiment.difficulty as keyof typeof difficultyColors]}
+                    >
+                      {experiment.difficulty}
+                    </Badge>
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      <span>{experiment.estimated_duration} min</span>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <CardDescription className="line-clamp-3">
+                    {experiment.description}
+                  </CardDescription>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      ) : (
         <Card className="text-center py-12">
           <CardContent>
             <FlaskConical className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
