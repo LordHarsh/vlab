@@ -372,7 +372,7 @@ create policy "Instructors can create quiz questions"
 
 create table user_progress (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null default (select auth.jwt()->>'sub'),
+  user_id text not null,
   experiment_id uuid references experiments(id) on delete cascade,
   current_section text,
   completed_sections text[] default '{}',
@@ -426,7 +426,7 @@ create index idx_user_progress_experiment_id on user_progress(experiment_id);
 
 create table quiz_submissions (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null default (select auth.jwt()->>'sub'),
+  user_id text not null,
   quiz_id uuid references quizzes(id) on delete cascade,
   answers jsonb not null,
   score int not null,
@@ -474,7 +474,7 @@ create index idx_quiz_submissions_quiz_id on quiz_submissions(quiz_id);
 
 create table feedback (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null default (select auth.jwt()->>'sub'),
+  user_id text not null,
   experiment_id uuid references experiments(id) on delete cascade,
   ratings jsonb not null,
   comments text,
