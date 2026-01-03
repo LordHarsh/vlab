@@ -24,12 +24,14 @@ export default async function ProcedurePage({
   const { category, experimentId } = await params
   const supabase = await createServerSupabaseClient()
 
-  const { data: experiment } = await supabase
+  const result = await supabase
     .from('experiments')
     .select('id, title, procedure, categories(slug)')
     .eq('slug', experimentId)
     .eq('published', true)
     .single()
+
+  const experiment = result.data as { id: string; title: string; procedure: any } | null
 
   if (!experiment || !experiment.procedure) {
     notFound()

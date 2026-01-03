@@ -10,12 +10,14 @@ export default async function SimulationPage({
   const { category, experimentId } = await params
   const supabase = await createServerSupabaseClient()
 
-  const { data: experiment } = await supabase
+  const result = await supabase
     .from('experiments')
     .select('id, title, simulation, categories(slug)')
     .eq('slug', experimentId)
     .eq('published', true)
     .single()
+
+  const experiment = result.data as { id: string; title: string; simulation: any } | null
 
   if (!experiment || !experiment.simulation) {
     notFound()

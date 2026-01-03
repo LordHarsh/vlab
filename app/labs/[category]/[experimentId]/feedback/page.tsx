@@ -11,12 +11,14 @@ export default async function FeedbackPage({
   const supabase = await createServerSupabaseClient()
 
   // Fetch experiment to get its ID
-  const { data: experiment } = await supabase
+  const result = await supabase
     .from('experiments')
     .select('id, slug')
     .eq('slug', experimentId)
     .eq('published', true)
     .single()
+
+  const experiment = result.data as { id: string; slug: string } | null
 
   if (!experiment) {
     notFound()

@@ -1,5 +1,9 @@
-import { SiteLayout } from '@/components/layout/site-layout'
+import Link from 'next/link'
 import { ExperimentNav } from '@/components/experiment/experiment-nav'
+import { Button } from '@/components/ui/button'
+import { ArrowLeft } from 'lucide-react'
+import { notFound } from 'next/navigation'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
 
 export default async function ExperimentLayout({
   children,
@@ -9,23 +13,50 @@ export default async function ExperimentLayout({
   params: Promise<{ category: string; experimentId: string }>
 }) {
   const { category, experimentId } = await params
+  const supabase = await createServerSupabaseClient()
+
+  const result = await supabase
+    .from('experiments')
+    .select('id, title, slug, categories(slug)')
+    .eq('slug', experimentId)
+    .single()
+
+  const experiment = result.data as { id: string; title: string; slug: string } | null
+
+  if (!experiment) {
+    notFound()
+  }
 
   return (
-    <SiteLayout>
-      <div className="flex h-full">
-        {/* Left Navigation */}
-        <aside className="w-64 border-r bg-muted/30 p-4 hidden lg:block">
-          <div className="sticky top-4">
-            <h2 className="text-lg font-semibold mb-4">Raspberry Pi Introduction</h2>
-            <ExperimentNav category={category} experimentId={experimentId} />
+    <div className="min-h-screen bg-background">
+      {/* Top Navigation */}
+      <header className="border-b bg-background sticky top-0 z-10">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/labs">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                All Labs
+              </Link>
+            </Button>
+            <div className="flex-1">
+              <h1 className="text-xl font-semibold">{experiment.title}</h1>
+            </div>
           </div>
+        </div>
+      </header>
+
+      <div className="flex">
+        {/* Left Navigation */}
+        <aside className="w-64 border-r bg-muted/30 p-4 hidden lg:block sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto">
+          <ExperimentNav category={category} experimentId={experimentId} />
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 p-6 lg:p-8">
           {children}
         </main>
       </div>
-    </SiteLayout>
+    </div>
   )
 }

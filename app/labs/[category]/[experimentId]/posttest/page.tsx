@@ -11,35 +11,41 @@ export default async function PosttestPage({
   const supabase = await createServerSupabaseClient()
 
   // Fetch experiment to get its ID
-  const { data: experiment } = await supabase
+  const expResult = await supabase
     .from('experiments')
     .select('id, slug')
     .eq('slug', experimentId)
     .eq('published', true)
     .single()
 
+  const experiment = expResult.data as { id: string; slug: string } | null
+
   if (!experiment) {
     notFound()
   }
 
   // Fetch posttest quiz for this experiment
-  const { data: quiz } = await supabase
+  const quizResult = await supabase
     .from('quizzes')
     .select('id, passing_percentage')
     .eq('experiment_id', experiment.id)
     .eq('type', 'posttest')
     .single()
 
+  const quiz = quizResult.data as { id: string; passing_percentage: number } | null
+
   if (!quiz) {
     notFound()
   }
 
   // Fetch quiz questions
-  const { data: questions } = await supabase
+  const questionsResult = await supabase
     .from('quiz_questions')
     .select('*')
     .eq('quiz_id', quiz.id)
     .order('order_number', { ascending: true })
+
+  const questions = questionsResult.data as any[] | null
 
   if (!questions || questions.length === 0) {
     notFound()

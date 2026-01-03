@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { auth } from '@clerk/nextjs/server'
+import type { Database } from '@/types/database'
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,10 +48,10 @@ export async function POST(request: NextRequest) {
       .from('feedback')
       .insert({
         user_id: userId,
-        experiment_id,
+        experiment_id: experiment_id,
         rating: averageRating,
         comments: comments || null,
-      })
+      } as any)
       .select()
       .single()
 
