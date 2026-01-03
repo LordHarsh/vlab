@@ -122,12 +122,13 @@ create table experiments (
   title text not null,
   description text not null,
   difficulty text not null check (difficulty in ('beginner', 'intermediate', 'advanced')),
-  estimated_duration int not null,
+  estimated_duration int not null check (estimated_duration > 0),
 
   -- Content sections
   aim jsonb,
   theory jsonb,
   procedure jsonb,
+  simulation jsonb,
 
   -- Metadata
   tags text[],
@@ -138,7 +139,7 @@ create table experiments (
   -- Timestamps
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now(),
-  created_by text not null
+  created_by text not null references profiles(clerk_user_id) on delete restrict
 );
 
 -- Enable RLS
@@ -275,9 +276,9 @@ create policy "Instructors can update simulations"
 create table quizzes (
   id uuid primary key default gen_random_uuid(),
   experiment_id uuid references experiments(id) on delete cascade,
-  quiz_type text not null check (quiz_type in ('pretest', 'posttest')),
+  type text not null check (type in ('pretest', 'posttest')),
   title text not null,
-  passing_percentage int default 70,
+  passing_percentage int default 70 check (passing_percentage >= 0 and passing_percentage <= 100),
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
@@ -322,11 +323,14 @@ create table quiz_questions (
   id uuid primary key default gen_random_uuid(),
   quiz_id uuid references quizzes(id) on delete cascade,
   question_text text not null,
+  question_type text default 'multiple_choice',
   options jsonb not null,
-  correct_answer int not null,
+  correct_answer text not null,
   explanation text,
-  display_order int not null default 0,
-  created_at timestamp with time zone default now()
+  points int default 1,
+  order_number int not null default 0,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
 );
 
 -- Enable RLS
@@ -372,7 +376,7 @@ create policy "Instructors can create quiz questions"
 
 create table user_progress (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null default (select auth.jwt()->>'sub'),
+  user_id text not null references profiles(clerk_user_id) on delete cascade,
   experiment_id uuid references experiments(id) on delete cascade,
   current_section text,
   completed_sections text[] default '{}',
@@ -403,6 +407,11 @@ create policy "Users can update own progress"
   to authenticated
   using (user_id = (select auth.jwt()->>'sub'));
 
+create policy "Users can delete own progress"
+  on user_progress for delete
+  to authenticated
+  using (user_id = (select auth.jwt()->>'sub'));
+
 -- Admins can view all progress
 create policy "Admins can view all progress"
   on user_progress for select
@@ -426,14 +435,11 @@ create index idx_user_progress_experiment_id on user_progress(experiment_id);
 
 create table quiz_submissions (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null default (select auth.jwt()->>'sub'),
+  user_id text not null references profiles(clerk_user_id) on delete cascade,
   quiz_id uuid references quizzes(id) on delete cascade,
   answers jsonb not null,
-  score int not null,
-  total_questions int not null,
-  percentage int not null,
-  passed boolean not null,
-  started_at timestamp with time zone,
+  score int not null check (score >= 0),
+  percentage int not null check (percentage >= 0 and percentage <= 100),
   submitted_at timestamp with time zone default now()
 );
 
@@ -450,6 +456,11 @@ create policy "Users can insert own quiz submissions"
   on quiz_submissions for insert
   to authenticated
   with check (user_id = (select auth.jwt()->>'sub'));
+
+create policy "Users can delete own quiz submissions"
+  on quiz_submissions for delete
+  to authenticated
+  using (user_id = (select auth.jwt()->>'sub'));
 
 -- Admins can view all submissions
 create policy "Admins can view all quiz submissions"
@@ -474,12 +485,11 @@ create index idx_quiz_submissions_quiz_id on quiz_submissions(quiz_id);
 
 create table feedback (
   id uuid primary key default gen_random_uuid(),
-  user_id text not null default (select auth.jwt()->>'sub'),
+  user_id text not null references profiles(clerk_user_id) on delete cascade,
   experiment_id uuid references experiments(id) on delete cascade,
-  ratings jsonb not null,
+  rating int not null check (rating >= 1 and rating <= 5),
   comments text,
-  is_anonymous boolean default false,
-  submitted_at timestamp with time zone default now()
+  created_at timestamp with time zone default now()
 );
 
 -- Enable RLS
@@ -496,6 +506,11 @@ create policy "Users can insert own feedback"
   to authenticated
   with check (user_id = (select auth.jwt()->>'sub'));
 
+create policy "Users can delete own feedback"
+  on feedback for delete
+  to authenticated
+  using (user_id = (select auth.jwt()->>'sub'));
+
 -- Admins can view all feedback
 create policy "Admins can view all feedback"
   on feedback for select
@@ -508,8 +523,22 @@ create policy "Admins can view all feedback"
     )
   );
 
--- Index
+-- Indexes
 create index idx_feedback_experiment_id on feedback(experiment_id);
+create index idx_feedback_user_id on feedback(user_id);
+create index idx_feedback_created_at on feedback(created_at);
+
+-- Additional performance indexes
+create index idx_experiments_featured on experiments(featured) where featured = true;
+create index idx_experiments_difficulty on experiments(difficulty);
+create index idx_user_progress_completed_at on user_progress(completed_at) where completed_at is not null;
+create index idx_quiz_submissions_submitted_at on quiz_submissions(submitted_at);
+create index idx_quiz_submissions_user_quiz on quiz_submissions(user_id, quiz_id);
+create index idx_quiz_questions_quiz_id on quiz_questions(quiz_id);
+create index idx_quiz_questions_order on quiz_questions(quiz_id, order_number);
+create index idx_simulations_experiment_id on simulations(experiment_id);
+create index idx_quizzes_experiment_id on quizzes(experiment_id);
+create index idx_quizzes_type on quizzes(experiment_id, type);
 
 -- ============================================================================
 -- FUNCTIONS & TRIGGERS
