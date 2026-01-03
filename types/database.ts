@@ -51,6 +51,7 @@ export interface Database {
           slug: string
           description: string | null
           icon: string | null
+          color: string | null
           display_order: number
           created_at: string
           updated_at: string
@@ -61,6 +62,7 @@ export interface Database {
           slug: string
           description?: string | null
           icon?: string | null
+          color?: string | null
           display_order?: number
           created_at?: string
           updated_at?: string
@@ -71,6 +73,7 @@ export interface Database {
           slug?: string
           description?: string | null
           icon?: string | null
+          color?: string | null
           display_order?: number
           created_at?: string
           updated_at?: string
@@ -82,13 +85,15 @@ export interface Database {
           category_id: string
           title: string
           slug: string
-          description: string | null
+          description: string
           difficulty: 'beginner' | 'intermediate' | 'advanced'
           estimated_duration: number
           aim: Json | null
           theory: Json | null
           procedure: Json | null
           simulation: Json | null
+          tags: string[] | null
+          prerequisites: string[] | null
           published: boolean
           featured: boolean
           created_by: string
@@ -100,13 +105,15 @@ export interface Database {
           category_id: string
           title: string
           slug: string
-          description?: string | null
+          description: string
           difficulty: 'beginner' | 'intermediate' | 'advanced'
           estimated_duration: number
           aim?: Json | null
           theory?: Json | null
           procedure?: Json | null
           simulation?: Json | null
+          tags?: string[] | null
+          prerequisites?: string[] | null
           published?: boolean
           featured?: boolean
           created_by: string
@@ -118,13 +125,15 @@ export interface Database {
           category_id?: string
           title?: string
           slug?: string
-          description?: string | null
+          description?: string
           difficulty?: 'beginner' | 'intermediate' | 'advanced'
           estimated_duration?: number
           aim?: Json | null
           theory?: Json | null
           procedure?: Json | null
           simulation?: Json | null
+          tags?: string[] | null
+          prerequisites?: string[] | null
           published?: boolean
           featured?: boolean
           created_by?: string
@@ -138,7 +147,6 @@ export interface Database {
           experiment_id: string
           type: 'pretest' | 'posttest'
           title: string
-          description: string | null
           passing_percentage: number
           created_at: string
           updated_at: string
@@ -148,7 +156,6 @@ export interface Database {
           experiment_id: string
           type: 'pretest' | 'posttest'
           title: string
-          description?: string | null
           passing_percentage?: number
           created_at?: string
           updated_at?: string
@@ -158,7 +165,6 @@ export interface Database {
           experiment_id?: string
           type?: 'pretest' | 'posttest'
           title?: string
-          description?: string | null
           passing_percentage?: number
           created_at?: string
           updated_at?: string
@@ -210,34 +216,31 @@ export interface Database {
           id: string
           user_id: string
           experiment_id: string
-          status: 'not_started' | 'in_progress' | 'completed'
-          pretest_score: number | null
-          posttest_score: number | null
+          current_section: string | null
+          completed_sections: string[]
+          started_at: string
+          last_accessed_at: string
           completed_at: string | null
-          created_at: string
-          updated_at: string
         }
         Insert: {
           id?: string
           user_id: string
           experiment_id: string
-          status?: 'not_started' | 'in_progress' | 'completed'
-          pretest_score?: number | null
-          posttest_score?: number | null
+          current_section?: string | null
+          completed_sections?: string[]
+          started_at?: string
+          last_accessed_at?: string
           completed_at?: string | null
-          created_at?: string
-          updated_at?: string
         }
         Update: {
           id?: string
           user_id?: string
           experiment_id?: string
-          status?: 'not_started' | 'in_progress' | 'completed'
-          pretest_score?: number | null
-          posttest_score?: number | null
+          current_section?: string | null
+          completed_sections?: string[]
+          started_at?: string
+          last_accessed_at?: string
           completed_at?: string | null
-          created_at?: string
-          updated_at?: string
         }
       }
       quiz_submissions: {
@@ -295,15 +298,15 @@ export interface Database {
           created_at?: string
         }
       }
-      resources: {
+      simulations: {
         Row: {
           id: string
           experiment_id: string
           title: string
-          type: 'video' | 'pdf' | 'link' | 'image'
-          url: string
           description: string | null
-          order_number: number
+          simulation_type: string
+          config: Json
+          code_template: string | null
           created_at: string
           updated_at: string
         }
@@ -311,10 +314,10 @@ export interface Database {
           id?: string
           experiment_id: string
           title: string
-          type: 'video' | 'pdf' | 'link' | 'image'
-          url: string
           description?: string | null
-          order_number?: number
+          simulation_type: string
+          config: Json
+          code_template?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -322,10 +325,10 @@ export interface Database {
           id?: string
           experiment_id?: string
           title?: string
-          type?: 'video' | 'pdf' | 'link' | 'image'
-          url?: string
           description?: string | null
-          order_number?: number
+          simulation_type?: string
+          config?: Json
+          code_template?: string | null
           created_at?: string
           updated_at?: string
         }
