@@ -8,16 +8,12 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks(.*)',
 ])
 
-// Next.js 16: Export function named 'proxy' (not 'default')
-export async function proxy(auth: any, request: Request) {
-  const clerkProxy = clerkMiddleware(async (auth, request) => {
-    if (!isPublicRoute(request)) {
-      await auth.protect()
-    }
-  })
-
-  return clerkProxy(auth, request)
-}
+// Next.js 16: Export middleware as 'proxy'
+export const proxy = clerkMiddleware(async (auth, request) => {
+  if (!isPublicRoute(request)) {
+    await auth.protect()
+  }
+})
 
 export const config = {
   matcher: [
