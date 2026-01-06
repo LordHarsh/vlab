@@ -68,7 +68,7 @@ insert into experiments (
       "sections": [
         {
           "title": "What is Raspberry Pi?",
-          "content": "Raspberry Pi is a series of small single-board computers developed by the Raspberry Pi Foundation. It\''s designed to promote teaching of basic computer science in schools and developing countries, but has evolved into a versatile platform for hobbyists, educators, and professionals."
+          "content": "Raspberry Pi is a series of small single-board computers developed by the Raspberry Pi Foundation. It is designed to promote teaching of basic computer science in schools and developing countries, but has evolved into a versatile platform for hobbyists, educators, and professionals."
         },
         {
           "title": "Key Components",
@@ -211,17 +211,17 @@ insert into experiments (
     'Learn to design and build basic LED circuits with resistors.',
     'beginner',
     30,
-    '{
+    $${
       "objectives": [
-        "Understand Ohm\''s law and its applications",
+        "Understand Ohm's law and its applications",
         "Calculate appropriate resistor values",
         "Build a simple LED circuit"
       ]
-    }'::jsonb,
+    }$$::jsonb,
     null,
     null,
     array['led', 'circuit', 'resistor', 'beginner'],
-    array[],
+    array[]::text[],
     true,
     false,
     'seed_user_id'
