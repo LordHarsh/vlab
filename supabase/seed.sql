@@ -34,6 +34,7 @@ insert into experiments (
   aim,
   theory,
   procedure,
+  simulation,
   tags,
   prerequisites,
   published,
@@ -151,6 +152,22 @@ insert into experiments (
         }
       ]
     }'::jsonb,
+    $${
+      "gpio_pins": [17, 18, 27, 22],
+      "instructions": [
+        "Connect an LED to GPIO pin 17 through a 330Ω resistor",
+        "Connect the LED's cathode (shorter leg) to ground",
+        "Run the Python code to control the LED",
+        "Observe the LED blinking on and off"
+      ],
+      "code_example": "import RPi.GPIO as GPIO\nimport time\n\nGPIO.setmode(GPIO.BCM)\nGPIO.setup(17, GPIO.OUT)\n\ntry:\n    while True:\n        GPIO.output(17, GPIO.HIGH)\n        time.sleep(1)\n        GPIO.output(17, GPIO.LOW)\n        time.sleep(1)\nexcept KeyboardInterrupt:\n    GPIO.cleanup()",
+      "learning_points": [
+        "GPIO pin numbering (BCM vs BOARD)",
+        "Setting up output pins",
+        "Controlling LED state with HIGH/LOW",
+        "Proper cleanup of GPIO resources"
+      ]
+    }$$::jsonb,
     array['raspberry-pi', 'iot', 'gpio', 'python', 'beginner'],
     array['Basic computer knowledge'],
     true,
@@ -174,6 +191,7 @@ insert into experiments (
     }'::jsonb,
     null,
     null,
+    null,
     array['arduino', 'microcontroller', 'electronics', 'beginner'],
     array['Basic programming knowledge'],
     true,
@@ -194,6 +212,7 @@ insert into experiments (
         "Implement MQTT clients for IoT devices"
       ]
     }'::jsonb,
+    null,
     null,
     null,
     array['mqtt', 'iot', 'messaging', 'protocols'],
@@ -220,6 +239,7 @@ insert into experiments (
     }$$::jsonb,
     null,
     null,
+    null,
     array['led', 'circuit', 'resistor', 'beginner'],
     array[]::text[],
     true,
@@ -240,6 +260,7 @@ insert into experiments (
         "Build basic amplifier circuits"
       ]
     }'::jsonb,
+    null,
     null,
     null,
     array['transistor', 'amplifier', 'electronics'],
@@ -266,6 +287,7 @@ insert into experiments (
     }'::jsonb,
     null,
     null,
+    null,
     array['algorithms', 'search', 'data-structures'],
     array['Basic programming'],
     true,
@@ -288,6 +310,7 @@ insert into experiments (
     }'::jsonb,
     null,
     null,
+    null,
     array['algorithms', 'sorting', 'complexity'],
     array['Programming fundamentals', 'Big O notation'],
     true,
@@ -308,6 +331,7 @@ insert into experiments (
         "Analyze operations complexity"
       ]
     }'::jsonb,
+    null,
     null,
     null,
     array['data-structures', 'algorithms', 'computer-science'],
