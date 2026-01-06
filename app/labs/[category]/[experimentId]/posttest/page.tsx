@@ -29,7 +29,7 @@ export default async function PosttestPage({
     .from('quizzes')
     .select('id, passing_percentage')
     .eq('experiment_id', experiment.id)
-    .eq('type', 'posttest')
+    .eq('quiz_type', 'posttest')
     .single()
 
   const quiz = quizResult.data as { id: string; passing_percentage: number } | null
@@ -43,7 +43,7 @@ export default async function PosttestPage({
     .from('quiz_questions')
     .select('*')
     .eq('quiz_id', quiz.id)
-    .order('order_number', { ascending: true })
+    .order('display_order', { ascending: true })
 
   const questions = questionsResult.data as any[] | null
 
