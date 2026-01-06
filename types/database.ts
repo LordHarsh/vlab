@@ -145,7 +145,7 @@ export interface Database {
         Row: {
           id: string
           experiment_id: string
-          type: 'pretest' | 'posttest'
+          quiz_type: 'pretest' | 'posttest'
           title: string
           passing_percentage: number
           created_at: string
@@ -154,7 +154,7 @@ export interface Database {
         Insert: {
           id?: string
           experiment_id: string
-          type: 'pretest' | 'posttest'
+          quiz_type: 'pretest' | 'posttest'
           title: string
           passing_percentage?: number
           created_at?: string
@@ -163,7 +163,7 @@ export interface Database {
         Update: {
           id?: string
           experiment_id?: string
-          type?: 'pretest' | 'posttest'
+          quiz_type?: 'pretest' | 'posttest'
           title?: string
           passing_percentage?: number
           created_at?: string
@@ -175,40 +175,31 @@ export interface Database {
           id: string
           quiz_id: string
           question_text: string
-          question_type: string
           options: Json
-          correct_answer: string
+          correct_answer: number
           explanation: string | null
-          points: number
-          order_number: number
+          display_order: number
           created_at: string
-          updated_at: string
         }
         Insert: {
           id?: string
           quiz_id: string
           question_text: string
-          question_type?: string
           options: Json
-          correct_answer: string
+          correct_answer: number
           explanation?: string | null
-          points?: number
-          order_number: number
+          display_order?: number
           created_at?: string
-          updated_at?: string
         }
         Update: {
           id?: string
           quiz_id?: string
           question_text?: string
-          question_type?: string
           options?: Json
-          correct_answer?: string
+          correct_answer?: number
           explanation?: string | null
-          points?: number
-          order_number?: number
+          display_order?: number
           created_at?: string
-          updated_at?: string
         }
       }
       user_progress: {
@@ -250,7 +241,10 @@ export interface Database {
           quiz_id: string
           answers: Json
           score: number
+          total_questions: number
           percentage: number
+          passed: boolean
+          started_at: string | null
           submitted_at: string
         }
         Insert: {
@@ -259,7 +253,10 @@ export interface Database {
           quiz_id: string
           answers: Json
           score: number
+          total_questions: number
           percentage: number
+          passed: boolean
+          started_at?: string | null
           submitted_at?: string
         }
         Update: {
@@ -268,7 +265,10 @@ export interface Database {
           quiz_id?: string
           answers?: Json
           score?: number
+          total_questions?: number
           percentage?: number
+          passed?: boolean
+          started_at?: string | null
           submitted_at?: string
         }
       }
@@ -277,25 +277,28 @@ export interface Database {
           id: string
           user_id: string
           experiment_id: string
-          rating: number
+          ratings: Json
           comments: string | null
-          created_at: string
+          is_anonymous: boolean
+          submitted_at: string
         }
         Insert: {
           id?: string
           user_id: string
           experiment_id: string
-          rating: number
+          ratings: Json
           comments?: string | null
-          created_at?: string
+          is_anonymous?: boolean
+          submitted_at?: string
         }
         Update: {
           id?: string
           user_id?: string
           experiment_id?: string
-          rating?: number
+          ratings?: Json
           comments?: string | null
-          created_at?: string
+          is_anonymous?: boolean
+          submitted_at?: string
         }
       }
       simulations: {
