@@ -2,6 +2,14 @@
 -- This file contains initial data for development and testing
 
 -- ============================================================================
+-- SEED PROFILE (required for foreign key on experiments.created_by)
+-- ============================================================================
+
+insert into profiles (clerk_user_id, email, role)
+values ('seed_user_id', 'seed@example.com', 'admin')
+on conflict (clerk_user_id) do nothing;
+
+-- ============================================================================
 -- CATEGORIES
 -- ============================================================================
 
@@ -364,7 +372,7 @@ except KeyboardInterrupt:
 -- ============================================================================
 
 -- Pretest
-insert into quizzes (experiment_id, quiz_type, title, passing_percentage)
+insert into quizzes (experiment_id, type, title, passing_percentage)
 values (
   (select id from experiments where slug = 'raspberry-pi-intro'),
   'pretest',
@@ -373,35 +381,35 @@ values (
 );
 
 -- Pretest Questions
-insert into quiz_questions (quiz_id, question_text, options, correct_answer, explanation, display_order)
+insert into quiz_questions (quiz_id, question_text, options, correct_answer, explanation, order_number)
 values
   (
-    (select id from quizzes where quiz_type = 'pretest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'pretest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'What does GPIO stand for in Raspberry Pi?',
     '["General Purpose Input Only", "General Purpose Input/Output", "Graphics Processing Input/Output", "General Processing Interface Organizer"]'::jsonb,
-    1,
+    '1',
     'GPIO stands for General Purpose Input/Output, which are pins used to interface with external hardware.',
     1
   ),
   (
-    (select id from quizzes where quiz_type = 'pretest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'pretest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'Which operating system is commonly used on Raspberry Pi?',
     '["Windows 11", "macOS", "Raspberry Pi OS (formerly Raspbian)", "Android"]'::jsonb,
-    2,
+    '2',
     'Raspberry Pi OS (formerly called Raspbian) is the official operating system, though others can be used.',
     2
   ),
   (
-    (select id from quizzes where quiz_type = 'pretest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'pretest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'What type of storage does Raspberry Pi use for its operating system?',
     '["Internal SSD", "Hard Drive", "microSD card", "USB Flash Drive"]'::jsonb,
-    2,
+    '2',
     'Raspberry Pi boots from a microSD card that contains the operating system and files.',
     3
   );
 
 -- Posttest
-insert into quizzes (experiment_id, quiz_type, title, passing_percentage)
+insert into quizzes (experiment_id, type, title, passing_percentage)
 values (
   (select id from experiments where slug = 'raspberry-pi-intro'),
   'posttest',
@@ -410,45 +418,45 @@ values (
 );
 
 -- Posttest Questions
-insert into quiz_questions (quiz_id, question_text, options, correct_answer, explanation, display_order)
+insert into quiz_questions (quiz_id, question_text, options, correct_answer, explanation, order_number)
 values
   (
-    (select id from quizzes where quiz_type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'When a GPIO pin is set to HIGH state, what voltage does it output?',
     '["5V", "3.3V", "1.8V", "12V"]'::jsonb,
-    1,
+    '1',
     'Raspberry Pi GPIO pins output 3.3V when set to HIGH state. Using 5V can damage the board.',
     1
   ),
   (
-    (select id from quizzes where quiz_type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'What is the purpose of GPIO.cleanup() in Python code?',
     '["To delete Python files", "To reset the Raspberry Pi", "To release GPIO resources and reset pin states", "To clean the SD card"]'::jsonb,
-    2,
+    '2',
     'GPIO.cleanup() releases GPIO resources and resets pins to their default state, preventing conflicts with future programs.',
     2
   ),
   (
-    (select id from quizzes where quiz_type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'Which pin numbering mode uses the Broadcom SOC channel numbers?',
     '["GPIO.BOARD", "GPIO.BCM", "GPIO.PHYSICAL", "GPIO.WPI"]'::jsonb,
-    1,
+    '1',
     'GPIO.BCM uses Broadcom SOC channel numbers (e.g., GPIO17, GPIO18), while GPIO.BOARD uses physical pin numbers.',
     3
   ),
   (
-    (select id from quizzes where quiz_type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'What happens if you connect an LED directly to a GPIO pin without a resistor?',
     '["The LED will work perfectly", "Nothing will happen", "The LED or GPIO pin could be damaged due to excessive current", "The Raspberry Pi will shut down"]'::jsonb,
-    2,
+    '2',
     'Without a current-limiting resistor, excessive current can flow through the LED and GPIO pin, potentially damaging both.',
     4
   ),
   (
-    (select id from quizzes where quiz_type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
+    (select id from quizzes where type = 'posttest' and experiment_id = (select id from experiments where slug = 'raspberry-pi-intro')),
     'Which command can you use to view the GPIO pin layout in the terminal?',
     '["ls -gpio", "gpio readall", "cat /gpio", "show pins"]'::jsonb,
-    1,
+    '1',
     'The command "gpio readall" displays a detailed table of all GPIO pins, their modes, and current states.',
     5
   );
