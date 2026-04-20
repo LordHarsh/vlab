@@ -3,8 +3,9 @@ import { ClerkProvider } from '@clerk/nextjs'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Virtual Lab - Interactive Learning Platform',
-  description: 'Learn through interactive simulations and experiments',
+  title: 'VLab — Interactive IoT & Electronics Learning',
+  description:
+    'Learn electronics and IoT through interactive virtual lab simulations. No hardware required.',
 }
 
 export default function RootLayout({
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className="font-sans antialiased">{children}</body>
+        <body className="antialiased">{children}</body>
       </html>
     </ClerkProvider>
   )
