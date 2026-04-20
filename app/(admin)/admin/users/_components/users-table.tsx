@@ -21,7 +21,7 @@ function RoleCell({ user }: { user: User }) {
 
   function toggle() {
     const newRole = user.role === 'educator' ? 'student' : 'educator'
-    startTransition(() => updateUserRole(user.id, newRole))
+    startTransition(async () => { await updateUserRole(user.id, newRole) })
   }
 
   return (
@@ -43,7 +43,7 @@ function AdminCell({ user }: { user: User }) {
   const [isPending, startTransition] = useTransition()
 
   function toggle() {
-    startTransition(() => toggleAdminFlag(user.id, !user.is_admin))
+    startTransition(async () => { await toggleAdminFlag(user.id, !user.is_admin) })
   }
 
   return (
