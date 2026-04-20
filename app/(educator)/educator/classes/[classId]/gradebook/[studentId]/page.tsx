@@ -151,7 +151,7 @@ export default async function StudentDetailPage({
           type: string
           class_quiz_settings: { passing_percentage: number | null; max_attempts: number | null; is_graded: boolean }[]
         }[]
-        feedback_forms: { id: string; title: string }[]
+        feedback_forms: { id: string; title: string } | null
       }[]
     } | null
     if (!lab) continue
@@ -162,7 +162,7 @@ export default async function StudentDetailPage({
         experimentTitle: exp.title,
         sections: exp.experiment_sections ?? [],
         quizzes: exp.quizzes ?? [],
-        feedbackForms: exp.feedback_forms ?? [],
+        feedbackForms: exp.feedback_forms ? [exp.feedback_forms] : [],
       })
     }
   }
