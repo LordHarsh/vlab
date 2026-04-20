@@ -130,7 +130,7 @@ export default async function StudentDetailPage({
       id: string
       title: string
       type: string
-      settings: { passing_percentage: number | null; max_attempts: number | null; is_graded: boolean }[]
+      class_quiz_settings: { passing_percentage: number | null; max_attempts: number | null; is_graded: boolean }[]
     }[]
     feedbackForms: { id: string; title: string }[]
   }
