@@ -111,15 +111,16 @@ export function LabsClient({ classId, assignedLabs: initial, availableLabs: init
             .map((a, i) => ({ ...a, order_index: i })),
         )
         if (removed?.lab) {
+          const lab = removed.lab
           setAvailable((prev) => [
             ...prev,
             {
               id: removed.lab_id,
-              title: removed.lab.title,
-              slug: removed.lab.slug,
-              description: removed.lab.description,
-              difficulty: removed.lab.difficulty,
-              experiment_count: removed.lab.experiments?.length ?? 0,
+              title: lab.title,
+              slug: lab.slug,
+              description: lab.description,
+              difficulty: lab.difficulty,
+              experiment_count: lab.experiments?.length ?? 0,
             },
           ])
         }

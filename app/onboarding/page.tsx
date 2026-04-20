@@ -37,7 +37,8 @@ const educatorSchema = z.object({
   phone: z.string().optional(),
 })
 
-type StudentFormValues = z.infer<typeof studentSchema>
+type StudentFormInput = z.input<typeof studentSchema>   // form holds strings
+type StudentFormValues = z.output<typeof studentSchema>  // after transform: year is number
 type EducatorFormValues = z.infer<typeof educatorSchema>
 
 // ─── Helper: field wrapper ─────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ function StudentForm({
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<StudentFormValues>({ resolver: zodResolver(studentSchema) })
+  } = useForm<StudentFormInput, unknown, StudentFormValues>({ resolver: zodResolver(studentSchema) })
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

@@ -185,7 +185,7 @@ export async function submitQuiz(
     class_id: classId,
     student_id: profile.id,
     attempt_number: attemptNumber,
-    answers: answersSnapshot,
+    answers: answersSnapshot as unknown as import('@/types/database').Json,
     score,
     max_score: maxScore,
     percentage,
