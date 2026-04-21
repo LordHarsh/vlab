@@ -112,23 +112,39 @@ export async function completeOnboarding(
       (e) => e.id === clerkUser.primaryEmailAddressId,
     )?.emailAddress ?? ''
 
-  // Upsert: creates the row if it doesn't exist yet (first sign-up),
-  // or updates it if it does (re-opening onboarding)
-  const { error } = await supabase
+  const upsertData = {
+    clerk_user_id: userId,
+    email,
+    avatar_url: clerkUser.imageUrl ?? null,
+    ...updatePayload,
+  }
+
+  // First try: check if profile already exists
+  const { data: existing } = await supabase
     .from('profiles')
-    .upsert(
-      {
-        clerk_user_id: userId,
-        email,
-        avatar_url: clerkUser.imageUrl ?? null,
-        ...updatePayload,
-      },
-      { onConflict: 'clerk_user_id' },
-    )
+    .select('id')
+    .eq('clerk_user_id', userId)
+    .single()
+
+  let error
+  if (existing) {
+    // Profile exists — update it
+    const result = await supabase
+      .from('profiles')
+      .update(updatePayload)
+      .eq('clerk_user_id', userId)
+    error = result.error
+  } else {
+    // No profile yet — insert it
+    const result = await supabase
+      .from('profiles')
+      .insert(upsertData)
+    error = result.error
+  }
 
   if (error) {
-    console.error('[completeOnboarding] upsert error:', error)
-    return { success: false, error: 'Failed to save profile. Please try again.' }
+    console.error('[completeOnboarding] error:', JSON.stringify(error))
+    return { success: false, error: `Failed to save profile: ${error.message}` }
   }
 
   return { success: true }
