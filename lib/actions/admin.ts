@@ -199,6 +199,7 @@ export async function createSection(
   title: string,
   orderIndex: number,
   content: unknown,
+  isRequired = false,
 ): Promise<{ success: boolean; sectionId?: string; error?: string }> {
   try {
     await requireAdmin()
@@ -212,7 +213,7 @@ export async function createSection(
         title,
         order_index: orderIndex,
         content: content as import('@/types/database').Json,
-        is_required: false,
+        is_required: isRequired,
         status: 'active',
       })
       .select('id')
