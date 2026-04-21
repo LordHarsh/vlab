@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { SignOutButton } from '@clerk/nextjs'
-import { BookOpen, GraduationCap, LogOut, User } from 'lucide-react'
+import { BookOpen, GraduationCap, LogOut, User, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 type Profile = {
@@ -12,6 +12,7 @@ type Profile = {
   last_name: string | null
   email: string
   role: string
+  is_admin: boolean
   profile_completed: boolean
 }
 
@@ -68,6 +69,19 @@ export function EducatorSidebar({ profile }: { profile: Profile }) {
           )
         })}
       </nav>
+
+      {/* Admin shortcut — only shown to admin users */}
+      {profile.is_admin && (
+        <div className="px-4 pb-2">
+          <Link
+            href="/admin"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#6a6a6a] hover:bg-[#fff0f3] hover:text-[#ff385c] transition-colors border border-[#f2f2f2]"
+          >
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            Admin Panel
+          </Link>
+        </div>
+      )}
 
       {/* Profile & Sign out */}
       <div className="p-4 border-t border-[#c1c1c1] space-y-2">

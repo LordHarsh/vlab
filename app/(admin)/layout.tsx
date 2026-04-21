@@ -69,13 +69,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           ))}
         </nav>
 
-        <div className="px-4 py-4 border-t border-[#e8e8e8]">
+        <div className="px-4 py-4 border-t border-[#e8e8e8] space-y-1">
           <Link
-            href="/dashboard"
-            className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-[#6a6a6a] hover:bg-[#f2f2f2] transition-colors"
+            href="/educator"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-[#6a6a6a] hover:bg-[#fff0f3] hover:text-[#ff385c] transition-colors"
           >
             <ChevronRight className="w-3.5 h-3.5 rotate-180" />
-            Back to Dashboard
+            Educator View
           </Link>
         </div>
       </aside>

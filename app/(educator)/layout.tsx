@@ -14,7 +14,7 @@ export default async function EducatorLayout({
   const supabase = await createServerSupabaseClient()
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, role, profile_completed, approval_status, first_name, last_name, email')
+    .select('id, role, is_admin, profile_completed, approval_status, first_name, last_name, email')
     .eq('clerk_user_id', userId)
     .single()
 
