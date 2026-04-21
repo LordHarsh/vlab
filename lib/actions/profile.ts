@@ -2,6 +2,7 @@
 
 import { auth, currentUser } from '@clerk/nextjs/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminSupabaseClient } from '@/lib/supabase/admin'
 import type { Tables, TablesUpdate } from '@/types/database'
 
 export type Profile = Tables<'profiles'>
@@ -119,28 +120,21 @@ export async function completeOnboarding(
     ...updatePayload,
   }
 
-  // First try: check if profile already exists
-  const { data: existing } = await supabase
-    .from('profiles')
-    .select('id')
-    .eq('clerk_user_id', userId)
-    .single()
-
-  let error
-  if (existing) {
-    // Profile exists — update it
-    const result = await supabase
-      .from('profiles')
-      .update(updatePayload)
-      .eq('clerk_user_id', userId)
-    error = result.error
-  } else {
-    // No profile yet — insert it
-    const result = await supabase
-      .from('profiles')
-      .insert(upsertData)
-    error = result.error
+  // Use admin client (service role) for onboarding write.
+  // We've already verified the user via Clerk auth() above, so this is safe.
+  // The regular anon client may fail here if the Clerk JWT template isn't
+  // configured in Supabase yet, which would cause RLS to reject the insert.
+  let adminClient
+  try {
+    adminClient = createAdminSupabaseClient()
+  } catch {
+    // Service role key not configured — fall back to regular client
+    adminClient = supabase
   }
+
+  const { error } = await adminClient
+    .from('profiles')
+    .upsert(upsertData, { onConflict: 'clerk_user_id' })
 
   if (error) {
     console.error('[completeOnboarding] error:', JSON.stringify(error))
