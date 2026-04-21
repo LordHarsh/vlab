@@ -103,13 +103,31 @@ export async function completeOnboarding(
     updatePayload.employee_no = data.employee_no ?? null
   }
 
+  // Get the Clerk user to ensure we have email for the upsert
+  const clerkUser = await currentUser()
+  if (!clerkUser) return { success: false, error: 'Not authenticated' }
+
+  const email =
+    clerkUser.emailAddresses.find(
+      (e) => e.id === clerkUser.primaryEmailAddressId,
+    )?.emailAddress ?? ''
+
+  // Upsert: creates the row if it doesn't exist yet (first sign-up),
+  // or updates it if it does (re-opening onboarding)
   const { error } = await supabase
     .from('profiles')
-    .update(updatePayload)
-    .eq('clerk_user_id', userId)
+    .upsert(
+      {
+        clerk_user_id: userId,
+        email,
+        avatar_url: clerkUser.imageUrl ?? null,
+        ...updatePayload,
+      },
+      { onConflict: 'clerk_user_id' },
+    )
 
   if (error) {
-    console.error('[completeOnboarding] update error:', error)
+    console.error('[completeOnboarding] upsert error:', error)
     return { success: false, error: 'Failed to save profile. Please try again.' }
   }
 
