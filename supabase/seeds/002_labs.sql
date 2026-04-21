@@ -1,6 +1,10 @@
 -- =============================================================================
 -- seeds/002_labs.sql
--- Seed the IoT Virtual Lab lab entry.
+-- Seed the IoT Virtual Lab entry.
+-- created_by is left null — update it after creating your admin account:
+--
+--   UPDATE labs SET created_by = (SELECT id FROM profiles WHERE email = 'your@email.com')
+--   WHERE slug = 'iot-virtual-lab';
 -- =============================================================================
 
 insert into labs (slug, title, description, difficulty, tags, published, created_by)
@@ -11,6 +15,6 @@ values (
   'beginner',
   array['Arduino', 'Raspberry Pi', 'IoT', 'Sensors', 'GPIO'],
   true,
-  (select id from profiles where clerk_user_id = 'seed_admin_replace_me')
+  null
 )
 on conflict (slug) do nothing;

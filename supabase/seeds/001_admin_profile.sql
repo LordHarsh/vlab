@@ -1,16 +1,14 @@
 -- =============================================================================
 -- seeds/001_admin_profile.sql
--- Seed admin profile required as created_by FK for labs.
--- clerk_user_id must be updated to match the real Clerk user ID after sign-in.
+-- No pre-created admin. After first deployment:
+--
+-- 1. Sign up normally at /sign-up
+-- 2. Complete onboarding (pick Educator role)
+-- 3. Run the following in Supabase SQL Editor, replacing the email:
+--
+--    UPDATE profiles
+--    SET is_admin = true, approval_status = 'approved'
+--    WHERE email = 'your@email.com';
+--
+-- 4. Sign out and sign back in — you will land on /admin
 -- =============================================================================
-
-insert into profiles (clerk_user_id, email, first_name, last_name, role, is_admin)
-values (
-  'seed_admin_replace_me',   -- TODO: replace with real Clerk user ID
-  'admin@vlab.edu',
-  'Lab',
-  'Admin',
-  'educator',
-  true
-)
-on conflict (clerk_user_id) do nothing;
