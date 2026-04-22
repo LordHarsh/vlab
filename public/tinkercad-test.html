@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tinkercad Embed Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: #f7f7f7;
+      color: #222222;
+      padding: 32px 16px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .header {
+      margin-bottom: 24px;
+    }
+
+    .header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #222222;
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      font-size: 14px;
+      color: #6a6a6a;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow:
+        rgba(0,0,0,0.02) 0px 0px 0px 1px,
+        rgba(0,0,0,0.04) 0px 2px 6px,
+        rgba(0,0,0,0.1) 0px 4px 8px;
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      background: #f2f2f2;
+      border-bottom: 1px solid #c1c1c1;
+    }
+
+    .icon-box {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(255, 56, 92, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .icon-box svg {
+      width: 18px;
+      height: 18px;
+      color: #ff385c;
+    }
+
+    .card-header-text {
+      flex: 1;
+    }
+
+    .card-header-text h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #222222;
+    }
+
+    .card-header-text p {
+      font-size: 12px;
+      color: #6a6a6a;
+      margin-top: 2px;
+    }
+
+    .open-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: #6a6a6a;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .open-link:hover { color: #ff385c; }
+
+    .open-link svg { width: 14px; height: 14px; }
+
+    iframe {
+      display: block;
+      width: 100%;
+      border: none;
+    }
+
+    /* Controls */
+    .controls {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow:
+        rgba(0,0,0,0.02) 0px 0px 0px 1px,
+        rgba(0,0,0,0.04) 0px 2px 6px,
+        rgba(0,0,0,0.1) 0px 4px 8px;
+      margin-bottom: 24px;
+    }
+
+    .controls h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #222;
+    }
+
+    .control-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .control-group label {
+      font-size: 11px;
+      font-weight: 500;
+      color: #6a6a6a;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .control-group input {
+      padding: 8px 12px;
+      border: 1px solid #c1c1c1;
+      border-radius: 10px;
+      font-size: 13px;
+      font-family: monospace;
+      color: #222;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .control-group input:focus {
+      border-color: #ff385c;
+      box-shadow: 0 0 0 1px #ff385c;
+    }
+
+    button {
+      padding: 9px 20px;
+      background: #ff385c;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+
+    button:hover { background: #e0314f; }
+
+    .info-box {
+      background: #fff8f0;
+      border: 1px solid #ffe0b2;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 12px;
+      color: #6a6a6a;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+
+    .info-box strong { color: #222; }
+
+    .url-display {
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: #f2f2f2;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: monospace;
+      color: #222;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Tinkercad Simulation — Embed Test</h1>
+      <p>Preview how a Tinkercad circuit appears to students inside VLab.</p>
+    </div>
+
+    <!-- Info -->
+    <div class="info-box">
+      <strong>How to find the Design ID:</strong>
+      Open your Tinkercad design → copy the URL →
+      <code>tinkercad.com/things/<strong>DESIGN_ID</strong></code>
+      — everything after <code>/things/</code> is the ID.
+      The design must be set to <strong>Public</strong> to embed.
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <h3>Configure</h3>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Tinkercad Design ID</label>
+          <input
+            type="text"
+            id="designId"
+            value="gYyqBoRBnEO-blinking-led-using-arduino-"
+            placeholder="e.g. gYyqBoRBnEO-blinking-led-using-arduino-"
+          />
+        </div>
+        <div class="control-group" style="max-width:120px;">
+          <label>Height (px)</label>
+          <input type="number" id="height" value="500" min="300" max="900" step="50" />
+        </div>
+        <button onclick="loadEmbed()">Load</button>
+      </div>
+      <div class="url-display" id="urlDisplay">
+        https://www.tinkercad.com/embed/gYyqBoRBnEO-blinking-led-using-arduino-
+      </div>
+    </div>
+
+    <!-- Simulation card (mirrors VLab UI) -->
+    <div class="card" id="simCard">
+      <div class="card-header">
+        <div class="icon-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
+        <div class="card-header-text">
+          <h2 id="simTitle">Blinking LED using Arduino</h2>
+          <p>Tinkercad simulation</p>
+        </div>
+        <a id="openLink" href="https://www.tinkercad.com/things/gYyqBoRBnEO-blinking-led-using-arduino-" target="_blank" rel="noopener" class="open-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+          Open in Tinkercad
+        </a>
+      </div>
+      <iframe
+        id="simFrame"
+        src="https://www.tinkercad.com/embed/gYyqBoRBnEO-blinking-led-using-arduino-"
+        title="Blinking LED using Arduino"
+        height="500"
+        allowfullscreen
+      ></iframe>
+    </div>
+  </div>
+
+  <script>
+    function loadEmbed() {
+      const designId = document.getElementById('designId').value.trim()
+      const height = parseInt(document.getElementById('height').value) || 500
+
+      if (!designId) {
+        alert('Please enter a Design ID')
+        return
+      }
+
+      const embedUrl = `https://www.tinkercad.com/embed/${designId}`
+      const thingUrl = `https://www.tinkercad.com/things/${designId}`
+
+      document.getElementById('simFrame').src = embedUrl
+      document.getElementById('simFrame').height = height
+      document.getElementById('simTitle').textContent = designId.replace(/-/g, ' ')
+      document.getElementById('openLink').href = thingUrl
+      document.getElementById('urlDisplay').textContent = embedUrl
+    }
+  </script>
+</body>
+</html>
