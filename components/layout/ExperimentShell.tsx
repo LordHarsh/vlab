@@ -91,7 +91,7 @@ export function ExperimentShell({
     <div className="flex flex-col min-h-screen">
       {/* Sticky top header */}
       <header className="sticky top-0 z-20 bg-white border-b border-[#f2f2f2] px-4 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Link
             href={`/dashboard/class/${classId}/lab/${labSlug}`}
             className="flex items-center gap-1 text-sm text-[#6a6a6a] hover:text-[#222222] transition-colors shrink-0"
@@ -100,16 +100,16 @@ export function ExperimentShell({
             <span className="hidden sm:inline">Back</span>
           </Link>
 
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-600 text-[#222222] truncate">{experiment.title}</p>
-            <div className="flex items-center gap-2 mt-0.5">
-              <div className="flex-1 h-1 bg-[#f2f2f2] rounded-full overflow-hidden max-w-xs">
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <p className="text-sm font-semibold text-[#222222] truncate leading-tight">{experiment.title}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 h-1 bg-[#f2f2f2] rounded-full overflow-hidden">
                 <div
                   className="h-full bg-[#ff385c] rounded-full transition-all"
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
-              <span className="text-xs text-[#6a6a6a] shrink-0">
+              <span className="text-xs text-[#6a6a6a] shrink-0 tabular-nums">
                 {completedCount}/{totalCount}
               </span>
             </div>
