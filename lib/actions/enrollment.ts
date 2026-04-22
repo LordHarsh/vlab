@@ -53,7 +53,7 @@ export async function joinByCode(
   }
 
   // Check if already enrolled
-  const { data: existingEnrollment } = await supabase
+  const { data: existingEnrollment } = await adminSupabase
     .from('enrollments')
     .select('id, status')
     .eq('class_id', cls.id)
@@ -82,12 +82,14 @@ export async function joinByCode(
     }
   }
 
-  // Create enrollment
-  const { error: enrollError } = await supabase.from('enrollments').insert({
+  // Create enrollment using admin client — the student insert policy calls
+  // auth_role() which may still recurse; admin client bypasses RLS safely
+  // since we've already validated the student's identity above via Clerk auth.
+  const { error: enrollError } = await adminSupabase.from('enrollments').insert({
     class_id: cls.id,
     student_id: profile.id,
     status: 'active',
-    enrolled_via: 'join_code',
+    enrolled_via: 'code',
   })
 
   if (enrollError) {
