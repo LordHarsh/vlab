@@ -65,14 +65,20 @@ export function SimulationSection({ simulationId }: { simulationId: string }) {
 
       {/* Body */}
       {designId ? (
-        <iframe
-          src={`https://www.tinkercad.com/embed/${designId}`}
-          title={title}
-          width="100%"
-          height={height}
-          allowFullScreen
-          style={{ border: 'none', display: 'block' }}
-        />
+        <>
+          <div className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
+            <PlayCircle className="w-3.5 h-3.5 shrink-0" />
+            Click <strong className="mx-0.5">Start Simulation</strong> inside the circuit viewer to run it.
+          </div>
+          <iframe
+            src={`https://www.tinkercad.com/embed/${designId}`}
+            title={title}
+            width="100%"
+            height={height}
+            allowFullScreen
+            style={{ border: 'none', display: 'block' }}
+          />
+        </>
       ) : (
         <div className="bg-white px-6 py-12 flex flex-col items-center justify-center text-center gap-3 min-h-[320px]">
           <div className="w-14 h-14 rounded-2xl bg-[#f2f2f2] flex items-center justify-center">
