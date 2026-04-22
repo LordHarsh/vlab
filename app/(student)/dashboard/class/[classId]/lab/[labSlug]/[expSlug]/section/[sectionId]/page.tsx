@@ -59,6 +59,27 @@ export default async function SectionPage({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const content = section.content as any
 
+  // For simulation sections: fetch config server-side so iframe src is a stable prop.
+  // A client-side fetch causes re-renders that keep resetting the iframe src,
+  // making Tinkercad restart its load cycle indefinitely.
+  let simDesignId: string | null = null
+  let simHeight = 500
+  let simTitle = 'Interactive Simulation'
+  if (section.type === 'simulation') {
+    const simId: string | undefined = content?.simulation_id
+    if (simId) {
+      const { data: sim } = await supabase
+        .from('simulations')
+        .select('title, config')
+        .eq('id', simId)
+        .single()
+      const cfg = sim?.config as Record<string, unknown> | null
+      simDesignId = (cfg?.design_id as string) ?? null
+      simHeight = (cfg?.height as number) ?? 500
+      simTitle = sim?.title ?? 'Interactive Simulation'
+    }
+  }
+
   function renderSection() {
     const c = content
     switch (section!.type) {
@@ -74,25 +95,8 @@ export default async function SectionPage({
         return <ProcedureSection content={c} />
       case 'code':
         return <CodeSection content={c} />
-      case 'simulation': {
-        const simId: string | undefined = c?.simulation_id
-        if (!simId) return <div className="py-8 text-center text-[#6a6a6a]">Simulation not configured.</div>
-
-        // Fetch simulation server-side so iframe src is a stable prop
-        // (client-side fetch causes re-renders that reset the iframe load)
-        const { data: sim } = await supabase
-          .from('simulations')
-          .select('title, config')
-          .eq('id', simId)
-          .single()
-
-        const cfg = sim?.config as Record<string, unknown> | null
-        const designId = (cfg?.design_id as string) ?? null
-        const height = (cfg?.height as number) ?? 500
-        const simTitle = sim?.title ?? 'Interactive Simulation'
-
-        return <SimulationSection designId={designId} height={height} title={simTitle} />
-      }
+      case 'simulation':
+        return <SimulationSection designId={simDesignId} height={simHeight} title={simTitle} />
       case 'quiz': {
         const quizId: string | undefined = c?.quiz_id
         if (!quizId) {
