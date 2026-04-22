@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlayCircle, ExternalLink, LogIn, RefreshCw, Loader2 } from 'lucide-react'
+import { PlayCircle, ExternalLink, LogIn, RotateCcw, Loader2, MonitorPlay } from 'lucide-react'
 
 export function SimulationSection({
   designId,
@@ -20,52 +20,56 @@ export function SimulationSection({
     if (!designId) { setPreviewLoading(false); return }
     fetch(`/api/tinkercad-preview?id=${encodeURIComponent(designId)}`)
       .then((r) => r.json())
-      .then((data) => { setPreviewUrl(data.imageUrl ?? null) })
+      .then((data) => setPreviewUrl(data.imageUrl ?? null))
       .catch(() => {})
       .finally(() => setPreviewLoading(false))
   }, [designId])
 
   if (!designId) {
     return (
-      <div className="rounded-2xl border border-[#c1c1c1] overflow-hidden bg-white flex flex-col items-center justify-center gap-3 py-12 text-center px-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px' }}>
-        <PlayCircle className="w-8 h-8 text-[#c1c1c1]" />
+      <div className="rounded-2xl border border-[#e8e8e8] bg-[#fafafa] flex flex-col items-center justify-center gap-3 py-16 text-center px-6">
+        <div className="w-12 h-12 rounded-2xl bg-[#f2f2f2] flex items-center justify-center">
+          <MonitorPlay className="w-6 h-6 text-[#c1c1c1]" />
+        </div>
         <p className="text-sm text-[#6a6a6a]">No simulation linked to this section yet.</p>
       </div>
     )
   }
 
   const tinkercadUrl = `https://www.tinkercad.com/things/${designId}`
-  const loginUrl = `https://www.tinkercad.com/login?next=%2Fthings%2F${designId}`
+  const loginUrl = `https://www.tinkercad.com/login`
 
   return (
-    <div className="rounded-2xl border border-[#c1c1c1] overflow-hidden"
-      style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}>
-
-      {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-4 bg-[#f2f2f2] border-b border-[#c1c1c1]">
-        <div className="w-9 h-9 rounded-xl bg-[#ff385c]/10 flex items-center justify-center">
-          <PlayCircle className="w-5 h-5 text-[#ff385c]" />
-        </div>
-        <p className="text-sm font-semibold text-[#222222] flex-1">{title}</p>
-        <a href={tinkercadUrl} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-[#6a6a6a] hover:text-[#ff385c] transition-colors">
-          <ExternalLink className="w-3.5 h-3.5" />
-          Open in Tinkercad
-        </a>
-      </div>
+    <div className="rounded-2xl border border-[#e8e8e8] overflow-hidden bg-white"
+      style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.08) 0px 4px 8px' }}>
 
       {simActive ? (
-        /* ── Active: show the iframe ── */
-        <>
-          <div className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
-            <PlayCircle className="w-3.5 h-3.5 shrink-0" />
-            Click <strong className="mx-0.5">Start Simulation</strong> inside the viewer to run it.
-            <button onClick={() => setSimActive(false)}
-              className="ml-auto text-[#6a6a6a] hover:text-[#222222] transition-colors underline">
-              Back to preview
-            </button>
+        /* ── Active simulation view ── */
+        <div>
+          {/* Header bar while simulation runs */}
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-[#e8e8e8] bg-white">
+            <div className="flex items-center gap-2.5">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-sm font-semibold text-[#222222]">{title}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <a href={tinkercadUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-[#6a6a6a] hover:text-[#222222] transition-colors px-3 py-1.5 rounded-lg border border-[#e8e8e8] hover:border-[#c1c1c1]">
+                <ExternalLink className="w-3.5 h-3.5" />
+                Full screen
+              </a>
+              <button onClick={() => setSimActive(false)}
+                className="text-xs text-[#6a6a6a] hover:text-[#222222] transition-colors px-3 py-1.5 rounded-lg border border-[#e8e8e8] hover:border-[#c1c1c1]">
+                ← Back
+              </button>
+            </div>
           </div>
+
+          {/* Info bar */}
+          <div className="flex items-center gap-2 px-5 py-2.5 bg-[#fafafa] border-b border-[#e8e8e8] text-xs text-[#6a6a6a]">
+            <span>Click <strong className="text-[#222222]">Start Simulation</strong> in the viewer below to run the circuit.</span>
+          </div>
+
           <iframe
             src={`https://www.tinkercad.com/embed/${designId}`}
             title={title}
@@ -74,64 +78,80 @@ export function SimulationSection({
             allowFullScreen
             style={{ border: 'none', display: 'block' }}
           />
-        </>
+        </div>
       ) : (
-        /* ── Preview: circuit image + login/launch flow ── */
-        <div className="bg-white">
-          {/* Circuit preview image */}
+        /* ── Preview / launch view ── */
+        <div>
+          {/* Preview image */}
           <div className="relative bg-[#f7f7f7] flex items-center justify-center"
-            style={{ minHeight: Math.round(height * 0.6) }}>
+            style={{ minHeight: 280 }}>
             {previewLoading ? (
-              <Loader2 className="w-8 h-8 text-[#c1c1c1] animate-spin" />
+              <div className="flex flex-col items-center gap-3 py-16">
+                <Loader2 className="w-8 h-8 text-[#c1c1c1] animate-spin" />
+                <p className="text-xs text-[#c1c1c1]">Loading preview…</p>
+              </div>
             ) : previewUrl ? (
-              <img src={previewUrl} alt={title}
-                className="max-w-full max-h-full object-contain"
-                style={{ maxHeight: Math.round(height * 0.6) }}
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              <img
+                src={previewUrl}
+                alt={title}
+                className="max-w-full object-contain"
+                style={{ maxHeight: 320 }}
+                onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="py-16 flex flex-col items-center gap-2"><svg xmlns=\'http://www.w3.org/2000/svg\' width=\'40\' height=\'40\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'#c1c1c1\' stroke-width=\'1.5\'><rect x=\'2\' y=\'3\' width=\'20\' height=\'14\' rx=\'2\'/><path d=\'M8 21h8M12 17v4\'/></svg><p class=\'text-xs text-[#c1c1c1]\'>Preview unavailable</p></div>' }}
               />
             ) : (
-              <div className="flex flex-col items-center gap-2 py-16 text-center px-6">
-                <PlayCircle className="w-12 h-12 text-[#c1c1c1]" />
-                <p className="text-sm text-[#6a6a6a]">Circuit preview unavailable</p>
+              <div className="flex flex-col items-center gap-3 py-16">
+                <MonitorPlay className="w-10 h-10 text-[#c1c1c1]" />
+                <p className="text-xs text-[#c1c1c1]">No preview available</p>
               </div>
+            )}
+
+            {/* Overlay play button */}
+            {!previewLoading && (
+              <button
+                onClick={() => setSimActive(true)}
+                className="absolute inset-0 flex items-center justify-center group"
+                aria-label="Launch simulation"
+              >
+                <div className="w-16 h-16 rounded-full bg-[#ff385c] flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                  <PlayCircle className="w-8 h-8 text-white" />
+                </div>
+              </button>
             )}
           </div>
 
-          {/* CTA strip */}
-          <div className="border-t border-[#f2f2f2] px-5 py-4 space-y-3">
-            {/* Primary: Launch simulation */}
-            <button
-              onClick={() => setSimActive(true)}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#ff385c] text-white text-sm font-semibold hover:bg-[#e0314f] transition-colors"
-            >
-              <PlayCircle className="w-4 h-4" />
-              Launch Simulation
-            </button>
-
-            {/* Info + login nudge */}
-            <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-xl">
-              <LogIn className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-              <div className="text-xs text-blue-700 leading-relaxed">
-                <p className="font-medium mb-0.5">Simulation not loading?</p>
-                <p>
-                  Tinkercad requires you to be signed in.{' '}
-                  <a href={loginUrl} target="_blank" rel="noopener noreferrer"
-                    className="underline font-semibold hover:text-blue-900">
-                    Log in to Tinkercad ↗
-                  </a>
-                  , then come back and click <strong>Launch Simulation</strong> above.
-                </p>
+          {/* Footer */}
+          <div className="border-t border-[#e8e8e8] px-5 py-4 space-y-3">
+            {/* Title + launch */}
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-[#222222]">{title}</p>
+                <p className="text-xs text-[#6a6a6a] mt-0.5">Tinkercad Circuit Simulation</p>
               </div>
+              <button
+                onClick={() => setSimActive(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#ff385c] text-white text-sm font-semibold hover:bg-[#e0314f] transition-colors shrink-0"
+              >
+                <PlayCircle className="w-4 h-4" />
+                Launch
+              </button>
             </div>
 
-            {/* Re-launch after login */}
-            <button
-              onClick={() => setSimActive(true)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#6a6a6a] hover:bg-[#f2f2f2] hover:text-[#222222] transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              I've logged in — try again
-            </button>
+            {/* Login hint — subtle, not alarming */}
+            <div className="flex items-start gap-2.5 pt-1 border-t border-[#f2f2f2]">
+              <LogIn className="w-3.5 h-3.5 text-[#c1c1c1] shrink-0 mt-0.5" />
+              <p className="text-xs text-[#6a6a6a] leading-relaxed">
+                If the simulation doesn't load,{' '}
+                <a href={loginUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-[#222222] font-medium underline underline-offset-2 hover:text-[#ff385c] transition-colors">
+                  sign in to Tinkercad
+                </a>{' '}
+                first, then click{' '}
+                <button onClick={() => setSimActive(true)} className="text-[#222222] font-medium underline underline-offset-2 hover:text-[#ff385c] transition-colors">
+                  Launch
+                </button>
+                {' '}again.
+              </p>
+            </div>
           </div>
         </div>
       )}
