@@ -618,3 +618,34 @@ export async function updateQuiz(
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
   }
 }
+
+
+// ─── Simulations ──────────────────────────────────────────────────────────────
+
+export async function updateSimulation(
+  simulationId: string,
+  data: { title?: string; design_id: string; height?: number },
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await requireAdmin()
+    const supabase = await createServerSupabaseClient()
+
+    const { error } = await supabase
+      .from('simulations')
+      .update({
+        title: data.title ?? null,
+        config: {
+          design_id: data.design_id,
+          height: data.height ?? 500,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', simulationId)
+
+    if (error) return { success: false, error: error.message }
+    revalidatePath('/admin/labs')
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+}

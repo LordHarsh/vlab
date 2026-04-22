@@ -17,6 +17,9 @@ type SectionWithMeta = {
   quiz_id?: string | null
   quiz_type?: string | null
   feedback_form_id?: string | null
+  simulation_id?: string | null
+  simulation_design_id?: string | null
+  simulation_height?: number | null
 }
 
 async function getExperimentData(labSlug: string, expSlug: string) {
@@ -35,7 +38,6 @@ async function getExperimentData(labSlug: string, expSlug: string) {
     .eq('experiment_id', experiment.id).eq('status', 'active')
     .order('order_index', { ascending: true })
 
-  // For quiz sections, resolve the quiz_id stored in content to get quiz type
   const enriched: SectionWithMeta[] = await Promise.all(
     (sections ?? []).map(async (s) => {
       if (s.type === 'quiz') {
@@ -49,6 +51,20 @@ async function getExperimentData(labSlug: string, expSlug: string) {
       if (s.type === 'feedback') {
         const formId = (s.content as Record<string, string> | null)?.form_id ?? null
         return { ...s, feedback_form_id: formId }
+      }
+      if (s.type === 'simulation') {
+        const simId = (s.content as Record<string, string> | null)?.simulation_id ?? null
+        if (simId) {
+          const { data: sim } = await supabase
+            .from('simulations').select('id, config').eq('id', simId).single()
+          const config = sim?.config as Record<string, unknown> | null
+          return {
+            ...s,
+            simulation_id: sim?.id ?? null,
+            simulation_design_id: (config?.design_id as string) ?? null,
+            simulation_height: (config?.height as number) ?? null,
+          }
+        }
       }
       return s
     })

@@ -7,7 +7,7 @@ import {
   ArrowUp, ArrowDown, Archive, Pencil, X, Check,
   ClipboardList, MessageSquare, Loader2,
 } from 'lucide-react'
-import { archiveSection, updateSection } from '@/lib/actions/admin'
+import { archiveSection, updateSection, updateSimulation } from '@/lib/actions/admin'
 import type { Json } from '@/types/database'
 
 type Section = {
@@ -21,6 +21,10 @@ type Section = {
   quiz_id?: string | null
   quiz_type?: string | null
   feedback_form_id?: string | null
+  // simulation sections only
+  simulation_id?: string | null
+  simulation_design_id?: string | null
+  simulation_height?: number | null
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -44,26 +48,118 @@ const QUIZ_TYPE_LABEL: Record<string, string> = {
   practice: 'Practice',
 }
 
-// ─── Inline content editor ────────────────────────────────────────────────────
-// Shows a textarea with the JSON content. On save, parses and updates.
+// ─── Shared field components ─────────────────────────────────────────────────
+
+function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={() => onChange(!value)}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${value ? 'bg-[#ff385c]' : 'bg-[#c1c1c1]'}`}>
+        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${value ? 'translate-x-4' : 'translate-x-1'}`} />
+      </button>
+      <span className="text-xs text-[#6a6a6a]">{label}</span>
+    </div>
+  )
+}
+
+function SaveCancel({ isPending, onCancel }: { isPending: boolean; onCancel: () => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <button type="submit" disabled={isPending}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ff385c] text-white text-xs font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50">
+        {isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+        Save
+      </button>
+      <button type="button" onClick={onCancel}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#f2f2f2] text-[#6a6a6a] text-xs font-medium hover:bg-[#e8e8e8] transition-colors">
+        <X className="w-3 h-3" />
+        Cancel
+      </button>
+    </div>
+  )
+}
+
+// ─── Simulation editor (Tinkercad) ────────────────────────────────────────────
+function SimulationEditor({ section, onClose }: { section: Section; onClose: () => void }) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [title, setTitle] = useState(section.title ?? '')
+  const [designId, setDesignId] = useState(section.simulation_design_id ?? '')
+  const [height, setHeight] = useState(String(section.simulation_height ?? 500))
+  const [isRequired, setIsRequired] = useState(section.is_required)
+  const [error, setError] = useState<string | null>(null)
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!designId.trim()) { setError('Tinkercad Design ID is required.'); return }
+    if (!section.simulation_id) { setError('No simulation row linked to this section.'); return }
+    setError(null)
+    startTransition(async () => {
+      const [simResult, secResult] = await Promise.all([
+        updateSimulation(section.simulation_id!, {
+          title: title.trim() || undefined,
+          design_id: designId.trim(),
+          height: parseInt(height) || 500,
+        }),
+        updateSection(section.id, {
+          title: title.trim() || undefined,
+          is_required: isRequired,
+        }),
+      ])
+      if (!simResult.success) { setError(simResult.error ?? 'Failed to save simulation'); return }
+      if (!secResult.success) { setError(secResult.error ?? 'Failed to save section'); return }
+      router.refresh()
+      onClose()
+    })
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 border border-[#e8e8e8] rounded-xl p-4 bg-[#fafafa] space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Section Title</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Circuit Simulation"
+            className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Height (px)</label>
+          <input value={height} onChange={(e) => setHeight(e.target.value)} type="number" min="300" max="900" step="50"
+            className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white" />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
+          Tinkercad Design ID <span className="text-[#ff385c]">*</span>
+        </label>
+        <input value={designId} onChange={(e) => setDesignId(e.target.value)} placeholder="e.g. XXXXXXXXXXXXXXXX"
+          className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-sm font-mono text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white" />
+        <p className="text-xs text-[#6a6a6a] mt-1">
+          From <span className="font-mono">tinkercad.com/things/<strong>DESIGN_ID</strong></span> — design must be public
+        </p>
+      </div>
+
+      <Toggle value={isRequired} onChange={setIsRequired} label="Required section" />
+
+      {error && <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">{error}</p>}
+      <SaveCancel isPending={isPending} onCancel={onClose} />
+    </form>
+  )
+}
+
+// ─── Generic content editor (JSON) ───────────────────────────────────────────
 function ContentEditor({ section, onClose }: { section: Section; onClose: () => void }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [raw, setRaw] = useState(
-    section.content != null ? JSON.stringify(section.content, null, 2) : '{}'
-  )
+  const [raw, setRaw] = useState(section.content != null ? JSON.stringify(section.content, null, 2) : '{}')
   const [title, setTitle] = useState(section.title ?? '')
   const [isRequired, setIsRequired] = useState(section.is_required)
   const [error, setError] = useState<string | null>(null)
 
-  function handleSave() {
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
     let parsed: unknown
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      setError('Invalid JSON — please check the content.')
-      return
-    }
+    try { parsed = JSON.parse(raw) } catch { setError('Invalid JSON — check the content.'); return }
     setError(null)
     startTransition(async () => {
       const result = await updateSection(section.id, {
@@ -71,98 +167,55 @@ function ContentEditor({ section, onClose }: { section: Section; onClose: () => 
         content: parsed as Json,
         is_required: isRequired,
       })
-      if (!result.success) {
-        setError(result.error ?? 'Failed to save')
-        return
-      }
+      if (!result.success) { setError(result.error ?? 'Failed to save'); return }
       router.refresh()
       onClose()
     })
   }
 
+  const HINTS: Record<string, string> = {
+    aim: '{"objectives":["..."],"outcomes":["..."],"note":"..."}',
+    theory: '{"introduction":"...","sections":[{"heading":"...","body":"..."}]}',
+    components: '{"items":[{"name":"...","quantity":1,"notes":"..."}]}',
+    circuit: '{"connections":[{"from":"...","to":"..."}]}',
+    procedure: '{"steps":["Step 1...","Step 2..."]}',
+    code: '{"language":"arduino_c","platform":"Arduino Uno","code":"..."}',
+    references: '{"items":[{"title":"...","url":"..."}]}',
+    text: '{"content":"..."}',
+    video: '{"url":"...","caption":"..."}',
+  }
+
   return (
-    <div className="mt-3 border border-[#e8e8e8] rounded-xl p-4 bg-[#fafafa] space-y-3">
-      {/* Title */}
+    <form onSubmit={handleSubmit} className="mt-3 border border-[#e8e8e8] rounded-xl p-4 bg-[#fafafa] space-y-3">
       <div>
         <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Section Title</label>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Leave empty to use type as title"
-          className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
-        />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leave empty to use type as title"
+          className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white" />
       </div>
 
-      {/* is_required toggle */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setIsRequired((v) => !v)}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-            isRequired ? 'bg-[#ff385c]' : 'bg-[#c1c1c1]'
-          }`}
-        >
-          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-            isRequired ? 'translate-x-4' : 'translate-x-1'
-          }`} />
-        </button>
-        <span className="text-xs text-[#6a6a6a]">Required section</span>
-      </div>
+      <Toggle value={isRequired} onChange={setIsRequired} label="Required section" />
 
-      {/* Content JSON editor — skip for quiz and feedback, those have their own editors */}
-      {section.type !== 'quiz' && section.type !== 'feedback' && section.type !== 'simulation' && (
+      {section.type !== 'quiz' && section.type !== 'feedback' && (
         <div>
           <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
             Content <span className="text-[#c1c1c1] font-normal">(JSON)</span>
           </label>
-          <textarea
-            value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            rows={10}
-            spellCheck={false}
-            className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-xs font-mono text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white resize-y"
-          />
-          <p className="text-xs text-[#6a6a6a] mt-1">
-            {section.type === 'aim' && 'Shape: {"objectives":["..."],"outcomes":["..."],"note":"..."}'}
-            {section.type === 'theory' && 'Shape: {"introduction":"...","sections":[{"heading":"...","body":"..."}]}'}
-            {section.type === 'components' && 'Shape: {"items":[{"name":"...","quantity":1,"notes":"..."}]}'}
-            {section.type === 'circuit' && 'Shape: {"connections":[{"from":"...","to":"..."}]}'}
-            {section.type === 'procedure' && 'Shape: {"steps":["Step 1...","Step 2..."]}'}
-            {section.type === 'code' && 'Shape: {"language":"arduino_c","platform":"Arduino Uno","code":"..."}'}
-            {section.type === 'references' && 'Shape: {"items":[{"title":"...","url":"..."}]}'}
-            {section.type === 'text' && 'Shape: {"content":"..."}'}
-            {section.type === 'video' && 'Shape: {"url":"...","caption":"..."}'}
-          </p>
+          <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={10} spellCheck={false}
+            className="w-full px-3 py-2 rounded-lg border border-[#c1c1c1] text-xs font-mono text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white resize-y" />
+          {HINTS[section.type] && (
+            <p className="text-xs text-[#6a6a6a] mt-1 font-mono truncate">Shape: {HINTS[section.type]}</p>
+          )}
         </div>
       )}
-      {(section.type === 'quiz' || section.type === 'feedback' || section.type === 'simulation') && (
+      {(section.type === 'quiz' || section.type === 'feedback') && (
         <p className="text-xs text-[#6a6a6a] bg-[#f2f2f2] rounded-lg px-3 py-2">
-          Content for this section type is managed via its dedicated editor (linked below).
+          Content is managed via the dedicated editor (linked in the row above).
         </p>
       )}
 
-      {error && (
-        <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">{error}</p>
-      )}
-
-      <div className="flex items-center gap-2">
-        <button
-          onClick={handleSave}
-          disabled={isPending}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ff385c] text-white text-xs font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50"
-        >
-          {isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-          Save
-        </button>
-        <button
-          onClick={onClose}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#f2f2f2] text-[#6a6a6a] text-xs font-medium hover:bg-[#e8e8e8] transition-colors"
-        >
-          <X className="w-3 h-3" />
-          Cancel
-        </button>
-      </div>
-    </div>
+      {error && <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">{error}</p>}
+      <SaveCancel isPending={isPending} onCancel={onClose} />
+    </form>
   )
 }
 
@@ -298,10 +351,13 @@ export function SectionsList({
               </div>
             </div>
 
-            {/* Inline content editor */}
+            {/* Inline editor — simulation gets Tinkercad form, everything else gets JSON editor */}
             {isEditing && (
               <div className="px-3 pb-3">
-                <ContentEditor section={section} onClose={() => setEditingId(null)} />
+                {section.type === 'simulation'
+                  ? <SimulationEditor section={section} onClose={() => setEditingId(null)} />
+                  : <ContentEditor section={section} onClose={() => setEditingId(null)} />
+                }
               </div>
             )}
           </div>
