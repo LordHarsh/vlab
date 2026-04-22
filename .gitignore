@@ -41,3 +41,14 @@ next-env.d.ts
 .gstack/
 
 .vercel
+
+# Claude Code worktrees and temp files
+/.claude/worktrees/
+/.claude/settings.local.json
+
+# Supabase temp files
+/supabase/.temp/
+
+# Screenshots and local images
+*.png
+!public/**/*.png
