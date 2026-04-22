@@ -76,14 +76,22 @@ export default async function SectionPage({
         return <CodeSection content={c} />
       case 'simulation': {
         const simId: string | undefined = c?.simulation_id
-        if (!simId) {
-          return (
-            <div className="py-8 text-center text-[#6a6a6a]">
-              Simulation not configured.
-            </div>
-          )
-        }
-        return <SimulationSection simulationId={simId} />
+        if (!simId) return <div className="py-8 text-center text-[#6a6a6a]">Simulation not configured.</div>
+
+        // Fetch simulation server-side so iframe src is a stable prop
+        // (client-side fetch causes re-renders that reset the iframe load)
+        const { data: sim } = await supabase
+          .from('simulations')
+          .select('title, config')
+          .eq('id', simId)
+          .single()
+
+        const cfg = sim?.config as Record<string, unknown> | null
+        const designId = (cfg?.design_id as string) ?? null
+        const height = (cfg?.height as number) ?? 500
+        const simTitle = sim?.title ?? 'Interactive Simulation'
+
+        return <SimulationSection designId={designId} height={height} title={simTitle} />
       }
       case 'quiz': {
         const quizId: string | undefined = c?.quiz_id

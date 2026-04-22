@@ -1,44 +1,18 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useSupabaseClient } from '@/lib/supabase/client'
-import { PlayCircle, Loader2, ExternalLink } from 'lucide-react'
+import { PlayCircle, ExternalLink } from 'lucide-react'
 
-type SimulationData = {
-  id: string
-  title: string | null
-  config: { design_id?: string; height?: number }
-}
-
-export function SimulationSection({ simulationId }: { simulationId: string }) {
-  const supabase = useSupabaseClient()
-  const [simulation, setSimulation] = useState<SimulationData | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    supabase
-      .from('simulations')
-      .select('id, title, config')
-      .eq('id', simulationId)
-      .single()
-      .then(({ data }) => {
-        setSimulation(data as SimulationData | null)
-        setLoading(false)
-      })
-  }, [simulationId, supabase])
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 text-[#6a6a6a] animate-spin" />
-      </div>
-    )
-  }
-
-  const designId = simulation?.config?.design_id
-  const height = simulation?.config?.height ?? 500
-  const title = simulation?.title ?? 'Interactive Simulation'
-
+// Props come from the server — no client-side fetch, so the iframe
+// src is stable and never changes across re-renders.
+export function SimulationSection({
+  designId,
+  height = 500,
+  title = 'Interactive Simulation',
+}: {
+  designId: string | null
+  height?: number
+  title?: string
+}) {
   return (
     <div
       className="rounded-2xl border border-[#c1c1c1] overflow-hidden"
@@ -63,9 +37,9 @@ export function SimulationSection({ simulationId }: { simulationId: string }) {
         )}
       </div>
 
-      {/* Body */}
       {designId ? (
         <>
+          {/* Hint strip */}
           <div className="flex items-center gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100 text-xs text-amber-700">
             <PlayCircle className="w-3.5 h-3.5 shrink-0" />
             Click <strong className="mx-0.5">Start Simulation</strong> inside the circuit viewer to run it.
