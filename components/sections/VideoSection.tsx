@@ -86,7 +86,7 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
         className="flex items-center gap-3 p-4 rounded-xl border border-[#c1c1c1] hover:border-[#ff385c] hover:bg-[#f2f2f2] transition-all group"
       >
         <ExternalLink className="w-4 h-4 text-[#6a6a6a] group-hover:text-[#ff385c] transition-colors" />
-        <span className="text-sm text-[#222222] group-hover:text-[#ff385c] transition-colors font-500">
+        <span className="text-sm text-[#222222] group-hover:text-[#ff385c] transition-colors font-medium">
           {caption ?? 'Watch Video'}
         </span>
       </a>

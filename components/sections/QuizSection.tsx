@@ -199,7 +199,7 @@ export function QuizSection({
             </div>
             <div>
               <p
-                className={`font-700 text-lg ${
+                className={`font-bold text-lg ${
                   result.passed ? 'text-green-800' : 'text-red-800'
                 }`}
               >
@@ -222,7 +222,7 @@ export function QuizSection({
         {/* Answer review */}
         {result.showAnswers && result.answerDetails && result.answerDetails.length > 0 && (
           <div className="space-y-3">
-            <h3 className="text-sm font-600 text-[#222222]">Answer Review</h3>
+            <h3 className="text-sm font-semibold text-[#222222]">Answer Review</h3>
             {questions.map((q, idx) => {
               const detail = result.answerDetails?.find((d) => d.questionId === q.id)
               const studentAnswerId = answers[q.id]
@@ -238,10 +238,10 @@ export function QuizSection({
                   }`}
                 >
                   <div className="flex items-start gap-2 mb-2">
-                    <span className="text-xs font-600 text-[#6a6a6a] shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-[#6a6a6a] shrink-0 mt-0.5">
                       Q{idx + 1}
                     </span>
-                    <p className="text-sm text-[#222222] font-500">{q.question_text}</p>
+                    <p className="text-sm text-[#222222] font-medium">{q.question_text}</p>
                     {isCorrect ? (
                       <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0 ml-auto" />
                     ) : (
@@ -252,7 +252,7 @@ export function QuizSection({
                   <p className="text-xs text-[#6a6a6a] ml-5">
                     Your answer:{' '}
                     <span
-                      className={`font-500 ${isCorrect ? 'text-green-700' : 'text-red-700'}`}
+                      className={`font-medium ${isCorrect ? 'text-green-700' : 'text-red-700'}`}
                     >
                       {studentOption?.text ?? '—'}
                     </span>
@@ -261,7 +261,7 @@ export function QuizSection({
                   {!isCorrect && correctOption && (
                     <p className="text-xs ml-5 mt-0.5">
                       Correct answer:{' '}
-                      <span className="font-500 text-green-700">{correctOption.text}</span>
+                      <span className="font-medium text-green-700">{correctOption.text}</span>
                     </p>
                   )}
 
@@ -303,7 +303,7 @@ export function QuizSection({
           <HelpCircle className="w-5 h-5 text-[#ff385c]" />
         </div>
         <div>
-          <h2 className="text-base font-600 text-[#222222]">{quiz.title}</h2>
+          <h2 className="text-base font-semibold text-[#222222]">{quiz.title}</h2>
           {quiz.description && (
             <p className="text-xs text-[#6a6a6a] mt-0.5">{quiz.description}</p>
           )}
@@ -337,7 +337,7 @@ export function QuizSection({
                     'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px',
                 }}
               >
-                <p className="text-sm font-600 text-[#222222] mb-3">
+                <p className="text-sm font-semibold text-[#222222] mb-3">
                   <span className="text-[#ff385c] mr-1">Q{idx + 1}.</span>
                   {q.question_text}
                 </p>
@@ -380,7 +380,7 @@ export function QuizSection({
           <button
             onClick={handleSubmit}
             disabled={!allAnswered || isPending}
-            className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-600 hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isPending ? (
               <span className="flex items-center justify-center gap-2">

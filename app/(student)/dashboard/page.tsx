@@ -88,12 +88,12 @@ export default async function DashboardPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-700 text-[#222222]">Welcome back, {firstName}</h1>
+          <h1 className="text-2xl font-bold text-[#222222]">Welcome back, {firstName}</h1>
           <p className="text-[#6a6a6a] mt-1">Your enrolled classes are listed below.</p>
         </div>
         <Link
           href="/dashboard/join"
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#ff385c] text-white rounded-xl text-sm font-600 hover:bg-[#e0324f] transition-colors shadow-sm"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] transition-colors shadow-sm"
         >
           <Plus className="w-4 h-4" />
           Join a Class
@@ -106,13 +106,13 @@ export default async function DashboardPage() {
           <div className="w-16 h-16 rounded-2xl bg-[#f2f2f2] flex items-center justify-center mb-4">
             <GraduationCap className="w-8 h-8 text-[#c1c1c1]" />
           </div>
-          <h2 className="text-lg font-600 text-[#222222] mb-2">No classes yet</h2>
+          <h2 className="text-lg font-semibold text-[#222222] mb-2">No classes yet</h2>
           <p className="text-[#6a6a6a] mb-6 max-w-sm">
             Join a class using the code your educator shared with you.
           </p>
           <Link
             href="/dashboard/join"
-            className="inline-flex items-center gap-2 px-5 py-3 bg-[#ff385c] text-white rounded-xl text-sm font-600 hover:bg-[#e0324f] transition-colors"
+            className="inline-flex items-center gap-2 px-5 py-3 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] transition-colors"
           >
             <Plus className="w-4 h-4" />
             Join a Class
@@ -158,7 +158,7 @@ export default async function DashboardPage() {
                   <ChevronRight className="w-4 h-4 text-[#c1c1c1] group-hover:text-[#ff385c] transition-colors mt-1" />
                 </div>
 
-                <h3 className="font-600 text-[#222222] text-base leading-snug mb-1">
+                <h3 className="font-semibold text-[#222222] text-base leading-snug mb-1">
                   {cls.name}
                 </h3>
                 <p className="text-xs text-[#6a6a6a] mb-3">by {educatorName}</p>

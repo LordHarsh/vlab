@@ -17,7 +17,7 @@ export function CodeSection({ content }: { content: CodeContent | null }) {
       {/* Header bar */}
       <div className="flex items-center justify-between px-4 py-2 bg-[#1a1a2e] rounded-t-xl border-b border-white/10">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-600 text-white/80 uppercase tracking-wide">
+          <span className="text-xs font-semibold text-white/80 uppercase tracking-wide">
             {language}
           </span>
           {platform && (

@@ -70,7 +70,7 @@ export default function JoinClassPage() {
             <Hash className="w-6 h-6 text-[#ff385c]" />
           </div>
 
-          <h1 className="text-xl font-700 text-[#222222] mb-1">Join a class</h1>
+          <h1 className="text-xl font-bold text-[#222222] mb-1">Join a class</h1>
           <p className="text-sm text-[#6a6a6a] mb-6">
             Enter the join code your educator shared with you.
           </p>
@@ -79,7 +79,7 @@ export default function JoinClassPage() {
             <div className="flex items-center gap-3 p-4 bg-green-50 rounded-xl border border-green-200">
               <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
               <div>
-                <p className="text-sm font-600 text-green-800">Joined successfully!</p>
+                <p className="text-sm font-semibold text-green-800">Joined successfully!</p>
                 <p className="text-xs text-green-700 mt-0.5">Redirecting to your class...</p>
               </div>
             </div>
@@ -88,7 +88,7 @@ export default function JoinClassPage() {
               <div>
                 <label
                   htmlFor="join-code"
-                  className="block text-sm font-500 text-[#222222] mb-2"
+                  className="block text-sm font-medium text-[#222222] mb-2"
                 >
                   Class join code
                 </label>
@@ -101,7 +101,7 @@ export default function JoinClassPage() {
                   maxLength={8}
                   autoFocus
                   autoComplete="off"
-                  className="w-full px-4 py-3 border border-[#c1c1c1] rounded-xl text-lg font-600 text-center text-[#222222] placeholder:text-[#c1c1c1] placeholder:font-400 placeholder:text-base focus:outline-none focus:border-[#ff385c] focus:ring-2 focus:ring-[#ff385c]/20 tracking-widest transition-colors"
+                  className="w-full px-4 py-3 border border-[#c1c1c1] rounded-xl text-lg font-semibold text-center text-[#222222] placeholder:text-[#c1c1c1] placeholder:font-400 placeholder:text-base focus:outline-none focus:border-[#ff385c] focus:ring-2 focus:ring-[#ff385c]/20 tracking-widest transition-colors"
                 />
                 <p className="text-xs text-[#6a6a6a] mt-1.5">Format: ABC-1234</p>
               </div>
@@ -116,7 +116,7 @@ export default function JoinClassPage() {
               <button
                 type="submit"
                 disabled={isPending || code.length < 7}
-                className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-600 hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isPending ? 'Joining...' : 'Join Class'}
               </button>

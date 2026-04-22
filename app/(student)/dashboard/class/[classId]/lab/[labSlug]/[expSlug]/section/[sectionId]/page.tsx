@@ -141,7 +141,7 @@ export default async function SectionPage({
   return (
     <div>
       {section.title && (
-        <h1 className="text-xl font-700 text-[#222222] mb-6">{section.title}</h1>
+        <h1 className="text-xl font-bold text-[#222222] mb-6">{section.title}</h1>
       )}
       {renderSection()}
     </div>

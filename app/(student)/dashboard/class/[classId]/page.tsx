@@ -153,7 +153,7 @@ export default async function ClassPage({
             <BookOpen className="w-6 h-6 text-[#ff385c]" />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-700 text-[#222222]">{cls.name}</h1>
+            <h1 className="text-xl font-bold text-[#222222]">{cls.name}</h1>
             {cls.description && (
               <p className="text-sm text-[#6a6a6a] mt-1">{cls.description}</p>
             )}
@@ -171,7 +171,7 @@ export default async function ClassPage({
       </div>
 
       {/* Labs section */}
-      <h2 className="text-base font-600 text-[#222222] mb-4">Assigned Labs</h2>
+      <h2 className="text-base font-semibold text-[#222222] mb-4">Assigned Labs</h2>
 
       {!classLabs || classLabs.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -220,7 +220,7 @@ export default async function ClassPage({
                         Unlocks {new Date(cl.unlock_at!).toLocaleDateString()}
                       </span>
                     </div>
-                    <h3 className="font-600 text-[#222222] mb-1">{lab.title}</h3>
+                    <h3 className="font-semibold text-[#222222] mb-1">{lab.title}</h3>
                     {lab.description && (
                       <p className="text-xs text-[#6a6a6a] line-clamp-2">{lab.description}</p>
                     )}
@@ -235,9 +235,9 @@ export default async function ClassPage({
                     </div>
 
                     <div className="flex items-center gap-2 mb-2">
-                      <h3 className="font-600 text-[#222222] flex-1 leading-snug">{lab.title}</h3>
+                      <h3 className="font-semibold text-[#222222] flex-1 leading-snug">{lab.title}</h3>
                       {lab.difficulty && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-500 ${diffClass}`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${diffClass}`}>
                           {lab.difficulty}
                         </span>
                       )}

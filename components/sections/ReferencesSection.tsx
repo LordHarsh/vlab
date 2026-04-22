@@ -27,7 +27,7 @@ export function ReferencesSection({ content }: { content: ReferencesContent | nu
           >
             <ExternalLink className="w-4 h-4 text-[#6a6a6a] group-hover:text-[#ff385c] mt-0.5 shrink-0 transition-colors" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-500 text-[#222222] group-hover:text-[#ff385c] transition-colors leading-snug">
+              <p className="text-sm font-medium text-[#222222] group-hover:text-[#ff385c] transition-colors leading-snug">
                 {item.title}
               </p>
               <p className="text-xs text-[#6a6a6a] truncate mt-0.5">{item.url}</p>

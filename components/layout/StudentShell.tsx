@@ -84,10 +84,10 @@ export function StudentShell({
               href={link.href}
               onClick={() => setSidebarOpen(false)}
               className={`
-                flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-500 transition-colors
+                flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors
                 ${
                   isActive(link.href)
-                    ? 'bg-[#ff385c]/10 text-[#ff385c] font-600'
+                    ? 'bg-[#ff385c]/10 text-[#ff385c] font-semibold'
                     : 'text-[#222222] hover:bg-[#f2f2f2]'
                 }
               `}

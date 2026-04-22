@@ -18,7 +18,7 @@ export function TheorySection({ content }: { content: TheoryContent | null }) {
         <div className="space-y-5">
           {content.sections.map((sec, i) => (
             <div key={i}>
-              <h3 className="text-base font-600 text-[#222222] mb-2 flex items-center gap-2">
+              <h3 className="text-base font-semibold text-[#222222] mb-2 flex items-center gap-2">
                 <span className="w-1 h-5 bg-[#ff385c] rounded-full inline-block shrink-0" />
                 {sec.heading}
               </h3>

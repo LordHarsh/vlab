@@ -121,7 +121,7 @@ export function ExperimentShell({
         {/* Section sidebar */}
         <aside className="hidden lg:flex flex-col w-64 shrink-0 border-r border-[#f2f2f2] bg-white sticky top-[61px] h-[calc(100vh-61px)] overflow-y-auto">
           <div className="px-4 py-4">
-            <p className="text-xs font-600 text-[#6a6a6a] uppercase tracking-wide mb-3">
+            <p className="text-xs font-semibold text-[#6a6a6a] uppercase tracking-wide mb-3">
               Sections
             </p>
             <nav className="space-y-0.5">
@@ -142,7 +142,7 @@ export function ExperimentShell({
                       flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors group
                       ${
                         isActive
-                          ? 'bg-[#ff385c]/10 text-[#ff385c] font-600'
+                          ? 'bg-[#ff385c]/10 text-[#ff385c] font-semibold'
                           : 'text-[#222222] hover:bg-[#f2f2f2]'
                       }
                     `}
@@ -192,7 +192,7 @@ export function ExperimentShell({
               {nextSection ? (
                 <Link
                   href={`${baseUrl}/section/${nextSection.id}`}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-500 hover:bg-[#e0324f] transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0324f] transition-colors"
                 >
                   <span className="hidden sm:inline">
                     {nextSection.title ??
@@ -205,7 +205,7 @@ export function ExperimentShell({
               ) : (
                 <Link
                   href={`/dashboard/class/${classId}/lab/${labSlug}`}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600 text-white text-sm font-500 hover:bg-green-700 transition-colors"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
                 >
                   Finish Experiment
                   <CheckCircle2 className="w-4 h-4" />

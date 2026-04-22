@@ -120,10 +120,10 @@ export default async function LabPage({
         }}
       >
         <div className="flex items-start gap-2 flex-wrap mb-2">
-          <h1 className="text-xl font-700 text-[#222222] flex-1">{lab.title}</h1>
+          <h1 className="text-xl font-bold text-[#222222] flex-1">{lab.title}</h1>
           {lab.difficulty && (
             <span
-              className={`text-xs px-2.5 py-1 rounded-full font-500 ${
+              className={`text-xs px-2.5 py-1 rounded-full font-medium ${
                 difficultyColors[lab.difficulty.toLowerCase()] ?? 'bg-gray-100 text-gray-600'
               }`}
             >
@@ -150,7 +150,7 @@ export default async function LabPage({
       </div>
 
       {/* Experiments */}
-      <h2 className="text-base font-600 text-[#222222] mb-4">
+      <h2 className="text-base font-semibold text-[#222222] mb-4">
         Experiments{' '}
         <span className="text-[#6a6a6a] font-400 text-sm">({(experiments ?? []).length})</span>
       </h2>
@@ -186,7 +186,7 @@ export default async function LabPage({
               >
                 {/* Index */}
                 <div
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-700 ${
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold ${
                     isCompleted
                       ? 'bg-green-100 text-green-700'
                       : 'bg-[#f2f2f2] text-[#6a6a6a]'
@@ -201,14 +201,14 @@ export default async function LabPage({
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <h3 className="font-600 text-[#222222] text-sm leading-snug">{exp.title}</h3>
+                    <h3 className="font-semibold text-[#222222] text-sm leading-snug">{exp.title}</h3>
                     {exp.difficulty && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-500 ${diffClass}`}>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${diffClass}`}>
                         {exp.difficulty}
                       </span>
                     )}
                     {isCompleted && (
-                      <span className="text-xs px-2 py-0.5 rounded-full font-500 bg-green-100 text-green-700">
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-700">
                         Completed
                       </span>
                     )}
