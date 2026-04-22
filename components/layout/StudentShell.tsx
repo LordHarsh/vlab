@@ -100,8 +100,12 @@ export function StudentShell({
 
         {/* Profile + Sign out */}
         <div className="border-t border-[#f2f2f2] px-4 py-4 space-y-1">
-          {/* Profile display — not a link, just shows the user */}
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#222222]">
+          {/* Profile link → Clerk UserProfile page */}
+          <Link
+            href="/profile"
+            onClick={() => setSidebarOpen(false)}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#222222] hover:bg-[#f2f2f2] transition-colors"
+          >
             {profile.avatar_url ? (
               <img
                 src={profile.avatar_url}
@@ -117,7 +121,7 @@ export function StudentShell({
               <p className="font-medium truncate">{displayName}</p>
               <p className="text-xs text-[#6a6a6a] truncate">{profile.email}</p>
             </div>
-          </div>
+          </Link>
           <button
             onClick={() => signOut({ redirectUrl: '/sign-in' })}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#6a6a6a] hover:bg-[#f2f2f2] hover:text-[#222222] transition-colors"

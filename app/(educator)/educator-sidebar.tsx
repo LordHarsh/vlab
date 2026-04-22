@@ -85,7 +85,10 @@ export function EducatorSidebar({ profile }: { profile: Profile }) {
 
       {/* Profile & Sign out */}
       <div className="p-4 border-t border-[#c1c1c1] space-y-2">
-        <div className="flex items-center gap-3 px-3 py-2">
+        <Link
+          href="/profile"
+          className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#f2f2f2] transition-colors"
+        >
           <div className="w-8 h-8 rounded-full bg-[#f2f2f2] flex items-center justify-center shrink-0">
             <User className="w-4 h-4 text-[#6a6a6a]" />
           </div>
@@ -93,7 +96,7 @@ export function EducatorSidebar({ profile }: { profile: Profile }) {
             <p className="text-sm font-medium text-[#222222] truncate">{displayName}</p>
             <p className="text-xs text-[#6a6a6a] truncate">{profile.email}</p>
           </div>
-        </div>
+        </Link>
         <SignOutButton>
           <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#6a6a6a] hover:bg-[#f2f2f2] hover:text-[#222222] transition-colors">
             <LogOut className="w-4 h-4 shrink-0" />
