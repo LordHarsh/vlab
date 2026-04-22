@@ -2,6 +2,7 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminSupabaseClient } from '@/lib/supabase/admin'
 
 export async function joinByCode(
   code: string,
@@ -12,6 +13,9 @@ export async function joinByCode(
   }
 
   const supabase = await createServerSupabaseClient()
+  // Use admin client for class lookup — student has no RLS access to classes
+  // they haven't joined yet, so the join_code lookup would return nothing otherwise.
+  const adminSupabase = createAdminSupabaseClient()
 
   // Get the student's profile
   const { data: profile, error: profileError } = await supabase
@@ -24,11 +28,11 @@ export async function joinByCode(
     return { success: false, error: 'Profile not found' }
   }
 
-  // Find class by join code
-  const { data: cls, error: classError } = await supabase
+  // Find class by join code (admin client bypasses RLS)
+  const { data: cls, error: classError } = await adminSupabase
     .from('classes')
     .select('id, status, join_code_expires_at, max_students')
-    .eq('join_code', code.trim().toUpperCase())
+    .eq('join_code', code.trim())
     .single()
 
   if (classError || !cls) {
@@ -67,7 +71,7 @@ export async function joinByCode(
 
   // Check max_students limit
   if (cls.max_students !== null) {
-    const { count } = await supabase
+    const { count } = await adminSupabase
       .from('enrollments')
       .select('id', { count: 'exact', head: true })
       .eq('class_id', cls.id)
