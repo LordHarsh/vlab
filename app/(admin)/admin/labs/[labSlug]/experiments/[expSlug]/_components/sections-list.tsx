@@ -67,7 +67,7 @@ function ContentEditor({ section, onClose }: { section: Section; onClose: () => 
     setError(null)
     startTransition(async () => {
       const result = await updateSection(section.id, {
-        title: title.trim() || null,
+        title: title.trim() || undefined,
         content: parsed as Json,
         is_required: isRequired,
       })
