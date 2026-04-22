@@ -59,7 +59,7 @@ export function StudentShell({
           fixed top-0 left-0 h-full w-64 bg-white border-r border-[#c1c1c1] z-40 flex flex-col
           transition-transform duration-300
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          lg:translate-x-0 lg:static lg:z-auto
+          lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:z-auto
         `}
       >
         {/* Logo */}
@@ -100,24 +100,24 @@ export function StudentShell({
 
         {/* Profile + Sign out */}
         <div className="border-t border-[#f2f2f2] px-4 py-4 space-y-1">
-          <Link
-            href="/profile"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#222222] hover:bg-[#f2f2f2] transition-colors"
-          >
+          {/* Profile display — not a link, just shows the user */}
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#222222]">
             {profile.avatar_url ? (
               <img
                 src={profile.avatar_url}
                 alt={displayName}
-                className="w-7 h-7 rounded-full object-cover"
+                className="w-7 h-7 rounded-full object-cover shrink-0"
               />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-[#f2f2f2] flex items-center justify-center">
+              <div className="w-7 h-7 rounded-full bg-[#f2f2f2] flex items-center justify-center shrink-0">
                 <User className="w-4 h-4 text-[#6a6a6a]" />
               </div>
             )}
-            <span className="truncate">{displayName}</span>
-          </Link>
+            <div className="min-w-0">
+              <p className="font-medium truncate">{displayName}</p>
+              <p className="text-xs text-[#6a6a6a] truncate">{profile.email}</p>
+            </div>
+          </div>
           <button
             onClick={() => signOut({ redirectUrl: '/sign-in' })}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[#6a6a6a] hover:bg-[#f2f2f2] hover:text-[#222222] transition-colors"

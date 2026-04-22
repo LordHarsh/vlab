@@ -34,7 +34,7 @@ export function EducatorSidebar({ profile }: { profile: Profile }) {
       : profile.email
 
   return (
-    <aside className="w-64 min-h-screen bg-white border-r border-[#c1c1c1] flex flex-col sticky top-0 h-screen">
+    <aside className="w-64 shrink-0 bg-white border-r border-[#c1c1c1] flex flex-col sticky top-0 h-screen overflow-y-auto">
       {/* Logo */}
       <div className="p-6 border-b border-[#c1c1c1]">
         <Link href="/educator" className="flex items-center gap-2">
