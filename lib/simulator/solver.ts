@@ -29,6 +29,10 @@ export class Circuit {
 
   /** Allocate a fresh net. Net 0 is ground and is never allocated. */
   allocNet(): NetId {
+    // Must invalidate: without this, allocating after a solve leaves the matrix
+    // sized for the old net count. Measured symptom was ok:true with a branch
+    // current returned in a node-voltage slot and a NaN beside it.
+    this.dirty = true
     return this.nextNet++
   }
 
@@ -76,7 +80,22 @@ export class Circuit {
     const o = { ...DEFAULT_OPTIONS, ...opts }
     if (this.dirty) this.layout()
 
-    const direct = this.newton(o, o.gmin)
+    let direct: SolveResult
+    try {
+      direct = this.newton(o, o.gmin)
+    } catch (e) {
+      // A malformed circuit (e.g. a device stamped onto an unallocated net) must
+      // surface as a failed solve, not an exception — this runs inside the
+      // simulation worker and a throw would take the whole session down.
+      return {
+        ok: false,
+        voltages: new Float64Array(this.nextNet),
+        x: new Float64Array(this.n),
+        iterations: 0,
+        usedGminStepping: false,
+        error: e instanceof Error ? e.message : String(e),
+      }
+    }
     if (direct.ok) return direct
 
     // Homotopy: start with a heavily damped circuit that is trivially solvable,
@@ -122,7 +141,19 @@ export class Circuit {
       b,
       x: this.x,
       n,
-      index: (net: NetId) => (net === 0 ? -1 : net - 1),
+      index: (net: NetId) => {
+        if (net === 0) return -1
+        // Typed arrays discard out-of-range writes silently, so a device
+        // stamped onto a net this Circuit never allocated corrupts a branch row
+        // and still reports success. Fail loudly instead.
+        if (net < 0 || net >= this.nextNet) {
+          throw new Error(
+            `Device stamped onto net ${net}, which this circuit never allocated ` +
+              `(highest is ${this.nextNet - 1}). Nets must come from allocNet().`,
+          )
+        }
+        return net - 1
+      },
       voltage: (net: NetId) => (net === 0 ? 0 : this.x[net - 1]),
     }
 
@@ -171,13 +202,7 @@ export class Circuit {
 
       // A linear circuit is exact in one solve; there is nothing to iterate on.
       if (!hasNonlinear) {
-        return {
-          ok: true,
-          voltages: this.extractVoltages(),
-          x: this.x,
-          iterations,
-          usedGminStepping: false,
-        }
+        return this.succeed(ctx, iterations)
       }
 
       // Require at least two iterations so the convergence test compares two
@@ -185,13 +210,7 @@ export class Circuit {
       // that no device is still being damped — see Device.settled.
       const settled = this.devices.every((d) => d.settled !== false)
       if (converged && settled && iter > 0) {
-        return {
-          ok: true,
-          voltages: this.extractVoltages(),
-          x: this.x,
-          iterations,
-          usedGminStepping: false,
-        }
+        return this.succeed(ctx, iterations)
       }
     }
 
@@ -202,6 +221,23 @@ export class Circuit {
       iterations,
       usedGminStepping: false,
       error: `no convergence in ${o.maxIter} iterations`,
+    }
+  }
+
+  /**
+   * Finalise a converged solve: let devices recompute their reported quantities
+   * from the final voltages, and hand back copies rather than the live buffers.
+   */
+  private succeed(ctx: StampContext, iterations: number): SolveResult {
+    for (const d of this.devices) d.readback?.(ctx)
+    return {
+      ok: true,
+      voltages: this.extractVoltages(),
+      // this.x is the warm-start buffer and keeps mutating on the next solve;
+      // returning it directly let an old result change under the caller.
+      x: this.x.slice(),
+      iterations,
+      usedGminStepping: false,
     }
   }
 

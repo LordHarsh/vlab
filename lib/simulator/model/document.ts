@@ -1,0 +1,216 @@
+/**
+ * The circuit document, and the reducer that edits it.
+ *
+ * Serialises to the shape SIMULATOR_ARCHITECTURE.md §7 stores in
+ * circuits.graph: parts[] + wires[], with nets DERIVED rather than stored.
+ * Never persist nets — they are a pure function of parts and wires, and a
+ * stored copy is a copy that can disagree.
+ */
+
+import { getPart, PITCH } from './parts'
+
+export interface PinRef {
+  partId: string
+  pinId: string
+}
+
+export interface PlacedPart {
+  id: string
+  type: string
+  x: number
+  y: number
+  rotation: 0 | 90 | 180 | 270
+  props: Record<string, number | string>
+}
+
+export interface DocWire {
+  id: string
+  from: PinRef
+  to: PinRef
+  color: string
+}
+
+export interface CircuitDoc {
+  parts: PlacedPart[]
+  wires: DocWire[]
+}
+
+export const EMPTY_DOC: CircuitDoc = { parts: [], wires: [] }
+
+export const WIRE_COLORS = ['#e04a4a', '#111827', '#2f7d32', '#2563eb', '#eab308', '#7c3aed']
+
+export function pinKeyOf(ref: PinRef): string {
+  return `${ref.partId} ${ref.pinId}`
+}
+
+export function samePin(a: PinRef, b: PinRef): boolean {
+  return a.partId === b.partId && a.pinId === b.pinId
+}
+
+/** Absolute canvas position of a pin, accounting for the part's rotation. */
+export function pinPosition(part: PlacedPart, pinId: string): { x: number; y: number } | null {
+  const def = getPart(part.type)
+  const pin = def.pins.find((p) => p.id === pinId)
+  if (!pin) return null
+
+  const { width: w, height: h } = def
+  let { x, y } = pin
+  switch (part.rotation) {
+    case 90:
+      ;[x, y] = [h - y, x]
+      break
+    case 180:
+      ;[x, y] = [w - x, h - y]
+      break
+    case 270:
+      ;[x, y] = [y, w - x]
+      break
+  }
+  return { x: part.x + x, y: part.y + y }
+}
+
+export function partBounds(part: PlacedPart): { w: number; h: number } {
+  const def = getPart(part.type)
+  const swapped = part.rotation === 90 || part.rotation === 270
+  return swapped ? { w: def.height, h: def.width } : { w: def.width, h: def.height }
+}
+
+export function snap(v: number): number {
+  return Math.round(v / PITCH) * PITCH
+}
+
+// ─── Actions ──────────────────────────────────────────────────────────────────
+
+export type DocAction =
+  | { type: 'addPart'; part: PlacedPart }
+  | { type: 'movePart'; id: string; x: number; y: number }
+  | { type: 'rotatePart'; id: string }
+  | { type: 'removePart'; id: string }
+  | { type: 'setProp'; id: string; key: string; value: number | string }
+  | { type: 'addWire'; wire: DocWire }
+  | { type: 'removeWire'; id: string }
+  | { type: 'load'; doc: CircuitDoc }
+  | { type: 'undo' }
+  | { type: 'redo' }
+
+export interface DocState {
+  doc: CircuitDoc
+  past: CircuitDoc[]
+  future: CircuitDoc[]
+}
+
+export const initialDocState: DocState = { doc: EMPTY_DOC, past: [], future: [] }
+
+/** Actions that should not create an undo entry of their own. */
+const TRANSIENT = new Set(['undo', 'redo', 'load'])
+
+const HISTORY_LIMIT = 100
+
+export function docReducer(state: DocState, action: DocAction): DocState {
+  if (action.type === 'undo') {
+    const prev = state.past[state.past.length - 1]
+    if (!prev) return state
+    return {
+      doc: prev,
+      past: state.past.slice(0, -1),
+      future: [state.doc, ...state.future].slice(0, HISTORY_LIMIT),
+    }
+  }
+
+  if (action.type === 'redo') {
+    const next = state.future[0]
+    if (!next) return state
+    return {
+      doc: next,
+      past: [...state.past, state.doc].slice(-HISTORY_LIMIT),
+      future: state.future.slice(1),
+    }
+  }
+
+  if (action.type === 'load') {
+    return { doc: action.doc, past: [], future: [] }
+  }
+
+  const doc = applyEdit(state.doc, action)
+  if (doc === state.doc) return state
+
+  return {
+    doc,
+    past: TRANSIENT.has(action.type) ? state.past : [...state.past, state.doc].slice(-HISTORY_LIMIT),
+    // Any new edit invalidates the redo branch.
+    future: [],
+  }
+}
+
+function applyEdit(doc: CircuitDoc, action: DocAction): CircuitDoc {
+  switch (action.type) {
+    case 'addPart':
+      return { ...doc, parts: [...doc.parts, action.part] }
+
+    case 'movePart': {
+      const parts = doc.parts.map((p) =>
+        p.id === action.id ? { ...p, x: action.x, y: action.y } : p,
+      )
+      return { ...doc, parts }
+    }
+
+    case 'rotatePart': {
+      const parts = doc.parts.map((p) =>
+        p.id === action.id ? { ...p, rotation: (((p.rotation + 90) % 360) as PlacedPart['rotation']) } : p,
+      )
+      return { ...doc, parts }
+    }
+
+    case 'removePart':
+      return {
+        parts: doc.parts.filter((p) => p.id !== action.id),
+        // Wires to a deleted part would dangle, so they go with it.
+        wires: doc.wires.filter(
+          (w) => w.from.partId !== action.id && w.to.partId !== action.id,
+        ),
+      }
+
+    case 'setProp': {
+      const parts = doc.parts.map((p) =>
+        p.id === action.id ? { ...p, props: { ...p.props, [action.key]: action.value } } : p,
+      )
+      return { ...doc, parts }
+    }
+
+    case 'addWire': {
+      // Reject self-loops and exact duplicates; both are pure noise in the netlist.
+      if (samePin(action.wire.from, action.wire.to)) return doc
+      const dup = doc.wires.some(
+        (w) =>
+          (samePin(w.from, action.wire.from) && samePin(w.to, action.wire.to)) ||
+          (samePin(w.from, action.wire.to) && samePin(w.to, action.wire.from)),
+      )
+      if (dup) return doc
+      return { ...doc, wires: [...doc.wires, action.wire] }
+    }
+
+    case 'removeWire':
+      return { ...doc, wires: doc.wires.filter((w) => w.id !== action.id) }
+
+    default:
+      return doc
+  }
+}
+
+// ─── Ids ──────────────────────────────────────────────────────────────────────
+
+let counter = 0
+
+/**
+ * Deterministic within a session. Deliberately not crypto.randomUUID: ids end
+ * up in saved documents and in test fixtures, and short readable ids make both
+ * diffable.
+ */
+export function newId(prefix: string): string {
+  counter += 1
+  return `${prefix}${counter}`
+}
+
+export function resetIds(): void {
+  counter = 0
+}

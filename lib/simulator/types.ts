@@ -25,7 +25,12 @@ export interface SolveOptions {
   /**
    * Conductance added from every node to ground. Prevents singular matrices when
    * a student leaves a subnet floating — the single most common failure mode.
-   * SIMULATOR_ARCHITECTURE.md §3 calls for 1 GΩ, i.e. 1e-9 S.
+   *
+   * The architecture suggested 1 GΩ (1e-9 S), but that is only 10x below the
+   * 1e-8 S used to model a high-impedance input pin, so it visibly loaded high
+   * value dividers: a 10M/10M pair read 2.3697 V against a true 2.3810 V, about
+   * 2.3 LSB of a 10-bit analogRead. 1 TΩ still breaks singularity and sits four
+   * orders below the input model.
    */
   gmin: number
 }
@@ -35,7 +40,7 @@ export const DEFAULT_OPTIONS: SolveOptions = {
   vntol: 1e-6,
   abstol: 1e-12,
   maxIter: 100,
-  gmin: 1e-9,
+  gmin: 1e-12,
 }
 
 /**
@@ -75,6 +80,18 @@ export interface Device {
    * walking the junction up. SPICE guards this the same way.
    */
   readonly settled?: boolean
+  /**
+   * Recompute reported quantities (currents, powers) from the CONVERGED
+   * voltages. Called once after the Newton loop succeeds.
+   *
+   * Without this a device's current is one iterate stale: stamp() reads iterate
+   * k−1, the solver then solves for k and returns those voltages. With
+   * reltol=1e-3 the final step can be ~1 mV, which on a diode's exponential is
+   * ~2% of current — and the error depends on how many iterations were needed,
+   * so a cold solve and a warm solve of the same circuit disagreed. That value
+   * feeds LED brightness, the over-current check, and the memoisation cache.
+   */
+  readback?(ctx: StampContext): void
 }
 
 export interface SolveResult {

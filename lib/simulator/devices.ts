@@ -31,6 +31,19 @@ function stampCurrent(ctx: StampContext, a: NetId, b: NetId, i: number): void {
   if (ib >= 0) ctx.b[ib] += i
 }
 
+/**
+ * Floor for any resistance, in ohms. This is a NUMERICAL limit, not cosmetic.
+ *
+ * Clamping R=0 to 1e-12 Ω stamps a conductance of 1e12 S onto the diagonal.
+ * Double precision carries ~2.2e-16 relative error, so any conductance below
+ * 1e12 × 2.2e-16 ≈ 2.2e-4 S — i.e. any resistor above ~4.5 kΩ — is annihilated
+ * when summed against it. Measured with the old clamp: a 5V/10k/short/10k
+ * divider returned 2.048 V where theory says 2.500 V, and reported ok:true,
+ * because the matrix is only singular to working precision and LU never
+ * notices. 1 mΩ is both physically honest for a wire and numerically safe.
+ */
+export const MIN_RESISTANCE = 1e-3
+
 export class Resistor implements Device {
   readonly nonlinear = false
   readonly extraUnknowns = 0
@@ -44,9 +57,7 @@ export class Resistor implements Device {
   ) {}
 
   stamp(ctx: StampContext): void {
-    // ngspice clamps R=0 to a tiny value rather than dividing by zero; a student
-    // wiring a zero-ohm link should get a short, not a singular matrix.
-    const r = Math.max(this.ohms, 1e-12)
+    const r = Math.max(this.ohms, MIN_RESISTANCE)
     stampConductance(ctx, this.a, this.b, 1 / r)
   }
 }
@@ -213,6 +224,12 @@ export class Diode implements Device {
     const ieq = id - gd * vd
     stampConductance(ctx, this.anode, this.cathode, gd)
     stampCurrent(ctx, this.anode, this.cathode, ieq)
+  }
+
+  /** Recompute current from the converged voltages — see Device.readback. */
+  readback(ctx: StampContext): void {
+    const vd = ctx.voltage(this.anode) - ctx.voltage(this.cathode)
+    this.current = this.params.is * (Math.exp(Math.min(vd / this.vte, 300)) - 1)
   }
 }
 
