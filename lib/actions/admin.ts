@@ -2,6 +2,7 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminSupabaseClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -42,7 +43,9 @@ export async function createLab(data: {
         title: data.title,
         description: data.description ?? null,
         difficulty: data.difficulty ?? null,
-        tags: data.tags ?? null,
+        // labs.tags is NOT NULL DEFAULT '{}' — omit the key when absent so the
+        // default applies. Sending null raises a not-null violation.
+        ...(data.tags ? { tags: data.tags } : {}),
         published: false,
       })
       .select('id')
@@ -344,8 +347,11 @@ export async function editQuizQuestion(
     await requireAdmin()
     const supabase = await createServerSupabaseClient()
 
-    // Get old question
-    const { data: old, error: fetchError } = await supabase
+    // Get old question. Migration 013 revokes SELECT on correct_answer and
+    // explanation from the `authenticated` role, so the merge below — which
+    // carries unchanged fields forward — needs the service-role client.
+    // requireAdmin() has already run.
+    const { data: old, error: fetchError } = await createAdminSupabaseClient()
       .from('quiz_questions')
       .select('*')
       .eq('id', questionId)

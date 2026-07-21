@@ -17,7 +17,7 @@ export function CircuitSection({ content }: { content: CircuitContent | null }) 
     <div className="space-y-6">
       {content.svg_data && (
         <div className="border border-[#c1c1c1] rounded-xl overflow-hidden bg-white p-4 flex justify-center">
-          {/* eslint-disable-next-line react/no-danger */}
+          { }
           <div
             className="max-w-full"
             dangerouslySetInnerHTML={{ __html: content.svg_data }}

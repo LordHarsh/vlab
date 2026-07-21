@@ -596,7 +596,7 @@ export type Database = {
           id: string
           published: boolean
           slug: string
-          tags: string[] | null
+          tags: string[]
           thumbnail_url: string | null
           title: string
           updated_at: string | null
@@ -609,7 +609,7 @@ export type Database = {
           id?: string
           published?: boolean
           slug: string
-          tags?: string[] | null
+          tags?: string[]
           thumbnail_url?: string | null
           title: string
           updated_at?: string | null
@@ -622,7 +622,7 @@ export type Database = {
           id?: string
           published?: boolean
           slug?: string
-          tags?: string[] | null
+          tags?: string[]
           thumbnail_url?: string | null
           title?: string
           updated_at?: string | null
@@ -1006,6 +1006,11 @@ export type Database = {
       auth_is_admin: { Args: never; Returns: boolean }
       auth_profile_id: { Args: never; Returns: string }
       auth_role: { Args: never; Returns: string }
+      can_read_experiment_content: { Args: { p_experiment_id: string }; Returns: boolean }
+      can_read_form_content: { Args: { p_form_id: string }; Returns: boolean }
+      can_read_quiz_content: { Args: { p_quiz_id: string }; Returns: boolean }
+      is_educator_of_class: { Args: { p_class_id: string }; Returns: boolean }
+      is_enrolled_in_class: { Args: { p_class_id: string }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never

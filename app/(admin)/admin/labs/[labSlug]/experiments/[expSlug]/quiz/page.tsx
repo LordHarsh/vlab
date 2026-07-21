@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminSupabaseClient } from '@/lib/supabase/admin'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { QuizSettingsForm } from './_components/quiz-settings-form'
@@ -34,7 +35,10 @@ export default async function QuizEditorPage({
   const { data: quiz } = await supabase.from('quizzes').select('*').eq('id', quizId).eq('experiment_id', experiment.id).single()
   if (!quiz) notFound()
 
-  const { data: questions } = await supabase
+  // The editor renders the answer key, but migration 013 revokes SELECT on
+  // correct_answer/explanation from the `authenticated` role. The (admin)
+  // layout has already verified is_admin, so read via the service-role client.
+  const { data: questions } = await createAdminSupabaseClient()
     .from('quiz_questions')
     .select('*')
     .eq('quiz_id', quiz.id)

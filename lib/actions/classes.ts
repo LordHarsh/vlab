@@ -359,9 +359,11 @@ export async function updateEnrollment(
 
   if (!cls) return { success: false, error: 'Access denied' }
 
-  const updateData: Record<string, string | null> = {
-    status,
-    dropped_at: status === 'dropped' ? new Date().toISOString() : null,
+  // Only stamp dropped_at on the transition into 'dropped'. Re-activating a
+  // student must not erase the record of when they were dropped.
+  const updateData: Record<string, string> = { status }
+  if (status === 'dropped') {
+    updateData.dropped_at = new Date().toISOString()
   }
 
   const { error } = await supabase

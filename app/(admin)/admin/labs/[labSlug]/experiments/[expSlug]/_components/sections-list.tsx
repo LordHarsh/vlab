@@ -224,7 +224,6 @@ export function SectionsList({
   sections,
   labSlug,
   expSlug,
-  experimentId,
 }: {
   sections: Section[]
   labSlug: string

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlayCircle, ExternalLink, LogIn, RotateCcw, Loader2, MonitorPlay } from 'lucide-react'
+import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay } from 'lucide-react'
 
 export function SimulationSection({
   designId,
@@ -17,7 +17,8 @@ export function SimulationSection({
   const [simActive, setSimActive] = useState(false)
 
   useEffect(() => {
-    if (!designId) { setPreviewLoading(false); return }
+    // No designId renders the empty state below, which never reads previewLoading.
+    if (!designId) return
     fetch(`/api/tinkercad-preview?id=${encodeURIComponent(designId)}`)
       .then((r) => r.json())
       .then((data) => setPreviewUrl(data.imageUrl ?? null))
@@ -140,7 +141,7 @@ export function SimulationSection({
             <div className="flex items-start gap-2.5 pt-1 border-t border-[#f2f2f2]">
               <LogIn className="w-3.5 h-3.5 text-[#c1c1c1] shrink-0 mt-0.5" />
               <p className="text-xs text-[#6a6a6a] leading-relaxed">
-                If the simulation doesn't load,{' '}
+                If the simulation doesn&apos;t load,{' '}
                 <a href={loginUrl} target="_blank" rel="noopener noreferrer"
                   className="text-[#222222] font-medium underline underline-offset-2 hover:text-[#ff385c] transition-colors">
                   sign in to Tinkercad

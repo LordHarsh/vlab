@@ -1,173 +1,65 @@
-# Virtual Lab - Interactive Learning Platform
+# VLab
 
-A modern virtual laboratory platform for interactive experiments and simulations, built with **Next.js 16**, React 19, Supabase, and Clerk.
+Virtual Lab platform for interactive science and engineering experiments. Students join a
+class with a code, work through structured experiment sections (aim, theory, procedure,
+simulation, quizzes, feedback), and their progress persists per class.
 
-> **Updated for Next.js 16** - Now with stable Turbopack, proxy.ts, and React Compiler support!
+Next.js 16 (App Router) · React 19 · TypeScript · Clerk · Supabase · Tailwind + shadcn/ui
 
-## 🚀 Quick Start
-
-### Option 1: Automated Setup (Recommended)
-
-```bash
-# Run the setup script
-./QUICK_SETUP.sh
-```
-
-### Option 2: Manual Setup
-
-Follow the detailed instructions in [SETUP_GUIDE.md](./SETUP_GUIDE.md)
-
-## 📋 Prerequisites
-
-Before you begin, make sure you have:
-
-- **Node.js 18.17+** installed ([Download](https://nodejs.org/))
-- **npm** or **yarn** package manager
-- A **Supabase** account ([Sign up](https://supabase.com))
-- A **Clerk** account ([Sign up](https://clerk.com))
-
-## 🛠️ Technology Stack
-
-- **Frontend**: Next.js 16, React 19, TypeScript
-  - ⚡ Turbopack (stable) - 5-10x faster Fast Refresh
-  - 🚀 React Compiler support
-  - 💾 New caching model with PPR
-- **Styling**: TailwindCSS 3.4, shadcn/ui
-- **Database**: Supabase (PostgreSQL)
-- **Authentication**: Clerk
-- **Simulations**: React Konva, Recharts
-- **Forms**: React Hook Form, Zod
-- **Deployment**: Vercel
-
-## 📁 Project Structure
-
-```
-virtual-lab/
-├── app/                      # Next.js app directory
-│   ├── api/                 # API routes
-│   ├── labs/                # Lab experiments
-│   ├── dashboard/           # User dashboard
-│   └── admin/               # Admin panel
-├── components/              # React components
-│   ├── ui/                  # shadcn/ui components
-│   ├── experiment/          # Experiment-specific
-│   ├── simulations/         # Simulation components
-│   ├── shared/              # Shared components
-│   └── layout/              # Layout components
-├── lib/                     # Utilities
-│   ├── supabase/            # Supabase clients
-│   ├── actions/             # Server actions
-│   └── hooks/               # Custom hooks
-├── types/                   # TypeScript types
-└── public/                  # Static assets
-```
-
-## 🔧 Configuration
-
-### 1. Set Up Supabase
-
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Run the SQL schema from `SETUP_GUIDE.md` in the SQL Editor
-3. Get your credentials from Project Settings > API
-4. Add to `.env.local`
-
-### 2. Set Up Clerk
-
-1. Create an application at [clerk.com](https://clerk.com)
-2. Configure sign-in options (Email, Google, etc.)
-3. Get your API keys from the dashboard
-4. Add to `.env.local`
-
-### 3. Environment Variables
-
-Create `.env.local` with:
-
-```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-
-# Clerk
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_xxx
-CLERK_SECRET_KEY=sk_test_xxx
-
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-```
-
-## 🚀 Development
+## Getting started
 
 ```bash
-# Install dependencies
 npm install
-
-# Run development server
+cp .env.example .env      # fill in the values
 npm run dev
-
-# Build for production
-npm run build
-
-# Start production server
-npm start
-
-# Run linter
-npm run lint
 ```
 
-Visit [http://localhost:3000](http://localhost:3000) to see your app.
+### Environment
 
-## 📚 Documentation
+All six variables in `.env.example` are required. `SUPABASE_SERVICE_ROLE_KEY` is not
+optional — onboarding, class join-by-code, and quiz grading all go through the
+service-role client and fail without it.
 
-- **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** - Detailed setup instructions
-- **[SIMPLIFIED_TECH_STACK.md](./SIMPLIFIED_TECH_STACK.md)** - Tech stack overview
-- **[VIRTUAL_LAB_ANALYSIS.md](./VIRTUAL_LAB_ANALYSIS.md)** - Complete platform analysis
+### Database
 
-## 🎯 Features
+Apply `supabase/migrations/*.sql` in numeric order in the Supabase SQL editor, or
+`supabase db push` if the CLI is linked. There is no seed admin: sign up normally,
+complete onboarding, then promote yourself.
 
-### Current
-- ✅ User authentication (Clerk)
-- ✅ Database setup (Supabase)
-- ✅ UI components (shadcn/ui)
-- ✅ Responsive design
+```sql
+update profiles set is_admin = true, approval_status = 'approved'
+where email = 'you@example.com';
+```
 
-### Coming Soon
-- [ ] Experiment browser
-- [ ] Interactive simulations
-- [ ] Quiz system
-- [ ] Progress tracking
-- [ ] Admin dashboard
+Sign out and back in — you will land on `/admin`.
 
-## 🤝 Contributing
+## Commands
 
-Contributions are welcome! Please follow these steps:
+| | |
+|---|---|
+| `npm run dev` | dev server |
+| `npm run build` | production build — the gate for main |
+| `npm run lint` | eslint |
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## Where things live
 
-## 📝 License
+| | |
+|---|---|
+| **Project context, owner's aims, hard-won lessons** | [`PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md) — **read this first** |
+| Design system | [`DESIGN.md`](./DESIGN.md) |
+| Schema (source of truth) | `supabase/migrations/` |
+| DB types (must mirror migrations) | `types/database.ts` |
+| Auth + route protection | `proxy.ts` (Next 16 exports middleware as `proxy`) |
+| Server actions | `lib/actions/` |
+| Supabase clients | `lib/supabase/` — `server`, `client`, `admin` (service role) |
 
-This project is licensed under the MIT License.
+## Access model
 
-## 💬 Support
+Roles are `student` / `educator` on `profiles.role`, with `is_admin` as an orthogonal
+flag. Educators need admin approval before their dashboard unlocks; students are
+auto-approved.
 
-If you need help:
-
-1. Check [SETUP_GUIDE.md](./SETUP_GUIDE.md) for detailed instructions
-2. Open an issue on GitHub
-3. Contact the team
-
-## 🙏 Acknowledgments
-
-- [Next.js](https://nextjs.org/)
-- [Supabase](https://supabase.com/)
-- [Clerk](https://clerk.com/)
-- [shadcn/ui](https://ui.shadcn.com/)
-- [Virtual Labs](https://www.vlab.co.in/) - Inspiration
-
----
-
-**Happy coding! 🚀**
+Route access is enforced in each route group's `layout.tsx`. Data access is enforced by
+RLS — including content, which is gated on an active enrollment in a class that has the
+parent lab assigned (`013_gate_content_on_enrollment.sql`). Quiz answer keys are
+protected by column-level grants and are readable only through the service-role client.

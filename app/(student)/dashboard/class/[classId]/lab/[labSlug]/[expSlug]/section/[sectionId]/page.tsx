@@ -29,7 +29,7 @@ export default async function SectionPage({
     sectionId: string
   }>
 }) {
-  const { classId, labSlug: _labSlug, expSlug: _expSlug, sectionId } = await params
+  const { classId, sectionId } = await params
   const { userId } = await auth()
   if (!userId) redirect('/sign-in')
 
