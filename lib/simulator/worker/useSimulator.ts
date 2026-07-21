@@ -1,39 +1,63 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { EngineState, FromWorker, ToWorker } from './protocol'
+import type { CircuitDoc } from '../model/document'
+import type { EngineSnapshot, FromWorker, ToWorker } from './protocol'
 
-const EMPTY: EngineState = {
-  current: 0,
-  brightness: 0,
-  overCurrent: false,
-  anodeVolts: 0,
-  pin: 'output_low',
+const EMPTY: EngineSnapshot = {
+  ledBrightness: {},
+  currents: {},
+  faults: [],
+  problems: [],
+  serial: '',
+  pins: {},
   simSeconds: 0,
-  speedRatio: 0,
   solves: 0,
   cacheHits: 0,
   pinEdges: 0,
-  serial: '',
+  unknowns: 0,
+  solveError: null,
 }
 
 /**
- * Drives the simulation worker and exposes its latest state.
+ * Drives the simulation worker.
  *
- * State updates arrive at the worker's snapshot rate (20 Hz), not the
- * simulation rate, so React commits are decoupled from engine throughput.
+ * Snapshots arrive at the worker's rate (20 Hz), not the simulation rate, so
+ * React commits stay decoupled from engine throughput.
+ *
+ * Changing firmware replaces the worker. Rather than resetting four pieces of
+ * state from an effect — which is both a lint violation and a real
+ * concurrent-rendering hazard — every piece of worker state is TAGGED with the
+ * firmware it belongs to and readiness is derived. State from the previous
+ * worker can then never be mistaken for the new one's: without that, the Run
+ * button stayed enabled during the swap and 'start' arrived before 'init', which
+ * the worker silently dropped.
  */
-export function useSimulator(hexUrl: string, initialOhms = 220) {
+export function useSimulator(hexUrl: string, doc: CircuitDoc) {
   const workerRef = useRef<Worker | null>(null)
-  const [ready, setReady] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [readyFor, setReadyFor] = useState<string | null>(null)
+  const [runFor, setRunFor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [state, setState] = useState<EngineState>(EMPTY)
+  const [tagged, setTagged] = useState<{ url: string; snapshot: EngineSnapshot; speed: number }>({
+    url: '',
+    snapshot: EMPTY,
+    speed: 0,
+  })
   const [bench, setBench] = useState<{ mcps: number; xRealtime: number } | null>(null)
+
+  const ready = readyFor === hexUrl
+  const running = runFor === hexUrl
+  const snapshot = tagged.url === hexUrl ? tagged.snapshot : EMPTY
+  const speedRatio = tagged.url === hexUrl ? tagged.speed : 0
+
+  const docRef = useRef(doc)
+  useEffect(() => {
+    docRef.current = doc
+  }, [doc])
 
   useEffect(() => {
     let disposed = false
-
+    const url = hexUrl
     const worker = new Worker(new URL('./engine.worker.ts', import.meta.url), {
       type: 'module',
     })
@@ -41,21 +65,22 @@ export function useSimulator(hexUrl: string, initialOhms = 220) {
 
     worker.onmessage = (ev: MessageEvent<FromWorker>) => {
       const msg = ev.data
-      if (msg.type === 'ready') setReady(true)
-      else if (msg.type === 'state') setState(msg.state)
+      if (msg.type === 'ready') setReadyFor(url)
+      else if (msg.type === 'snapshot')
+        setTagged({ url, snapshot: msg.snapshot, speed: msg.speedRatio })
       else if (msg.type === 'error') setError(msg.message)
       else if (msg.type === 'benchmark') setBench({ mcps: msg.mcps, xRealtime: msg.xRealtime })
     }
     worker.onerror = (e) => setError(e.message || 'worker failed')
 
-    fetch(hexUrl)
+    fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`firmware fetch failed: ${res.status}`)
         return res.text()
       })
       .then((hex) => {
         if (disposed) return
-        const msg: ToWorker = { type: 'init', hex, seriesOhms: initialOhms }
+        const msg: ToWorker = { type: 'init', hex, doc: docRef.current }
         worker.postMessage(msg)
       })
       .catch((e) => !disposed && setError(String(e)))
@@ -65,35 +90,36 @@ export function useSimulator(hexUrl: string, initialOhms = 220) {
       worker.terminate()
       workerRef.current = null
     }
-    // initialOhms is only the seed value; changing it later goes through setResistor.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hexUrl])
 
-  const send = useCallback((msg: ToWorker) => {
+  // Push document edits through to the engine.
+  useEffect(() => {
+    if (!ready) return
+    const msg: ToWorker = { type: 'setDocument', doc }
     workerRef.current?.postMessage(msg)
-  }, [])
+  }, [doc, ready])
+
+  const send = useCallback((msg: ToWorker) => workerRef.current?.postMessage(msg), [])
 
   const start = useCallback(() => {
     send({ type: 'start' })
-    setRunning(true)
-  }, [send])
+    setRunFor(hexUrl)
+  }, [send, hexUrl])
 
   const stop = useCallback(() => {
     send({ type: 'stop' })
-    setRunning(false)
+    setRunFor(null)
   }, [send])
 
-  const setResistor = useCallback(
-    (ohms: number) => {
-      send({ type: 'setResistor', ohms })
-    },
-    [send],
-  )
+  const reset = useCallback(() => {
+    send({ type: 'reset' })
+    setRunFor(null)
+  }, [send])
 
   const benchmark = useCallback(() => {
     setBench(null)
     send({ type: 'benchmark' })
   }, [send])
 
-  return { ready, running, error, state, start, stop, setResistor, benchmark, bench }
+  return { ready, running, error, snapshot, speedRatio, bench, start, stop, reset, benchmark }
 }

@@ -4,75 +4,46 @@ import { useMemo, useReducer, useState } from 'react'
 import { CircuitCanvas } from './CircuitCanvas'
 import { compile } from '@/lib/simulator/model/compile'
 import { getPart } from '@/lib/simulator/model/parts'
-import {
-  docReducer,
-  initialDocState,
-  type CircuitDoc,
-} from '@/lib/simulator/model/document'
-import { EXAMPLES } from '@/lib/simulator/model/examples'
+import { useSimulator } from '@/lib/simulator/worker/useSimulator'
+import { docReducer, type CircuitDoc } from '@/lib/simulator/model/document'
+import { EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
 
-interface Reading {
-  partId: string
-  label: string
-  current: number
-  overCurrent: boolean
-}
+const FIRMWARE = [
+  { url: '/sim/blink.hex', label: 'Blink', note: 'D13 on/off, 1 s' },
+  { url: '/sim/dht11.hex', label: 'DHT11', note: 'Experiment 01 sketch' },
+]
 
 export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
-  const [state, dispatch] = useReducer(
-    docReducer,
-    initial ? { doc: initial, past: [], future: [] } : initialDocState,
-  )
+  const [state, dispatch] = useReducer(docReducer, {
+    doc: initial ?? EXPERIMENT_01,
+    past: [],
+    future: [],
+  })
   const [selected, setSelected] = useState<string | null>(null)
-  const [d13High, setD13High] = useState(true)
+  const [hexUrl, setHexUrl] = useState(FIRMWARE[0].url)
 
   const doc = state.doc
+  const { ready, running, error, snapshot, speedRatio, start, stop, reset } = useSimulator(
+    hexUrl,
+    doc,
+  )
 
   /**
-   * Recompile and re-solve on every edit. Measured at well under a millisecond
-   * for circuits this size, so there is no reason to debounce it — and doing it
-   * eagerly is what makes the readouts feel attached to the wiring.
+   * Nets are recomputed on the main thread purely for the canvas (pin hover
+   * highlighting). The authoritative electrical solve happens in the worker.
    */
-  const { ledBrightness, netOf, problems, unknowns, readings, solveError, faults } = useMemo(() => {
-    const res = compile(doc)
+  const netOf = useMemo(() => compile(doc).netOf, [doc])
 
-    const d13 = res.mcuPorts.get('D13')
-    if (d13) d13.set(1 / 25, d13High ? 5 / 25 : 0)
-
-    let solveError: string | null = null
-    let faults: { kind: string; message: string }[] = []
-    if (res.circuit.size > 0) {
-      const solved = res.circuit.solve()
-      if (!solved.ok) solveError = solved.error ?? 'circuit did not solve'
-      faults = solved.faults
-    }
-
-    const brightness = new Map<string, number>()
-    const readings: Reading[] = []
-    for (const [partId, diode] of res.leds) {
-      const i = Math.max(diode.current, 0)
-      brightness.set(partId, Math.min(1, Math.pow(i / 0.02, 0.45)))
-      readings.push({
-        partId,
-        label: getPart(doc.parts.find((p) => p.id === partId)!.type).label,
-        current: diode.current,
-        overCurrent: diode.current > 0.03,
-      })
-    }
-
-    return {
-      ledBrightness: brightness,
-      netOf: res.netOf,
-      problems: res.problems,
-      unknowns: res.unknowns,
-      readings,
-      solveError,
-      faults,
-    }
-  }, [doc, d13High])
+  const ledBrightness = useMemo(
+    () => new Map(Object.entries(snapshot.ledBrightness)),
+    [snapshot.ledBrightness],
+  )
 
   const selectedPart = doc.parts.find((p) => p.id === selected) ?? null
   const selectedDef = selectedPart ? getPart(selectedPart.type) : null
+
+  const readings = Object.entries(snapshot.currents)
+  const highPins = Object.entries(snapshot.pins).filter(([, d]) => d === 'high')
 
   return (
     <div className="flex h-screen bg-[#0d1117] text-[#e6edf3]">
@@ -87,45 +58,79 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
         />
       </div>
 
-      {/* Inspector */}
       <aside className="w-80 shrink-0 border-l border-[#30363d] bg-[#0d1117] overflow-y-auto font-mono text-sm">
         <div className="px-4 py-3 border-b border-[#30363d]">
           <h2 className="text-white font-semibold text-sm">Circuit</h2>
           <p className="text-[10px] text-[#6e7681] mt-0.5">
-            {doc.parts.length} parts · {doc.wires.length} wires · {unknowns} unknowns
+            {doc.parts.length} parts · {doc.wires.length} wires · {snapshot.unknowns} unknowns
           </p>
         </div>
 
-        {/* Controls */}
+        {error && (
+          <div className="px-4 py-3 bg-red-950/40 text-red-300 text-xs" data-testid="error">
+            {error}
+          </div>
+        )}
+
+        {/* Firmware + run controls */}
         <div className="px-4 py-4 border-b border-[#30363d] space-y-2">
+          <div className="text-[10px] uppercase tracking-wider text-[#8b949e]">Firmware</div>
+          <div className="flex gap-2">
+            {FIRMWARE.map((f) => (
+              <button
+                key={f.url}
+                data-testid={`fw-${f.label}`}
+                onClick={() => setHexUrl(f.url)}
+                title={f.note}
+                className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] border transition-colors ${
+                  hexUrl === f.url
+                    ? 'border-[#58a6ff] bg-[#58a6ff]/10 text-[#58a6ff]'
+                    : 'border-[#30363d] text-[#8b949e] hover:border-[#8b949e]'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
           <button
-            onClick={() => setD13High((v) => !v)}
-            data-testid="toggle-d13"
-            className={`w-full px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
-              d13High ? 'bg-green-600 text-white' : 'bg-[#21262d] text-[#8b949e]'
+            onClick={running ? stop : start}
+            disabled={!ready}
+            data-testid="run-toggle"
+            className={`w-full px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 ${
+              running ? 'bg-red-600 text-white' : 'bg-green-600 text-white'
             }`}
           >
-            D13 = {d13High ? 'HIGH' : 'LOW'}
+            {ready ? (running ? 'Stop' : 'Run firmware') : 'Loading firmware…'}
           </button>
+
           <div className="flex gap-2">
+            <button
+              onClick={reset}
+              data-testid="reset"
+              className="flex-1 px-2 py-1.5 rounded-lg text-[10px] border border-[#30363d] hover:border-[#8b949e] text-[#8b949e]"
+            >
+              Reset MCU
+            </button>
             {Object.entries(EXAMPLES).map(([key, ex]) => (
               <button
                 key={key}
                 data-testid={`load-${key}`}
                 onClick={() => dispatch({ type: 'load', doc: ex.doc })}
                 title={ex.label}
-                className="flex-1 px-2 py-2 rounded-lg text-[10px] border border-[#30363d] hover:border-[#58a6ff] text-[#8b949e] transition-colors"
+                className="flex-1 px-2 py-1.5 rounded-lg text-[10px] border border-[#30363d] hover:border-[#58a6ff] text-[#8b949e]"
               >
-                {key === 'exp01' ? 'Load Exp 01' : 'Blank'}
+                {key === 'exp01' ? 'Exp 01' : 'Blank'}
               </button>
             ))}
           </div>
+
           <div className="flex gap-2">
             <button
               onClick={() => dispatch({ type: 'undo' })}
               disabled={state.past.length === 0}
               data-testid="undo"
-              className="flex-1 px-3 py-2 rounded-lg text-xs border border-[#30363d] hover:border-[#8b949e] disabled:opacity-30 transition-colors"
+              className="flex-1 px-3 py-1.5 rounded-lg text-[10px] border border-[#30363d] hover:border-[#8b949e] disabled:opacity-30"
             >
               Undo
             </button>
@@ -133,10 +138,18 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
               onClick={() => dispatch({ type: 'redo' })}
               disabled={state.future.length === 0}
               data-testid="redo"
-              className="flex-1 px-3 py-2 rounded-lg text-xs border border-[#30363d] hover:border-[#8b949e] disabled:opacity-30 transition-colors"
+              className="flex-1 px-3 py-1.5 rounded-lg text-[10px] border border-[#30363d] hover:border-[#8b949e] disabled:opacity-30"
             >
               Redo
             </button>
+          </div>
+
+          <div className="flex justify-between text-[10px] text-[#6e7681] pt-1">
+            <span data-testid="speed">{speedRatio.toFixed(2)}× real time</span>
+            <span data-testid="simtime">{snapshot.simSeconds.toFixed(1)} s</span>
+            <span>
+              {snapshot.solves} solves / {snapshot.cacheHits} hits
+            </span>
           </div>
         </div>
 
@@ -164,7 +177,11 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
                 >
                   {prop.options?.map((o) => (
                     <option key={o} value={o}>
-                      {o === 0 ? 'none (wire)' : o >= 1000 ? `${o / 1000} k${prop.unit}` : `${o} ${prop.unit}`}
+                      {o === 0
+                        ? 'none (wire)'
+                        : o >= 1000
+                          ? `${o / 1000} k${prop.unit}`
+                          : `${o} ${prop.unit}`}
                     </option>
                   ))}
                 </select>
@@ -192,6 +209,27 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
           </div>
         )}
 
+        {/* Live pins */}
+        <div className="px-4 py-4 border-b border-[#30363d]">
+          <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-2">
+            Pins driven high
+          </div>
+          {highPins.length === 0 ? (
+            <p className="text-xs text-[#6e7681]">none</p>
+          ) : (
+            <div className="flex flex-wrap gap-1" data-testid="high-pins">
+              {highPins.map(([name]) => (
+                <span
+                  key={name}
+                  className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 text-[10px]"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Measurements */}
         <div className="px-4 py-4 border-b border-[#30363d]">
           <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-2">
@@ -200,35 +238,37 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
           {readings.length === 0 ? (
             <p className="text-xs text-[#6e7681]">No components to measure yet.</p>
           ) : (
-            readings.map((r) => (
-              <div key={r.partId} className="mb-2" data-testid={`reading-${r.partId}`}>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-xs text-[#8b949e]">{r.label}</span>
-                  <span
-                    className={`tabular-nums ${r.overCurrent ? 'text-red-400 font-bold' : 'text-white'}`}
-                  >
-                    {(r.current * 1000).toFixed(2)} mA
-                  </span>
-                </div>
-                {r.overCurrent && (
-                  <p className="text-[10px] text-red-400 mt-0.5">
-                    Over its ~20 mA rating — on real hardware this part is destroyed.
-                  </p>
-                )}
+            readings.map(([partId, current]) => (
+              <div key={partId} className="flex justify-between items-baseline mb-1">
+                <span className="text-xs text-[#8b949e]">{partId}</span>
+                <span className="text-white tabular-nums" data-testid={`reading-${partId}`}>
+                  {(current * 1000).toFixed(2)} mA
+                </span>
               </div>
             ))
           )}
         </div>
 
-        {/* Problems */}
+        {/* Serial monitor */}
+        <div className="px-4 py-4 border-b border-[#30363d]">
+          <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-2">Serial</div>
+          <pre
+            data-testid="serial"
+            className="text-[10px] text-green-300 bg-[#010409] rounded-lg p-2 h-28 overflow-y-auto whitespace-pre-wrap break-all"
+          >
+            {snapshot.serial || '(no output)'}
+          </pre>
+        </div>
+
+        {/* Checks */}
         <div className="px-4 py-4">
           <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-2">Checks</div>
-          {solveError && (
-            <p className="text-xs text-red-400 mb-2">Solver: {solveError}</p>
+          {snapshot.solveError && (
+            <p className="text-xs text-red-400 mb-2">Solver: {snapshot.solveError}</p>
           )}
-          {faults.length > 0 && (
+          {snapshot.faults.length > 0 && (
             <ul className="space-y-2 mb-3" data-testid="faults">
-              {faults.map((f, i) => (
+              {snapshot.faults.map((f, i) => (
                 <li
                   key={i}
                   className="text-xs text-red-300 leading-snug rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-2"
@@ -241,11 +281,13 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
               ))}
             </ul>
           )}
-          {problems.length === 0 && !solveError && faults.length === 0 ? (
+          {snapshot.problems.length === 0 &&
+          !snapshot.solveError &&
+          snapshot.faults.length === 0 ? (
             <p className="text-xs text-green-400">No problems detected.</p>
           ) : (
             <ul className="space-y-1.5">
-              {problems.map((p, i) => (
+              {snapshot.problems.map((p, i) => (
                 <li key={i} className="text-xs text-amber-400 leading-snug">
                   {p}
                 </li>
@@ -255,8 +297,8 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
         </div>
 
         <div className="px-4 pb-6 text-[10px] text-[#6e7681] leading-relaxed">
-          Drag from any pin to another to wire them. Click a wire to delete it. Components plug
-          into the breadboard; its internal strips do the connecting, exactly like the real thing.
+          Drag from any pin to another to wire them. Click a wire to delete it. The firmware keeps
+          running while you rewire — the MCU is not reset.
         </div>
       </aside>
     </div>

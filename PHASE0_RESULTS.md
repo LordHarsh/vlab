@@ -3,7 +3,30 @@
 Measured 2026-07-22. Host: Node 24.15 / win32-x64, i7-class. All spikes are runnable:
 `npx tsx lib/simulator/__spikes__/<name>.ts`
 
-## P0-1 — avr8js throughput on real firmware — PASS
+## ⚠ MEASUREMENT WARNING — read before trusting any throughput number here
+
+Re-running P0-1 unchanged, hours later on the same machine with the same
+fixtures, produced **0.81x where it had produced 2.84x**. Nothing in the code
+changed. `Win32_Processor` reported `CurrentClockSpeed = 2100 MHz`, exactly the
+i7-13700HX base clock, at 1% load — the CPU had stopped turboing (it peaks near
+5 GHz). Sustained load from a dev server, Chrome and hours of builds had moved
+the machine into a lower power state.
+
+**Consequence: every absolute x-realtime figure below is only valid for the
+machine state it was taken in, and the spread on ONE machine is ~3.5x.** The
+Celeron projection in P0-1 (0.79x) assumed the 2.69x reading; taken against the
+throttled 0.81x reading the same projection is ~0.24x, which is *below* the
+0.5x kill criterion. The kill criterion therefore has NOT been settled.
+
+What is still trustworthy is *relative* measurement taken in a single process at
+a single moment. Measured that way, the full engine runs at 0.66x against a bare
+avr8js rig's 0.86x — about **23% overhead** for the analog coupling and
+memoisation, which is the number that actually reflects this code.
+
+**Action:** re-run P0-1 on a quiet machine, plugged in, high-performance power
+plan, nothing else running, and record the CPU clock alongside the result.
+
+## P0-1 — avr8js throughput on real firmware — PASS (but see the warning above)
 
 Fixtures compiled locally with arduino-cli 1.5.1 / avr-gcc 7.3.0 / arduino:avr 1.8.8.
 Not synthetic loops: `blink.hex` (delay/Timer0 ISR) and `dht11.hex` (VLab Experiment 01

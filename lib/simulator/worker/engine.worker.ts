@@ -3,24 +3,35 @@
  * Simulation worker. Owns the AVR emulator and the analog solver, and runs them
  * as fast as the host allows without ever touching the DOM.
  *
- * The loop is self-pacing: it advances a fixed slice of simulated time, then
- * yields so the worker's event loop can process control messages. It does not
- * try to hit a framerate — the main thread samples state on its own schedule.
+ * Self-pacing: advance a slice of simulated time, then yield so control messages
+ * (a rewire, a stop) get processed. It does not chase a framerate — the main
+ * thread samples on its own schedule.
  */
 
-import { ArduinoSimulation, parseIntelHex } from '../arduino'
-import { SNAPSHOT_HZ, type EngineState, type FromWorker, type ToWorker } from './protocol'
+import { SimulationEngine, parseIntelHex, CLOCK_HZ } from '../engine'
+import type { CircuitDoc } from '../model/document'
+import { SNAPSHOT_HZ, type FromWorker, type ToWorker } from './protocol'
 
-let sim: ArduinoSimulation | null = null
+let engine: SimulationEngine | null = null
+let program: Uint16Array | null = null
+let lastDoc: CircuitDoc | null = null
 let running = false
 
+/** Simulated time per slice. 5 ms keeps a rewire feeling immediate. */
+const SLICE_MICROS = 5_000
+
+let lastPost = 0
+let wallAccum = 0
+let simAccum = 0
+
+function post(msg: FromWorker): void {
+  ;(self as unknown as DedicatedWorkerGlobalScope).postMessage(msg)
+}
+
 /**
- * Yield without the timer clamp.
- *
- * setTimeout(fn, 0) is clamped to ~4 ms once nested, so an 8 ms work slice ran
- * at roughly a 2/3 duty cycle — measured in-browser as 0.75x realtime against
- * 2.7x headless. A MessageChannel round-trip is a macrotask with no clamp, so
- * the loop stays responsive to control messages while giving up almost no time.
+ * Yield without the timer clamp. setTimeout(fn, 0) is clamped to ~4 ms once
+ * nested, which cost roughly a third of the duty cycle. A MessageChannel
+ * round-trip is a macrotask with no clamp.
  */
 const yieldChannel = new MessageChannel()
 let pumpQueued = false
@@ -34,53 +45,30 @@ function scheduleLoop(): void {
   yieldChannel.port2.postMessage(0)
 }
 
-/** Simulated time advanced per slice. 5 ms keeps control latency imperceptible. */
-const SLICE_MICROS = 5_000
-
-let lastPost = 0
-let wallAccum = 0
-let simAccum = 0
-
-function post(msg: FromWorker): void {
-  ;(self as unknown as DedicatedWorkerGlobalScope).postMessage(msg)
-}
-
-function snapshot(): EngineState {
-  const s = sim!
-  const led = s.led1
-  const stats = s.stats
-  return {
-    current: led.current,
-    brightness: led.brightness,
-    overCurrent: led.overCurrent,
-    anodeVolts: s.anodeVoltage,
-    pin: s.d13,
-    simSeconds: stats.simMicros / 1e6,
+function postSnapshot(): void {
+  if (!engine) return
+  post({
+    type: 'snapshot',
+    snapshot: engine.snapshot(),
     speedRatio: wallAccum > 0 ? simAccum / wallAccum : 0,
-    solves: stats.solves,
-    cacheHits: stats.cacheHits,
-    pinEdges: stats.pinEdges,
-    serial: s.serial.slice(-1200),
-  }
+  })
 }
 
 function loop(): void {
-  if (!running || !sim) return
+  if (!running || !engine) return
 
-  // Run several slices per macrotask; yielding on every 5 ms slice would spend
-  // more time in the scheduler than in the emulator.
   const t0 = performance.now()
   let advanced = 0
-  while (performance.now() - t0 < 8 && advanced < 200_000) {
-    sim.run(SLICE_MICROS)
+  while (performance.now() - t0 < 10 && advanced < 250_000) {
+    engine.run(SLICE_MICROS)
     advanced += SLICE_MICROS
   }
   const wall = (performance.now() - t0) / 1000
 
   wallAccum += wall
   simAccum += advanced / 1e6
-  // Decay the ratio window so the readout tracks recent performance.
   if (wallAccum > 2) {
+    // Decay the window so the readout tracks recent performance.
     wallAccum *= 0.5
     simAccum *= 0.5
   }
@@ -88,7 +76,7 @@ function loop(): void {
   const now = performance.now()
   if (now - lastPost >= 1000 / SNAPSHOT_HZ) {
     lastPost = now
-    post({ type: 'state', state: snapshot() })
+    postSnapshot()
   }
 
   scheduleLoop()
@@ -99,47 +87,63 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   try {
     switch (msg.type) {
       case 'init': {
-        sim = new ArduinoSimulation(parseIntelHex(msg.hex), msg.seriesOhms)
+        program = parseIntelHex(msg.hex)
+        lastDoc = msg.doc
+        engine = new SimulationEngine(program, msg.doc)
         wallAccum = 0
         simAccum = 0
         post({ type: 'ready' })
-        post({ type: 'state', state: snapshot() })
+        postSnapshot()
         break
       }
+
+      case 'setDocument': {
+        // The firmware keeps running across a rewire — resetting the MCU would
+        // throw away the program state the student is trying to observe.
+        lastDoc = msg.doc
+        engine?.setDocument(msg.doc)
+        postSnapshot()
+        break
+      }
+
       case 'start': {
-        if (!sim || running) break
+        if (!engine || running) break
         running = true
         loop()
         break
       }
+
       case 'stop': {
         running = false
+        postSnapshot()
         break
       }
+
+      case 'reset': {
+        if (!program || !lastDoc) break
+        running = false
+        // Rebuilding is the honest way to reset an MCU: fresh SRAM, fresh
+        // registers, fresh peripherals, firmware restarted from the vector table.
+        engine = new SimulationEngine(program, lastDoc)
+        wallAccum = 0
+        simAccum = 0
+        postSnapshot()
+        break
+      }
+
       case 'benchmark': {
-        // Raw emulator throughput, isolated from loop pacing and snapshot
-        // posting: one tight run of a fixed cycle count. This is the number
-        // the Phase 0 kill criterion is measured against, and it must be taken
-        // in-browser because Node's JIT is not representative.
-        if (!sim) break
-        const CYCLES = 32_000_000 // 2 s of simulated time
-        sim.run(1_000_000 / 16) // warm up
+        if (!engine) break
+        engine.run(60_000) // warm up
         const t0 = performance.now()
-        const c0 = sim.cpu.cycles
-        sim.run((CYCLES / 16_000_000) * 1e6)
+        const c0 = engine.cpu.cycles
+        engine.run(2_000_000) // 2 s of simulated time
         const secs = (performance.now() - t0) / 1000
-        const executed = sim.cpu.cycles - c0
+        const executed = engine.cpu.cycles - c0
         post({
           type: 'benchmark',
           mcps: executed / secs / 1e6,
-          xRealtime: executed / secs / 16_000_000,
+          xRealtime: executed / secs / CLOCK_HZ,
         })
-        break
-      }
-      case 'setResistor': {
-        if (!sim) break
-        sim.setSeriesResistance(msg.ohms)
-        post({ type: 'state', state: snapshot() })
         break
       }
     }

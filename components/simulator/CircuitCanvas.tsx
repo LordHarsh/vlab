@@ -390,11 +390,10 @@ function Pin({
         opacity={pin.subtle && !lit && !wiring ? 0.25 : 1}
         pointerEvents="none"
       />
+      {/* Template string, not two children: a browser treats <title> as a single
+          text node, so React refuses to serialise an array into it. */}
       {!pin.subtle && (
-        <title>
-          {pin.name}
-          {net !== undefined ? ` — net ${net}` : ''}
-        </title>
+        <title>{`${pin.name}${net !== undefined ? ` — net ${net}` : ''}`}</title>
       )}
     </g>
   )
