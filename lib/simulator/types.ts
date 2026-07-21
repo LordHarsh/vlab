@@ -92,6 +92,28 @@ export interface Device {
    * feeds LED brightness, the over-current check, and the memoisation cache.
    */
   readback?(ctx: StampContext): void
+  /**
+   * Report a destructive operating condition from the converged solution,
+   * or null if the device is within its ratings.
+   */
+  safety?(ctx: StampContext): SolveFault | null
+}
+
+/**
+ * A condition that is numerically fine but physically destructive.
+ *
+ * SIMULATOR_ARCHITECTURE.md §2.3 promises "a refusal, never a wrong number".
+ * The solver is right that 5 V across a 1 mΩ wire is 5000 A — but returning
+ * ok:true and a silent 25 kW is not an honest answer to a student who has just
+ * shorted a rail. Faults are how the solver says "this would destroy the board"
+ * without pretending the maths failed.
+ */
+export interface SolveFault {
+  kind: 'over_current' | 'over_power' | 'short_circuit'
+  deviceId: string
+  /** Amps or watts, depending on kind. */
+  value: number
+  message: string
 }
 
 export interface SolveResult {
@@ -105,4 +127,10 @@ export interface SolveResult {
   error?: string
   /** True if gmin stepping was needed to reach a solution. */
   usedGminStepping: boolean
+  /**
+   * Physically destructive conditions detected in the converged solution.
+   * Empty on a healthy circuit. Never a reason to treat ok as false — the
+   * numbers are correct, the circuit is not.
+   */
+  faults: SolveFault[]
 }

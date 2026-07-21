@@ -6,7 +6,7 @@
  * a conductance Geq in parallel with a current source Ieq).
  */
 
-import { type Device, type StampContext, type NetId, VT } from './types'
+import { type Device, type StampContext, type NetId, type SolveFault, VT } from './types'
 
 // ─── Linear devices ───────────────────────────────────────────────────────────
 
@@ -57,8 +57,47 @@ export class Resistor implements Device {
   ) {}
 
   stamp(ctx: StampContext): void {
+    // Invalid input is rejected, not reinterpreted. Clamping a negative
+    // resistance silently turns it into a 1 mΩ short and returns a plausible
+    // 0 V — the same class of silent-wrong-answer that Circuit.index() rejects
+    // for unallocated nets, so it is rejected the same way. Circuit.solve()
+    // catches this and surfaces it as ok:false.
+    if (!Number.isFinite(this.ohms) || this.ohms < 0) {
+      throw new Error(
+        `Resistor "${this.id}" has an invalid resistance (${this.ohms}). ` +
+          `Resistance must be a finite, non-negative number.`,
+      )
+    }
     const r = Math.max(this.ohms, MIN_RESISTANCE)
     stampConductance(ctx, this.a, this.b, 1 / r)
+  }
+
+  /** Current a→b, from the converged voltages. */
+  currentThrough(ctx: StampContext): number {
+    const r = Math.max(this.ohms, MIN_RESISTANCE)
+    return (ctx.voltage(this.a) - ctx.voltage(this.b)) / r
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.currentThrough(ctx)
+  }
+
+  /** Last solved current, amps. */
+  current = 0
+
+  /** Power rating in watts. A common through-hole resistor is quarter-watt. */
+  rating = 0.25
+
+  safety(ctx: StampContext): SolveFault | null {
+    const i = this.currentThrough(ctx)
+    const p = i * i * Math.max(this.ohms, MIN_RESISTANCE)
+    if (p <= this.rating) return null
+    return {
+      kind: 'over_power',
+      deviceId: this.id,
+      value: p,
+      message: `Resistor is dissipating ${p.toFixed(2)} W — it is rated for ${this.rating} W and would burn out.`,
+    }
   }
 }
 
@@ -92,6 +131,29 @@ export class VoltageSource implements Device {
       ctx.A[k * n + im] -= 1
     }
     ctx.b[k] += this.volts
+  }
+
+  /** Branch current, from the converged solution. Positive = out of pos. */
+  current = 0
+
+  readback(ctx: StampContext): void {
+    this.current = this.branchIndex >= 0 ? ctx.x[this.branchIndex] : 0
+  }
+
+  /** Amps beyond which this is a short, not a load. */
+  maxCurrent = 1
+
+  safety(ctx: StampContext): SolveFault | null {
+    const i = Math.abs(this.branchIndex >= 0 ? ctx.x[this.branchIndex] : 0)
+    if (i <= this.maxCurrent) return null
+    return {
+      kind: 'short_circuit',
+      deviceId: this.id,
+      value: i,
+      message:
+        `${i.toFixed(1)} A is being drawn from a ${this.volts} V supply — that is a short circuit. ` +
+        `On real hardware this destroys the board or the supply.`,
+    }
   }
 }
 
@@ -230,6 +292,22 @@ export class Diode implements Device {
   readback(ctx: StampContext): void {
     const vd = ctx.voltage(this.anode) - ctx.voltage(this.cathode)
     this.current = this.params.is * (Math.exp(Math.min(vd / this.vte, 300)) - 1)
+  }
+
+  /** Continuous forward current rating. A 5 mm LED is typically 20 mA. */
+  rating = 0.02
+
+  safety(ctx: StampContext): SolveFault | null {
+    this.readback(ctx)
+    if (this.current <= this.rating * 1.5) return null
+    return {
+      kind: 'over_current',
+      deviceId: this.id,
+      value: this.current,
+      message:
+        `${(this.current * 1000).toFixed(0)} mA through a part rated for ` +
+        `${(this.rating * 1000).toFixed(0)} mA. On real hardware this part is destroyed.`,
+    }
   }
 }
 

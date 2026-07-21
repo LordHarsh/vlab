@@ -13,6 +13,7 @@ import {
   type NetId,
   type SolveOptions,
   type SolveResult,
+  type SolveFault,
   type StampContext,
   DEFAULT_OPTIONS,
 } from './types'
@@ -93,6 +94,7 @@ export class Circuit {
         x: new Float64Array(this.n),
         iterations: 0,
         usedGminStepping: false,
+        faults: [],
         error: e instanceof Error ? e.message : String(e),
       }
     }
@@ -126,6 +128,7 @@ export class Circuit {
           x: this.x,
           iterations: 0,
           usedGminStepping: true,
+          faults: [],
           error: 'gmin stepping produced no result',
         }
   }
@@ -179,6 +182,7 @@ export class Circuit {
           x: this.x,
           iterations,
           usedGminStepping: false,
+          faults: [],
           error: 'singular matrix',
         }
       }
@@ -192,6 +196,7 @@ export class Circuit {
           x: this.x,
           iterations,
           usedGminStepping: false,
+          faults: [],
           error: 'solution diverged (non-finite)',
         }
       }
@@ -220,6 +225,7 @@ export class Circuit {
       x: this.x,
       iterations,
       usedGminStepping: false,
+      faults: [],
       error: `no convergence in ${o.maxIter} iterations`,
     }
   }
@@ -230,8 +236,14 @@ export class Circuit {
    */
   private succeed(ctx: StampContext, iterations: number): SolveResult {
     for (const d of this.devices) d.readback?.(ctx)
+    const faults: SolveFault[] = []
+    for (const d of this.devices) {
+      const f = d.safety?.(ctx)
+      if (f) faults.push(f)
+    }
     return {
       ok: true,
+      faults,
       voltages: this.extractVoltages(),
       // this.x is the warm-start buffer and keeps mutating on the next solve;
       // returning it directly let an old result change under the caller.

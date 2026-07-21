@@ -1123,12 +1123,32 @@ function degenerate(name: string, c: Circuit, extra?: (r: ReturnType<Circuit['so
     // supply gets ok:true and a silent 25 kW.
     near('6.6 short current = V / MIN_RESISTANCE', r.x[r.x.length - 1],
       -5 / MIN_RESISTANCE, 1e-6, 'A')
+    // §2.3's fault layer now exists. The numbers stay right — 5 V across
+    // MIN_RESISTANCE really is 5000 A — but the result also says, in as many
+    // words, that this would destroy the board.
     truth(
-      '6.6 KNOWN GAP: no over-current fault flag',
-      false,
-      'SolveResult carries a fault indication',
-      `ok:true, ${fmt(r.x[r.x.length - 1])} A = ${fmt(Math.abs(r.x[r.x.length - 1]) * 5)} W, no flag`,
-      'intentional red: §2.3 fault-detection layer is not built yet',
+      '6.6 short across the source raises a fault',
+      r.faults.some((f) => f.kind === 'short_circuit'),
+      'a short_circuit fault',
+      r.faults.length ? r.faults.map((f) => f.kind).join(', ') : 'no faults',
+    )
+    truth(
+      '6.6 fault message names the danger',
+      r.faults.some((f) => /short circuit/i.test(f.message)),
+      'message explains the hazard',
+      r.faults[0]?.message.slice(0, 60) ?? '(none)',
+    )
+    truth(
+      '6.6 a healthy circuit raises no faults',
+      (() => {
+        const ok = new Circuit()
+        const n1 = ok.allocNet()
+        ok.add(new VoltageSource('V', n1, GROUND, 5))
+        ok.add(new Resistor('R', n1, GROUND, 1000))
+        return ok.solve().faults.length === 0
+      })(),
+      'no faults on a 5 V / 1 kΩ load',
+      'checked',
     )
   }
 }
@@ -1238,16 +1258,20 @@ function degenerate(name: string, c: Circuit, extra?: (r: ReturnType<Circuit['so
   c.add(new Resistor('R1', vcc, a, 1000))
   c.add(new Resistor('RNEG', a, GROUND, -1000))
   const r = c.solve()
-  // A negative resistance is not a wire, it is invalid input. Math.max() silently
-  // reinterprets it as a 1 mΩ short and the solver reports ok:true with a
-  // plausible 0 V. Compare BUG 3: an unallocated net now THROWS and is converted
-  // to ok:false. Same class of invalid input, opposite handling.
+  // A negative resistance is invalid input, not a wire. It is now rejected the
+  // same way an unallocated net is, rather than being clamped into a plausible
+  // short — same class of invalid input, same handling.
   truth(
-    '6.13 KNOWN GAP: negative resistance silently clamped',
+    '6.13 negative resistance is rejected, not clamped',
     !r.ok,
     'ok:false (invalid component value)',
-    `ok:${r.ok}, v=${fmt(r.voltages[a])} V — -1000 Ω became a ${fmt(MIN_RESISTANCE)} Ω short`,
-    'intentional red: Resistor accepts negative/non-finite values without validation',
+    `ok:${r.ok}${r.error ? ` — ${r.error.slice(0, 50)}` : ''}`,
+  )
+  truth(
+    '6.13 the error names the offending part',
+    !r.ok && /RNEG/.test(r.error ?? ''),
+    'error identifies "RNEG"',
+    r.error?.slice(0, 60) ?? '(none)',
   )
 }
 
@@ -2160,9 +2184,10 @@ console.log('-'.repeat(nameW + expW + actW + 14))
  * The list is self-cleaning: if one of these starts passing, that is reported as
  * an error too, so the entry has to be removed rather than quietly rotting.
  */
-const KNOWN_GAPS = new Set([
-  '6.6 KNOWN GAP: no over-current fault flag',
-  '6.13 KNOWN GAP: negative resistance silently clamped',
+const KNOWN_GAPS = new Set<string>([
+  // Both former gaps are closed: §2.3's fault layer landed (SolveResult.faults)
+  // and Resistor now rejects negative/non-finite resistance rather than
+  // clamping it into a plausible short.
 ])
 
 let lastGroup = ''

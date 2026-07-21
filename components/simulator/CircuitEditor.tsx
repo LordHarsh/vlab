@@ -33,16 +33,18 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
    * for circuits this size, so there is no reason to debounce it — and doing it
    * eagerly is what makes the readouts feel attached to the wiring.
    */
-  const { ledBrightness, netOf, problems, unknowns, readings, solveError } = useMemo(() => {
+  const { ledBrightness, netOf, problems, unknowns, readings, solveError, faults } = useMemo(() => {
     const res = compile(doc)
 
     const d13 = res.mcuPorts.get('D13')
     if (d13) d13.set(1 / 25, d13High ? 5 / 25 : 0)
 
     let solveError: string | null = null
+    let faults: { kind: string; message: string }[] = []
     if (res.circuit.size > 0) {
       const solved = res.circuit.solve()
       if (!solved.ok) solveError = solved.error ?? 'circuit did not solve'
+      faults = solved.faults
     }
 
     const brightness = new Map<string, number>()
@@ -65,6 +67,7 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
       unknowns: res.unknowns,
       readings,
       solveError,
+      faults,
     }
   }, [doc, d13High])
 
@@ -223,7 +226,22 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
           {solveError && (
             <p className="text-xs text-red-400 mb-2">Solver: {solveError}</p>
           )}
-          {problems.length === 0 && !solveError ? (
+          {faults.length > 0 && (
+            <ul className="space-y-2 mb-3" data-testid="faults">
+              {faults.map((f, i) => (
+                <li
+                  key={i}
+                  className="text-xs text-red-300 leading-snug rounded-lg border border-red-900 bg-red-950/40 px-2.5 py-2"
+                >
+                  <span className="font-bold uppercase text-[9px] tracking-wider text-red-400 block mb-0.5">
+                    {f.kind.replace('_', ' ')}
+                  </span>
+                  {f.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          {problems.length === 0 && !solveError && faults.length === 0 ? (
             <p className="text-xs text-green-400">No problems detected.</p>
           ) : (
             <ul className="space-y-1.5">
