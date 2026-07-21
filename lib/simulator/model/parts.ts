@@ -42,9 +42,25 @@ export interface PartDefinition {
     | { kind: 'resistor'; defaultOhms: number }
     | { kind: 'led'; color: string }
     | { kind: 'button' }
+    | { kind: 'potentiometer'; totalOhms: number }
+    /** A resistance the student varies with a slider — LDR, thermistor. */
+    | { kind: 'variable_resistor'; minOhms: number; maxOhms: number }
+    /** Modelled by its coil/driver resistance; activity is reported, not solved. */
+    | { kind: 'load'; ohms: number; label: string }
+    | { kind: 'diode' }
     | { kind: 'passive' }
   /** Editable properties surfaced in the inspector. */
-  props?: Array<{ key: string; label: string; type: 'number' | 'select'; options?: number[]; unit?: string }>
+  props?: Array<{
+    key: string
+    label: string
+    type: 'number' | 'select' | 'range'
+    options?: number[]
+    unit?: string
+    min?: number
+    max?: number
+    step?: number
+    default?: number
+  }>
 }
 
 // ─── Breadboard ───────────────────────────────────────────────────────────────
@@ -219,9 +235,121 @@ const pushButton: PartDefinition = {
   // a classic source of student confusion, and a real electrical fact.
   buses: [['1a', '1b'], ['2a', '2b']],
   electrical: { kind: 'button' },
+  props: [{ key: 'pressed', label: 'Pressed', type: 'range', min: 0, max: 1, step: 1, default: 0 }],
   svg: `
     <rect x="2" y="2" width="36" height="36" rx="3" fill="#2b2b2b" stroke="#111"/>
     <circle cx="20" cy="20" r="10" fill="#d8d8d8" stroke="#9a9a9a"/>
+  `,
+}
+
+
+// ─── Analog input parts ───────────────────────────────────────────────────────
+
+/**
+ * Potentiometer. Track between pins 1 and 3, wiper on 2.
+ *
+ * This is the part that makes analogRead() mean something: the wiper really
+ * divides the track, so the ADC reads a genuine node voltage rather than a
+ * number we invented.
+ */
+const potentiometer: PartDefinition = {
+  type: 'potentiometer',
+  label: 'Potentiometer',
+  width: 50,
+  height: 50,
+  pins: [
+    { id: '1', name: 'Left', x: 5, y: 50, type: 'passive' },
+    { id: '2', name: 'Wiper', x: 25, y: 50, type: 'passive' },
+    { id: '3', name: 'Right', x: 45, y: 50, type: 'passive' },
+  ],
+  electrical: { kind: 'potentiometer', totalOhms: 10000 },
+  props: [
+    { key: 'position', label: 'Knob', type: 'range', min: 0, max: 100, step: 1, unit: '%', default: 50 },
+  ],
+  svg: `
+    <circle cx="25" cy="25" r="20" fill="#2b2b2b" stroke="#111"/>
+    <circle cx="25" cy="25" r="14" fill="#4a4a4a"/>
+    <line x1="25" y1="25" x2="25" y2="12" stroke="#e8e8e8" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="5" y1="50" x2="5" y2="43" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="25" y1="50" x2="25" y2="45" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="45" y1="50" x2="45" y2="43" stroke="#9a9a9a" stroke-width="2"/>
+  `,
+}
+
+const photoresistor: PartDefinition = {
+  type: 'photoresistor',
+  label: 'Photoresistor',
+  width: 30,
+  height: 40,
+  pins: [
+    { id: '1', name: 'A', x: 8, y: 40, type: 'passive' },
+    { id: '2', name: 'B', x: 22, y: 40, type: 'passive' },
+  ],
+  // Bright light drops an LDR to a few hundred ohms; darkness is hundreds of k.
+  electrical: { kind: 'variable_resistor', minOhms: 200, maxOhms: 200000 },
+  props: [
+    { key: 'light', label: 'Light level', type: 'range', min: 0, max: 100, step: 1, unit: '%', default: 60 },
+  ],
+  svg: `
+    <line x1="8" y1="40" x2="8" y2="28" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="22" y1="40" x2="22" y2="28" stroke="#9a9a9a" stroke-width="2"/>
+    <circle cx="15" cy="18" r="13" fill="#e8d9a0" stroke="#8a7a45"/>
+    <path d="M6 18 q4 -6 9 0 q4 6 9 0" fill="none" stroke="#7a4a2a" stroke-width="2"/>
+  `,
+}
+
+const buzzer: PartDefinition = {
+  type: 'buzzer',
+  label: 'Buzzer',
+  width: 40,
+  height: 40,
+  pins: [
+    { id: 'P', name: '+', x: 12, y: 40, type: 'passive' },
+    { id: 'N', name: '-', x: 28, y: 40, type: 'passive' },
+  ],
+  electrical: { kind: 'load', ohms: 300, label: 'Buzzer' },
+  svg: `
+    <circle cx="20" cy="20" r="18" fill="#1a1a1a" stroke="#000"/>
+    <circle cx="20" cy="20" r="4" fill="#3a3a3a"/>
+    <line x1="12" y1="40" x2="12" y2="36" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="28" y1="40" x2="28" y2="36" stroke="#9a9a9a" stroke-width="2"/>
+  `,
+}
+
+const dcMotor: PartDefinition = {
+  type: 'dc_motor',
+  label: 'DC motor',
+  width: 50,
+  height: 40,
+  pins: [
+    { id: '1', name: '+', x: 15, y: 40, type: 'passive' },
+    { id: '2', name: '-', x: 35, y: 40, type: 'passive' },
+  ],
+  electrical: { kind: 'load', ohms: 120, label: 'Motor' },
+  svg: `
+    <rect x="4" y="4" width="42" height="30" rx="6" fill="#9aa3ad" stroke="#6d757e"/>
+    <circle cx="25" cy="19" r="9" fill="#6d757e"/>
+    <text x="25" y="23" font-size="10" text-anchor="middle" fill="#e8e8e8" font-family="monospace">M</text>
+    <line x1="15" y1="40" x2="15" y2="34" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="35" y1="40" x2="35" y2="34" stroke="#9a9a9a" stroke-width="2"/>
+  `,
+}
+
+const diode: PartDefinition = {
+  type: 'diode',
+  label: 'Diode',
+  width: 50,
+  height: 20,
+  pins: [
+    { id: 'A', name: 'Anode', x: 0, y: 10, type: 'passive' },
+    { id: 'C', name: 'Cathode', x: 50, y: 10, type: 'passive' },
+  ],
+  electrical: { kind: 'diode' },
+  svg: `
+    <line x1="0" y1="10" x2="15" y2="10" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="35" y1="10" x2="50" y2="10" stroke="#9a9a9a" stroke-width="2"/>
+    <rect x="15" y="3" width="20" height="14" rx="2" fill="#1f1f1f"/>
+    <rect x="31" y="3" width="3" height="14" fill="#d8d8d8"/>
   `,
 }
 
@@ -233,10 +361,26 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   resistor,
   led,
   push_button: pushButton,
+  potentiometer,
+  photoresistor,
+  buzzer,
+  dc_motor: dcMotor,
+  diode,
 }
 
 /** Palette order. Breadboard and board first — students place those first too. */
-export const PALETTE: string[] = ['arduino_uno', 'breadboard', 'resistor', 'led', 'push_button']
+export const PALETTE: string[] = [
+  'arduino_uno',
+  'breadboard',
+  'resistor',
+  'led',
+  'push_button',
+  'potentiometer',
+  'photoresistor',
+  'diode',
+  'buzzer',
+  'dc_motor',
+]
 
 export function getPart(type: string): PartDefinition {
   const def = PART_LIBRARY[type]

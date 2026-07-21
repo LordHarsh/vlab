@@ -16,6 +16,8 @@ import {
   AVRTimer,
   AVRIOPort,
   AVRUSART,
+  AVRADC,
+  adcConfig,
   timer0Config,
   timer1Config,
   timer2Config,
@@ -86,6 +88,8 @@ export interface EngineSnapshot {
   ledBrightness: Record<string, number>
   /** partId → amps. */
   currents: Record<string, number>
+  /** Analog pin name → last value analogRead() returned (0..1023). */
+  adc: Record<string, number>
   faults: SolveFault[]
   problems: string[]
   serial: string
@@ -118,6 +122,26 @@ export class SimulationEngine {
   private topologyVersion = 0
 
   private latest: CachedSolution = EMPTY_SOLUTION
+
+  /**
+   * Time-weighted averaging of device currents.
+   *
+   * The solver reports the INSTANTANEOUS operating point, which is correct but
+   * misleading for anything driven by PWM: analogWrite() makes a pin alternate
+   * between two DC solutions, so a snapshot catches the LED either fully on or
+   * fully off and never in between. An eye integrates, so the readout has to as
+   * well. Each solution is weighted by how long it was actually held, which is
+   * exact — §2.1's point that PWM composes from exact edges plus two operating
+   * points, at no extra solve cost.
+   */
+  private accum = new Map<string, number>()
+  private accumCycles = 0
+  private lastEvalCycle = 0
+  private averaged: Record<string, number> = {}
+  private readonly avgWindowCycles = CLOCK_HZ * 0.05 // 50 ms, ~20 Hz flicker fusion
+  private adc!: AVRADC
+  /** Node voltages from the most recent solve, for the ADC to sample. */
+  private voltages: Float64Array = new Float64Array(0)
   serial = ''
 
   constructor(program: Uint16Array, doc: CircuitDoc) {
@@ -168,6 +192,18 @@ export class SimulationEngine {
     this.portC.addListener(makeListener('C', this.portC))
     this.portD.addListener(makeListener('D', this.portD))
 
+    /**
+     * The ADC reads REAL node voltages from the solved circuit.
+     *
+     * `onADCRead` is deliberately NOT overridden. avr8js's default reads
+     * `channelValues` (in volts), applies the selected reference voltage, and
+     * completes the conversion after `sampleCycles` via a clock event. Doing it
+     * by hand meant re-implementing all three, and completing synchronously
+     * would make every analogRead() instant rather than taking the ~104 us a
+     * real ATmega328P takes. Feeding channelValues keeps that behaviour exact.
+     */
+    this.adc = new AVRADC(this.cpu, adcConfig)
+
     this.compiled = compile(doc)
     this.rebuildWatchList()
     this.evaluate()
@@ -208,7 +244,26 @@ export class SimulationEngine {
     return k
   }
 
+  /** Weight the outgoing solution by how long it was held. */
+  private accumulate(): void {
+    const dt = this.cpu.cycles - this.lastEvalCycle
+    this.lastEvalCycle = this.cpu.cycles
+    if (dt <= 0) return
+    for (const partId of Object.keys(this.latest.currents)) {
+      this.accum.set(partId, (this.accum.get(partId) ?? 0) + this.latest.currents[partId] * dt)
+    }
+    this.accumCycles += dt
+    if (this.accumCycles >= this.avgWindowCycles) {
+      const out: Record<string, number> = {}
+      for (const [partId, sum] of this.accum) out[partId] = sum / this.accumCycles
+      this.averaged = out
+      this.accum.clear()
+      this.accumCycles = 0
+    }
+  }
+
   private evaluate(): void {
+    this.accumulate()
     const key = this.stateKey()
     const hit = this.cache.get(key)
     if (hit) {
@@ -229,11 +284,21 @@ export class SimulationEngine {
       if (!res.ok) solveError = res.error ?? 'circuit did not solve'
       this.solves++
 
+      this.voltages = res.voltages
+      // Publish solved node voltages to the ADC. Unconnected analog pins read
+      // 0 V: a real floating input picks up noise, but a deterministic 0 is the
+      // honest choice for a teaching tool.
+      for (let ch = 0; ch < 6; ch++) {
+        const netId = this.compiled.analogNets.get('A' + ch)
+        this.adc.channelValues[ch] =
+          netId !== undefined && netId < res.voltages.length ? res.voltages[netId] : 0
+      }
+
       const brightness: Record<string, number> = {}
       const currents: Record<string, number> = {}
+      for (const [partId, dev] of this.compiled.meters) currents[partId] = dev.current
       for (const [partId, diode] of this.compiled.leds) {
         const i = Math.max(diode.current, 0)
-        currents[partId] = diode.current
         // Perceptual curve — a linear map makes a dim LED look completely off.
         brightness[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
       }
@@ -266,12 +331,23 @@ export class SimulationEngine {
     }
   }
 
+  /** Brightness from the time-averaged current, so PWM dimming is visible. */
+  private averagedBrightness(): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const partId of Object.keys(this.latest.brightness)) {
+      const i = Math.max(this.averaged[partId] ?? this.latest.currents[partId] ?? 0, 0)
+      out[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
+    }
+    return out
+  }
+
   snapshot(): EngineSnapshot {
     const pins: Record<string, PinDrive> = {}
     for (const [name, d] of this.drives) pins[name] = d
     return {
-      ledBrightness: this.latest.brightness,
-      currents: this.latest.currents,
+      ledBrightness: this.averagedBrightness(),
+      currents: { ...this.latest.currents, ...this.averaged },
+      adc: adcCounts(this.adc),
       faults: this.latest.faults,
       problems: this.compiled.problems,
       serial: this.serial.slice(-1500),
@@ -298,4 +374,14 @@ const EMPTY_SOLUTION: CachedSolution = {
   currents: {},
   faults: [],
   solveError: null,
+}
+
+/** What analogRead() would return right now, for display. */
+function adcCounts(adc: AVRADC): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (let ch = 0; ch < 6; ch++) {
+    const v = Number(adc.channelValues[ch] ?? 0)
+    out['A' + ch] = Math.max(0, Math.min(1023, Math.round((v / adc.avcc) * 1023)))
+  }
+  return out
 }

@@ -43,7 +43,26 @@ export const BLANK: CircuitDoc = {
   wires: [],
 }
 
+/** Potentiometer across the rails, wiper into A0 — the analogRead demo. */
+export const POT_ADC: CircuitDoc = {
+  parts: [
+    { id: 'uno', type: 'arduino_uno', x: 60, y: 40, rotation: 0, props: {} },
+    { id: 'pot', type: 'potentiometer', x: 120, y: 260, rotation: 0, props: { position: 50 } },
+    { id: 'r1', type: 'resistor', x: 300, y: 300, rotation: 0, props: { ohms: 220 } },
+    { id: 'led1', type: 'led', x: 430, y: 280, rotation: 0, props: {} },
+  ],
+  wires: [
+    { id: 'p1', from: { partId: 'pot', pinId: '1' }, to: { partId: 'uno', pinId: 'GND.1' }, color: '#111827' },
+    { id: 'p2', from: { partId: 'pot', pinId: '3' }, to: { partId: 'uno', pinId: '5V' }, color: '#e04a4a' },
+    { id: 'p3', from: { partId: 'pot', pinId: '2' }, to: { partId: 'uno', pinId: 'A0' }, color: '#eab308' },
+    { id: 'p4', from: { partId: 'uno', pinId: 'D9' }, to: { partId: 'r1', pinId: '1' }, color: '#2563eb' },
+    { id: 'p5', from: { partId: 'r1', pinId: '2' }, to: { partId: 'led1', pinId: 'A' }, color: '#2563eb' },
+    { id: 'p6', from: { partId: 'led1', pinId: 'C' }, to: { partId: 'uno', pinId: 'GND.2' }, color: '#111827' },
+  ],
+}
+
 export const EXAMPLES: Record<string, { label: string; doc: CircuitDoc }> = {
   exp01: { label: 'Experiment 01 — LED + 220 Ω', doc: EXPERIMENT_01 },
+  pot: { label: 'Potentiometer → analogRead', doc: POT_ADC },
   blank: { label: 'Blank board', doc: BLANK },
 }

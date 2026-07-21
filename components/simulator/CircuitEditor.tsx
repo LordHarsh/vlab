@@ -11,6 +11,7 @@ import { EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
 const FIRMWARE = [
   { url: '/sim/blink.hex', label: 'Blink', note: 'D13 on/off, 1 s' },
   { url: '/sim/dht11.hex', label: 'DHT11', note: 'Experiment 01 sketch' },
+  { url: '/sim/pot.hex', label: 'Pot', note: 'analogRead(A0) → PWM on D9' },
 ]
 
 export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
@@ -120,7 +121,7 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
                 title={ex.label}
                 className="flex-1 px-2 py-1.5 rounded-lg text-[10px] border border-[#30363d] hover:border-[#58a6ff] text-[#8b949e]"
               >
-                {key === 'exp01' ? 'Exp 01' : 'Blank'}
+                {key === 'exp01' ? 'Exp 01' : key === 'pot' ? 'Pot' : 'Blank'}
               </button>
             ))}
           </div>
@@ -159,7 +160,35 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
             <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-2">Selected</div>
             <div className="text-white mb-3">{selectedDef.label}</div>
 
-            {selectedDef.props?.map((prop) => (
+            {selectedDef.props?.map((prop) =>
+              prop.type === 'range' ? (
+                <div key={prop.key} className="mb-3">
+                  <label className="flex justify-between text-[10px] text-[#8b949e] mb-1">
+                    <span>{prop.label}</span>
+                    <span className="text-white tabular-nums">
+                      {Number(selectedPart.props[prop.key] ?? prop.default ?? 0)}
+                      {prop.unit ?? ''}
+                    </span>
+                  </label>
+                  <input
+                    type="range"
+                    data-testid={`prop-${prop.key}`}
+                    min={prop.min}
+                    max={prop.max}
+                    step={prop.step}
+                    value={Number(selectedPart.props[prop.key] ?? prop.default ?? 0)}
+                    onChange={(e) =>
+                      dispatch({
+                        type: 'setProp',
+                        id: selectedPart.id,
+                        key: prop.key,
+                        value: Number(e.target.value),
+                      })
+                    }
+                    className="w-full accent-[#58a6ff]"
+                  />
+                </div>
+              ) : (
               <div key={prop.key} className="mb-3">
                 <label className="block text-[10px] text-[#8b949e] mb-1">{prop.label}</label>
                 <select
@@ -186,7 +215,8 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
                   ))}
                 </select>
               </div>
-            ))}
+              ),
+            )}
 
             <div className="flex gap-2">
               <button
@@ -229,6 +259,23 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
             </div>
           )}
         </div>
+
+        {/* Analog inputs */}
+        {Object.keys(snapshot.adc).length > 0 && (
+          <div className="px-4 py-4 border-b border-[#30363d]">
+            <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-2">
+              analogRead
+            </div>
+            <div className="grid grid-cols-3 gap-1.5" data-testid="adc">
+              {Object.entries(snapshot.adc).map(([name, counts]) => (
+                <div key={name} className="text-[10px]">
+                  <span className="text-[#8b949e]">{name}</span>{' '}
+                  <span className="text-white tabular-nums">{counts}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Measurements */}
         <div className="px-4 py-4 border-b border-[#30363d]">

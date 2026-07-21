@@ -5,7 +5,15 @@
  */
 
 import { Circuit } from '../solver'
-import { NortonPort, Resistor, VoltageSource, createLED, type Diode } from '../devices'
+import {
+  Diode as DiodeDevice,
+  DIODE_1N4148,
+  NortonPort,
+  Resistor,
+  VoltageSource,
+  createLED,
+  type Diode,
+} from '../devices'
 import type { NetId } from '../types'
 import { getPart } from './parts'
 import { pinKeyOf, type CircuitDoc, type PinRef } from './document'
@@ -27,6 +35,13 @@ export interface CompileResult {
   mcuPorts: Map<string, NortonPort>
   /** Part id → its LED diode, for current readout. */
   leds: Map<string, Diode>
+  /**
+   * Part id → any device whose current is worth showing (LEDs, buzzers, motors,
+   * resistors). Read after a solve; the value updates via Device.readback.
+   */
+  meters: Map<string, { readonly id: string; current: number }>
+  /** Analog pin name (A0…A5) → the net it reads, for the ADC. */
+  analogNets: Map<string, NetId>
   /** Human-readable problems to surface in the editor before solving. */
   problems: string[]
   /** Matrix unknowns — the budget the architecture caps at ~15. */
@@ -153,6 +168,8 @@ export function compile(doc: CircuitDoc): CompileResult {
   // ─── Instantiate devices ───
   const mcuPorts = new Map<string, NortonPort>()
   const leds = new Map<string, Diode>()
+  const meters = new Map<string, { readonly id: string; current: number }>()
+  const analogNets = new Map<string, NetId>()
   const hasGround = groundRoot !== null
 
   for (const part of doc.parts) {
@@ -164,7 +181,49 @@ export function compile(doc: CircuitDoc): CompileResult {
       const b = net({ partId: part.id, pinId: '2' })
       if (a === undefined || b === undefined) continue
       const ohms = Number(part.props.ohms ?? el.defaultOhms)
-      circuit.add(new Resistor(part.id, a, b, ohms))
+      const r = new Resistor(part.id, a, b, ohms)
+      circuit.add(r)
+      meters.set(part.id, r)
+    } else if (el.kind === 'potentiometer') {
+      // Track split by the wiper. This is what makes analogRead() meaningful:
+      // the divider is real, so the ADC reads a genuine node voltage.
+      const a = net({ partId: part.id, pinId: '1' })
+      const w = net({ partId: part.id, pinId: '2' })
+      const b = net({ partId: part.id, pinId: '3' })
+      const pos = Math.min(100, Math.max(0, Number(part.props.position ?? 50))) / 100
+      // Never exactly zero: a 0 Ω leg would be a short, and the wiper of a real
+      // pot always has some track resistance either side.
+      const lo = Math.max(el.totalOhms * pos, 0.5)
+      const hi = Math.max(el.totalOhms * (1 - pos), 0.5)
+      if (a !== undefined && w !== undefined) circuit.add(new Resistor(part.id + '.a', a, w, lo))
+      if (w !== undefined && b !== undefined) circuit.add(new Resistor(part.id + '.b', w, b, hi))
+    } else if (el.kind === 'variable_resistor') {
+      const a = net({ partId: part.id, pinId: '1' })
+      const b = net({ partId: part.id, pinId: '2' })
+      if (a === undefined || b === undefined) continue
+      // LDR response is roughly logarithmic in illumination, so interpolate
+      // geometrically rather than linearly — a linear map makes the mid-range
+      // behave nothing like a real sensor.
+      const t = Math.min(100, Math.max(0, Number(part.props.light ?? 60))) / 100
+      const ohms = el.minOhms * Math.pow(el.maxOhms / el.minOhms, 1 - t)
+      const r = new Resistor(part.id, a, b, ohms)
+      circuit.add(r)
+      meters.set(part.id, r)
+    } else if (el.kind === 'load') {
+      const pins = def.pins
+      const a = net({ partId: part.id, pinId: pins[0].id })
+      const b = net({ partId: part.id, pinId: pins[1].id })
+      if (a === undefined || b === undefined) continue
+      const r = new Resistor(part.id, a, b, el.ohms)
+      circuit.add(r)
+      meters.set(part.id, r)
+    } else if (el.kind === 'diode') {
+      const a = net({ partId: part.id, pinId: 'A' })
+      const c = net({ partId: part.id, pinId: 'C' })
+      if (a === undefined || c === undefined) continue
+      const d = new DiodeDevice(part.id, a, c, DIODE_1N4148)
+      circuit.add(d)
+      meters.set(part.id, d)
     } else if (el.kind === 'led') {
       const a = net({ partId: part.id, pinId: 'A' })
       const c = net({ partId: part.id, pinId: 'C' })
@@ -173,6 +232,7 @@ export function compile(doc: CircuitDoc): CompileResult {
       const { devices, diode } = createLED(part.id, a, c, internal)
       circuit.add(...devices)
       leds.set(part.id, diode)
+      meters.set(part.id, diode)
     } else if (el.kind === 'mcu') {
       for (const pin of def.pins) {
         const n = net({ partId: part.id, pinId: pin.id })
@@ -186,16 +246,26 @@ export function compile(doc: CircuitDoc): CompileResult {
           circuit.add(new VoltageSource(`${part.id}.5V`, n, 0, 5))
         } else if (pin.id === '3V3') {
           circuit.add(new VoltageSource(`${part.id}.3V3`, n, 0, 3.3))
+        } else if (pin.type === 'analog') {
+          // An analog pin is a high-impedance input plus an ADC tap. It still
+          // needs a Norton stamp so it can be driven digitally (A0-A5 double as
+          // D14-D19 on a real Uno) and so the sparsity pattern is fixed.
+          const port = new NortonPort(`${part.id}.${pin.id}`, 0, n, 1e-8, 0)
+          circuit.add(port)
+          mcuPorts.set(pin.id, port)
+          analogNets.set(pin.id, n)
         }
       }
     } else if (el.kind === 'button') {
       const a = net({ partId: part.id, pinId: '1a' })
       const b = net({ partId: part.id, pinId: '2a' })
       if (a === undefined || b === undefined) continue
-      const closed = part.props.pressed === 1
+      const closed = Number(part.props.pressed ?? 0) === 1
       // Open contacts are a very large resistance rather than a removed device,
       // so pressing a button never changes the matrix structure.
-      circuit.add(new Resistor(part.id, a, b, closed ? 0.05 : 1e12))
+      const sw = new Resistor(part.id, a, b, closed ? 0.05 : 1e12)
+      circuit.add(sw)
+      meters.set(part.id, sw)
     }
   }
 
@@ -221,6 +291,8 @@ export function compile(doc: CircuitDoc): CompileResult {
     nets,
     mcuPorts,
     leds,
+    meters,
+    analogNets,
     problems,
     unknowns: circuit.size,
   }

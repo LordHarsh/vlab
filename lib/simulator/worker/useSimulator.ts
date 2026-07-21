@@ -7,6 +7,7 @@ import type { EngineSnapshot, FromWorker, ToWorker } from './protocol'
 const EMPTY: EngineSnapshot = {
   ledBrightness: {},
   currents: {},
+  adc: {},
   faults: [],
   problems: [],
   serial: '',
