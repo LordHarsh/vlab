@@ -58,13 +58,33 @@ Still owed: Vercel Sandbox vs Fly.io measurement from an Indian connection.
 failure mode §5 warns about. P0-2 missed it because that spike only counted solves. A polarity
 regression guard is now in the spike.
 
-## In-browser reality check
+## In-browser reality check — INCONCLUSIVE, still open
 
-`/dev/simulator` runs the real Blink firmware coupled to the solver. Live: 220 Ω → 12.40 mA
-bright, 10 kΩ → 0.32 mA dim, none → 109.82 mA DESTROYED. (110 mA rather than the bench's
-1422 mA is correct — a real AVR pin drives through ~25 Ω and cannot source 1.4 A.)
+`/dev/simulator` runs the real Blink firmware coupled to the solver, now with the engine in a
+Web Worker. Functionally correct: 220 Ω → 12.40 mA bright, 10 kΩ → 0.32 mA dim, none →
+109.82 mA DESTROYED. (110 mA rather than the bench's 1422 mA is correct — a real AVR pin drives
+through ~25 Ω and cannot source 1.4 A.) Memoisation confirmed in-browser: 8 pin edges → 2
+solves, 7 cache hits.
 
-**Speed on the main thread with React re-rendering every frame: 0.49–1.5x realtime**, well
-below the 2.7x headless figure. This is the measurement §10 said Phase 0 still owed, and it
-confirms the architecture's call to move the engine into a Web Worker — the React commit, not
-the simulation, is the bottleneck.
+**The in-browser throughput number is NOT yet trustworthy.** The worker reported 0.75–0.79x
+realtime against 2.69x headless. Before treating that as a real ceiling, the same integer-heavy
+loop was run in both environments as a calibration:
+
+| environment | Mops |
+|---|---|
+| Node 24 | 367.5 |
+| Chrome page (via devtools eval) | 66.1 |
+
+A 5.6x gap on plain integer arithmetic between two V8s is not credible as a real property of
+the browser. The measurement environment is confounded: React DevTools was attached, the
+automation harness evaluates in an isolated world, and the tab was very likely unfocused during
+the timed runs (Chrome throttles background tabs).
+
+Switching the worker's yield from `setTimeout(…, 0)` (clamped to ~4 ms once nested) to a
+`MessageChannel` round trip moved the number only 0.75 → 0.79x, which further suggests the
+limiter is not the loop pacing.
+
+**Action:** P0-1's in-browser leg is unfinished. Re-measure on a clean Chrome profile — no
+extensions, foreground tab, no devtools — on the actual target laptop, before trusting any
+in-browser figure against the 0.5x kill criterion. Until then the only defensible throughput
+number is the headless one.
