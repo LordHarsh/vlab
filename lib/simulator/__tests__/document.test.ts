@@ -19,7 +19,9 @@ import {
   resetIds,
   type CircuitDoc,
   type DocState,
+  type DocWire,
 } from '../model/document'
+import { compile } from '../model/compile'
 import { EXPERIMENT_01, EXAMPLES } from '../model/examples'
 
 let passed = 0
@@ -117,6 +119,163 @@ for (const [key, ex] of Object.entries(EXAMPLES)) {
   resetIds()
   adoptIds({ parts: [{ id: 'uno', type: 'arduino_uno', x: 0, y: 0, rotation: 0, props: {} }], wires: [] })
   check('5.1 non-numeric ids are skipped', newId('w') === 'w1')
+}
+
+// ── 6. Wire waypoints ────────────────────────────────────────────────────────
+// Waypoints are cosmetic bends. Two things must hold forever: a document
+// written before they existed must keep loading and drawing as the direct
+// route it always was, and no bend may ever reach the netlist.
+{
+  const wireOf = (s: DocState, id: string): DocWire =>
+    s.doc.wires.find((w) => w.id === id) as DocWire
+
+  // 6a. Backward compatibility — the authored documents carry no waypoints.
+  {
+    resetIds()
+    const state = load(structuredClone(EXPERIMENT_01))
+    const w1 = wireOf(state, 'w1')
+    check('6.1 a wire with no waypoints still loads', w1 !== undefined)
+    check('6.2 load does not invent a waypoints field', !('waypoints' in w1))
+    check('6.3 the loaded wire is otherwise unchanged',
+      JSON.stringify(state.doc.wires) === JSON.stringify(EXPERIMENT_01.wires))
+  }
+
+  // 6b. add / move / remove produce the expected array.
+  {
+    resetIds()
+    let s = load(structuredClone(EXPERIMENT_01))
+
+    s = docReducer(s, { type: 'addWaypoint', id: 'w1', index: 0, point: { x: 120, y: 200 } })
+    check('6.4 addWaypoint creates the array',
+      JSON.stringify(wireOf(s, 'w1').waypoints) === '[{"x":120,"y":200}]',
+      JSON.stringify(wireOf(s, 'w1').waypoints))
+    check('6.5 other wires are untouched', wireOf(s, 'w2').waypoints === undefined)
+
+    // Index is the grabbed segment, so it is also the slot: segment 1 sits
+    // between the first waypoint and the far pin.
+    s = docReducer(s, { type: 'addWaypoint', id: 'w1', index: 1, point: { x: 160, y: 220 } })
+    s = docReducer(s, { type: 'addWaypoint', id: 'w1', index: 0, point: { x: 90, y: 180 } })
+    check('6.6 addWaypoint inserts at the given slot',
+      JSON.stringify(wireOf(s, 'w1').waypoints) ===
+        '[{"x":90,"y":180},{"x":120,"y":200},{"x":160,"y":220}]',
+      JSON.stringify(wireOf(s, 'w1').waypoints))
+
+    s = docReducer(s, { type: 'moveWaypoint', id: 'w1', index: 1, x: 300, y: 400 })
+    check('6.7 moveWaypoint moves only its own point',
+      JSON.stringify(wireOf(s, 'w1').waypoints) ===
+        '[{"x":90,"y":180},{"x":300,"y":400},{"x":160,"y":220}]',
+      JSON.stringify(wireOf(s, 'w1').waypoints))
+
+    s = docReducer(s, { type: 'removeWaypoint', id: 'w1', index: 1 })
+    check('6.8 removeWaypoint drops the right one',
+      JSON.stringify(wireOf(s, 'w1').waypoints) === '[{"x":90,"y":180},{"x":160,"y":220}]',
+      JSON.stringify(wireOf(s, 'w1').waypoints))
+
+    s = docReducer(s, { type: 'removeWaypoint', id: 'w1', index: 0 })
+    s = docReducer(s, { type: 'removeWaypoint', id: 'w1', index: 0 })
+    check('6.9 the last removal leaves no empty array behind',
+      !('waypoints' in wireOf(s, 'w1')),
+      JSON.stringify(wireOf(s, 'w1')))
+    check('6.10 and the wire is byte-identical to the authored one',
+      JSON.stringify(wireOf(s, 'w1')) === JSON.stringify(EXPERIMENT_01.wires[0]),
+      JSON.stringify(wireOf(s, 'w1')))
+  }
+
+  // 6c. Edits that cannot apply must not churn state — an unchanged doc is
+  // what stops docReducer pushing a pointless undo entry.
+  {
+    resetIds()
+    const s = load(structuredClone(EXPERIMENT_01))
+    check('6.11 moveWaypoint on a wire with none is a no-op',
+      docReducer(s, { type: 'moveWaypoint', id: 'w1', index: 0, x: 1, y: 1 }) === s)
+    check('6.12 addWaypoint on an unknown wire is a no-op',
+      docReducer(s, { type: 'addWaypoint', id: 'nope', index: 0, point: { x: 1, y: 1 } }) === s)
+    check('6.13 removeWaypoint out of range is a no-op',
+      docReducer(s, { type: 'removeWaypoint', id: 'w1', index: 3 }) === s)
+  }
+
+  // 6d. Undo. A drag streams an action per pointermove; only the first of them
+  // records history, so one press must undo the whole gesture.
+  {
+    resetIds()
+    let s = load(structuredClone(EXPERIMENT_01))
+    const depth = s.past.length
+
+    s = docReducer(s, { type: 'addWaypoint', id: 'w1', index: 0, point: { x: 100, y: 100 } })
+    check('6.14 addWaypoint records history', s.past.length === depth + 1)
+
+    s = docReducer(s, { type: 'moveWaypoint', id: 'w1', index: 0, x: 110, y: 110 })
+    check('6.15 the first move of a drag records history', s.past.length === depth + 2)
+    const afterFirst = s.past.length
+
+    s = docReducer(s, { type: 'moveWaypoint', id: 'w1', index: 0, x: 120, y: 120, transient: true })
+    s = docReducer(s, { type: 'moveWaypoint', id: 'w1', index: 0, x: 130, y: 130, transient: true })
+    check('6.16 the rest of the drag does not', s.past.length === afterFirst, `${s.past.length}`)
+    check('6.17 but the document did follow the pointer',
+      JSON.stringify(wireOf(s, 'w1').waypoints) === '[{"x":130,"y":130}]')
+
+    s = docReducer(s, { type: 'undo' })
+    check('6.18 undo restores the position from before the drag',
+      JSON.stringify(wireOf(s, 'w1').waypoints) === '[{"x":100,"y":100}]',
+      JSON.stringify(wireOf(s, 'w1').waypoints))
+
+    s = docReducer(s, { type: 'undo' })
+    check('6.19 a second undo removes the bend entirely', !('waypoints' in wireOf(s, 'w1')))
+
+    s = docReducer(s, { type: 'redo' })
+    check('6.20 redo puts it back',
+      JSON.stringify(wireOf(s, 'w1').waypoints) === '[{"x":100,"y":100}]')
+
+    // A move that never leaves its grid cell changes nothing, so it must not
+    // consume an undo entry either.
+    const before = s.past.length
+    s = docReducer(s, { type: 'moveWaypoint', id: 'w1', index: 0, x: 100, y: 100 })
+    check('6.21 a move to the same spot records nothing', s.past.length === before)
+  }
+
+  // 6e. Ids and persistence still behave with waypoints in the document.
+  {
+    resetIds()
+    const bent: CircuitDoc = {
+      parts: structuredClone(EXPERIMENT_01.parts),
+      wires: [
+        ...structuredClone(EXPERIMENT_01.wires),
+        {
+          id: 'w9',
+          from: { partId: 'uno', pinId: 'D2' },
+          to: { partId: 'bb', pinId: 'a1' },
+          color: '#000',
+          waypoints: [{ x: 40, y: 60 }],
+        },
+      ],
+    }
+    const s = load(bent)
+    check('6.22 adoptIds still claims ids on a bent document', newId('w') === 'w10')
+    check('6.23 the waypoints survived the load',
+      JSON.stringify(s.doc.wires[6].waypoints) === '[{"x":40,"y":60}]')
+    // Autosave hands the document to structuredClone (IndexedDB) and to JSON
+    // (the server action); neither may drop the field.
+    check('6.24 waypoints survive a JSON round trip',
+      JSON.stringify(JSON.parse(JSON.stringify(s.doc)).wires[6].waypoints) === '[{"x":40,"y":60}]')
+  }
+
+  // 6f. THE constraint: a bend is cosmetic and may never reach the netlist.
+  {
+    resetIds()
+    const plain = load(structuredClone(EXPERIMENT_01))
+    const bent = docReducer(
+      docReducer(plain, { type: 'addWaypoint', id: 'w1', index: 0, point: { x: 500, y: 900 } }),
+      { type: 'addWaypoint', id: 'w6', index: 0, point: { x: -200, y: -50 } },
+    )
+    const a = compile(plain.doc)
+    const b = compile(bent.doc)
+    check('6.25 waypoints do not change the matrix size', a.unknowns === b.unknowns)
+    check('6.26 waypoints do not change any pin assignment',
+      JSON.stringify([...a.netOf.entries()].sort()) ===
+        JSON.stringify([...b.netOf.entries()].sort()))
+    check('6.27 waypoints do not change the derived nets',
+      JSON.stringify(a.nets) === JSON.stringify(b.nets))
+  }
 }
 
 console.log(`\n${passed}/${passed + failed} passed${failed ? `, ${failed} FAILED` : ''}`)

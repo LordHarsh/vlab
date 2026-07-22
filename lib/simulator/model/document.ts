@@ -14,6 +14,11 @@ export interface PinRef {
   pinId: string
 }
 
+export interface Point {
+  x: number
+  y: number
+}
+
 export interface PlacedPart {
   id: string
   type: string
@@ -28,6 +33,19 @@ export interface DocWire {
   from: PinRef
   to: PinRef
   color: string
+  /**
+   * Optional bend points the drawn wire is routed through, in canvas units.
+   *
+   * COSMETIC ONLY. The netlist is derived from `from`/`to` alone (compile.ts
+   * unions exactly those two pin keys), so a bend can never change what is
+   * connected to what — it only lets a student drape a lead around a board
+   * instead of tunnelling through it.
+   *
+   * Optional on purpose: every document authored or autosaved before this
+   * existed has no `waypoints`, and must keep loading and rendering as the
+   * direct route it always was. Never assume the array is present.
+   */
+  waypoints?: Point[]
 }
 
 export interface CircuitDoc {
@@ -89,6 +107,21 @@ export type DocAction =
   | { type: 'setProp'; id: string; key: string; value: number | string }
   | { type: 'addWire'; wire: DocWire }
   | { type: 'removeWire'; id: string }
+  | { type: 'addWaypoint'; id: string; index: number; point: Point }
+  | {
+      type: 'moveWaypoint'
+      id: string
+      index: number
+      x: number
+      y: number
+      /**
+       * Set on every frame of a drag except the first. A drag streams one
+       * action per pointermove; without this each frame would land its own
+       * undo entry and a single bend would cost twenty presses to undo.
+       */
+      transient?: boolean
+    }
+  | { type: 'removeWaypoint'; id: string; index: number }
   | { type: 'load'; doc: CircuitDoc }
   | { type: 'undo' }
   | { type: 'redo' }
@@ -105,6 +138,19 @@ export const initialDocState: DocState = { doc: EMPTY_DOC, past: [], future: [] 
 const TRANSIENT = new Set(['undo', 'redo', 'load'])
 
 const HISTORY_LIMIT = 100
+
+/**
+ * Whether this edit is swallowed by the undo stack.
+ *
+ * Two sources: the fixed set above, and the per-action `transient` flag a drag
+ * sets on its continuation frames. The first frame of a drag records history
+ * (so undo lands on the state before the gesture); every frame after it is
+ * marked transient and rides on that one entry.
+ */
+function isTransient(action: DocAction): boolean {
+  if (TRANSIENT.has(action.type)) return true
+  return action.type === 'moveWaypoint' && action.transient === true
+}
 
 export function docReducer(state: DocState, action: DocAction): DocState {
   if (action.type === 'undo') {
@@ -140,10 +186,36 @@ export function docReducer(state: DocState, action: DocAction): DocState {
 
   return {
     doc,
-    past: TRANSIENT.has(action.type) ? state.past : [...state.past, state.doc].slice(-HISTORY_LIMIT),
+    past: isTransient(action) ? state.past : [...state.past, state.doc].slice(-HISTORY_LIMIT),
     // Any new edit invalidates the redo branch.
     future: [],
   }
+}
+
+/**
+ * Replace one wire in place.
+ *
+ * Returning the SAME doc when `edit` declines (unknown id, index out of range,
+ * a move that does not actually move) is load-bearing: docReducer bails on an
+ * unchanged doc, so a declined edit costs no undo entry and no re-render.
+ */
+function editWire(
+  doc: CircuitDoc,
+  id: string,
+  edit: (w: DocWire) => DocWire | null,
+): CircuitDoc {
+  const i = doc.wires.findIndex((w) => w.id === id)
+  if (i < 0) return doc
+  const next = edit(doc.wires[i])
+  if (!next || next === doc.wires[i]) return doc
+  const wires = doc.wires.slice()
+  wires[i] = next
+  return { ...doc, wires }
+}
+
+/** The waypoint list of `w`, treated as empty when the field is absent. */
+function pointsOf(w: DocWire): Point[] {
+  return w.waypoints ?? []
 }
 
 function applyEdit(doc: CircuitDoc, action: DocAction): CircuitDoc {
@@ -195,6 +267,43 @@ function applyEdit(doc: CircuitDoc, action: DocAction): CircuitDoc {
 
     case 'removeWire':
       return { ...doc, wires: doc.wires.filter((w) => w.id !== action.id) }
+
+    case 'addWaypoint':
+      return editWire(doc, action.id, (w) => {
+        const pts = [...pointsOf(w)]
+        // `index` is the segment that was grabbed, so it is also the slot the
+        // new bend belongs in — clamped, because a stale index from a wire
+        // edited under the pointer must not throw the list out of order.
+        const at = Math.max(0, Math.min(action.index, pts.length))
+        pts.splice(at, 0, { x: action.point.x, y: action.point.y })
+        return { ...w, waypoints: pts }
+      })
+
+    case 'moveWaypoint':
+      return editWire(doc, action.id, (w) => {
+        const pts = pointsOf(w)
+        const p = pts[action.index]
+        if (!p) return null
+        // Snapped drags spend most of their frames inside one grid cell.
+        if (p.x === action.x && p.y === action.y) return null
+        const next = pts.slice()
+        next[action.index] = { x: action.x, y: action.y }
+        return { ...w, waypoints: next }
+      })
+
+    case 'removeWaypoint':
+      return editWire(doc, action.id, (w) => {
+        const pts = pointsOf(w)
+        if (!pts[action.index]) return null
+        const next = pts.filter((_, i) => i !== action.index)
+        if (next.length > 0) return { ...w, waypoints: next }
+        // Last bend gone: drop the key rather than leave an empty array, so
+        // the wire is once again identical to one authored before waypoints
+        // existed — including when it is autosaved and reloaded.
+        const bare = { ...w }
+        delete bare.waypoints
+        return bare
+      })
 
     default:
       return doc
