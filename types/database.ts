@@ -14,6 +14,118 @@ export type Database = {
   }
   public: {
     Tables: {
+      circuits: {
+        Row: {
+          board: string
+          code: Json
+          created_at: string | null
+          created_by: string | null
+          graph: Json
+          id: string
+          interaction_level: string
+          role: string
+          simulation_id: string
+          updated_at: string | null
+          version: number
+        }
+        Insert: {
+          board?: string
+          code?: Json
+          created_at?: string | null
+          created_by?: string | null
+          graph: Json
+          id?: string
+          interaction_level?: string
+          role: string
+          simulation_id: string
+          updated_at?: string | null
+          version?: number
+        }
+        Update: {
+          board?: string
+          code?: Json
+          created_at?: string | null
+          created_by?: string | null
+          graph?: Json
+          id?: string
+          interaction_level?: string
+          role?: string
+          simulation_id?: string
+          updated_at?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circuits_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circuits_simulation_id_fkey"
+            columns: ["simulation_id"]
+            isOneToOne: false
+            referencedRelation: "simulations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sim_attempts: {
+        Row: {
+          class_id: string
+          code: Json
+          created_at: string | null
+          graph: Json
+          id: string
+          simulation_id: string
+          student_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          class_id: string
+          code?: Json
+          created_at?: string | null
+          graph: Json
+          id?: string
+          simulation_id: string
+          student_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          class_id?: string
+          code?: Json
+          created_at?: string | null
+          graph?: Json
+          id?: string
+          simulation_id?: string
+          student_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sim_attempts_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "classes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sim_attempts_simulation_id_fkey"
+            columns: ["simulation_id"]
+            isOneToOne: false
+            referencedRelation: "simulations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sim_attempts_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       class_feedback_settings: {
         Row: {
           class_id: string

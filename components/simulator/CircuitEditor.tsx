@@ -1,11 +1,12 @@
 'use client'
 
-import { useMemo, useReducer, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { CircuitCanvas } from './CircuitCanvas'
 import { compile } from '@/lib/simulator/model/compile'
 import { getPart } from '@/lib/simulator/model/parts'
 import { useSimulator } from '@/lib/simulator/worker/useSimulator'
 import { docReducer, type CircuitDoc } from '@/lib/simulator/model/document'
+import { useAutosave, type RemoteTarget } from '@/lib/simulator/useAutosave'
 import { EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
 
 const FIRMWARE = [
@@ -14,7 +15,14 @@ const FIRMWARE = [
   { url: '/sim/pot.hex', label: 'Pot', note: 'analogRead(A0) → PWM on D9' },
 ]
 
-export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
+export function CircuitEditor({
+  initial,
+  remote,
+}: {
+  initial?: CircuitDoc
+  /** Omitted in the dev harness, where there is no class or simulation. */
+  remote?: RemoteTarget
+}) {
   const [state, dispatch] = useReducer(docReducer, {
     doc: initial ?? EXPERIMENT_01,
     past: [],
@@ -24,6 +32,19 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
   const [hexUrl, setHexUrl] = useState(FIRMWARE[0].url)
 
   const doc = state.doc
+
+  // Local-first autosave. Restores previous work before the student notices
+  // they lost anything.
+  const { state: saveState, restored, restoreChecked } = useAutosave(doc, remote)
+  const appliedRestore = useRef(false)
+  useEffect(() => {
+    if (!restoreChecked || appliedRestore.current) return
+    appliedRestore.current = true
+    if (restored && (restored.parts?.length ?? 0) > 0) {
+      dispatch({ type: 'load', doc: restored })
+    }
+  }, [restoreChecked, restored])
+
   const { ready, running, error, snapshot, speedRatio, start, stop, reset } = useSimulator(
     hexUrl,
     doc,
@@ -143,6 +164,19 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
             >
               Redo
             </button>
+          </div>
+
+          <div className="flex justify-between text-[10px] pt-1">
+            <span data-testid="save-state" className={
+              saveState === 'offline' ? 'text-amber-400' :
+              saveState === 'saved' ? 'text-green-400' : 'text-[#6e7681]'
+            }>
+              {saveState === 'saving' ? 'saving…'
+                : saveState === 'saved' ? 'saved'
+                : saveState === 'offline' ? 'saved locally (offline)'
+                : saveState === 'local' ? 'saved locally'
+                : 'no changes'}
+            </span>
           </div>
 
           <div className="flex justify-between text-[10px] text-[#6e7681] pt-1">
