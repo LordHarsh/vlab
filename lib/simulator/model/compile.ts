@@ -25,6 +25,34 @@ export interface CompiledNet {
   active: boolean
 }
 
+/**
+ * An MCU pin wired DIRECTLY to ground — a dead short the solver cannot see.
+ *
+ * Once shorted, the pin's net IS net 0, so there is no node to solve for and no
+ * branch current to check: the source or port would be stamped from ground to
+ * ground and contribute nothing. The old code simply skipped such pins, so the
+ * most destructive thing a student can do to a board was modelled as nothing at
+ * all and reported as a healthy circuit.
+ *
+ * Note what this is NOT: a pin pulled to ground THROUGH a part keeps its own
+ * net (the part's two pins are separate nodes), so a pull-down resistor or a
+ * closed button never appears here. Only a wire straight to GND does.
+ */
+export interface ShortedPin {
+  /** Device id for the fault, e.g. "uno.5V". */
+  deviceId: string
+  /** Board pin id, e.g. "5V" or "D13". */
+  pinId: string
+  /**
+   * `supply` — a rail is destroyed the instant it is wired to GND, so the fault
+   * is unconditional. `io` — a pin is only destroyed while it is DRIVING, which
+   * is runtime state the compiler does not have; the engine gates on it.
+   */
+  role: 'supply' | 'io'
+  /** Rail voltage, or the logic-high voltage an I/O pin would drive. */
+  volts: number
+}
+
 export interface CompileResult {
   circuit: Circuit
   /** pinKey → solver net id. Ground is 0. */
@@ -56,6 +84,8 @@ export interface CompileResult {
   limitations: string[]
   /** Human-readable problems to surface in the editor before solving. */
   problems: string[]
+  /** MCU pins wired straight to ground. See ShortedPin. */
+  shortedPins: ShortedPin[]
   /** Matrix unknowns — the budget the architecture caps at ~15. */
   unknowns: number
 }
@@ -185,6 +215,7 @@ export function compile(doc: CircuitDoc): CompileResult {
   const pinNets = new Map<string, NetId>()
   const behavioural: CompileResult['behavioural'] = []
   const limitations: string[] = []
+  const shortedPins: ShortedPin[] = []
   const hasGround = groundRoot !== null
 
   for (const part of doc.parts) {
@@ -280,26 +311,59 @@ export function compile(doc: CircuitDoc): CompileResult {
     } else if (el.kind === 'mcu') {
       for (const pin of def.pins) {
         const n = net({ partId: part.id, pinId: pin.id })
-        if (n === undefined || n === 0) continue
-        if (pin.type === 'digital') {
-          // Permanently stamped, so the sparsity pattern never changes (§2.6).
+        if (n === undefined) continue
+
+        /**
+         * n === 0 means this pin sits ON the ground net — it is wired directly
+         * to GND. For a GND pin that is simply correct. For anything else it is
+         * a dead short, and it must be REPORTED rather than skipped: see
+         * ShortedPin for why the solver can never find it on its own.
+         */
+        const shorted = n === 0 && pin.type !== 'gnd'
+
+        if (pin.type === 'digital' || pin.type === 'analog') {
+          if (shorted) {
+            shortedPins.push({
+              deviceId: `${part.id}.${pin.id}`,
+              pinId: pin.id,
+              role: 'io',
+              volts: 5,
+            })
+          }
+          /**
+           * Permanently stamped, so the sparsity pattern never changes (§2.6) —
+           * and stamped EVEN WHEN SHORTED, where both terminals are ground and
+           * the device contributes nothing to the matrix. Dropping it was not
+           * free: mcuPorts is what the engine watches, so a shorted D13 fell out
+           * of the watch list, stopped tracking its own drive state, and
+           * vanished from the pin readout entirely.
+           *
+           * An analog pin is a high-impedance input plus an ADC tap. It needs
+           * the same stamp so it can be driven digitally (A0-A5 double as
+           * D14-D19 on a real Uno).
+           */
           const port = new NortonPort(`${part.id}.${pin.id}`, 0, n, 1e-8, 0)
           circuit.add(port)
           mcuPorts.set(pin.id, port)
           pinNets.set(pin.id, n)
-        } else if (pin.id === '5V') {
-          circuit.add(new VoltageSource(`${part.id}.5V`, n, 0, 5))
-        } else if (pin.id === '3.3V') {
-          circuit.add(new VoltageSource(`${part.id}.3V3`, n, 0, 3.3))
-        } else if (pin.type === 'analog') {
-          // An analog pin is a high-impedance input plus an ADC tap. It still
-          // needs a Norton stamp so it can be driven digitally (A0-A5 double as
-          // D14-D19 on a real Uno) and so the sparsity pattern is fixed.
-          const port = new NortonPort(`${part.id}.${pin.id}`, 0, n, 1e-8, 0)
-          circuit.add(port)
-          mcuPorts.set(pin.id, port)
-          analogNets.set(pin.id, n)
-          pinNets.set(pin.id, n)
+          if (pin.type === 'analog') analogNets.set(pin.id, n)
+        } else if (pin.id === '5V' || pin.id === '3.3V') {
+          const volts = pin.id === '5V' ? 5 : 3.3
+          if (shorted) {
+            // A VoltageSource from ground to ground is a degenerate branch row
+            // (a singular matrix), so the rail cannot be modelled here at all.
+            // Reporting it is the only honest option.
+            shortedPins.push({
+              deviceId: `${part.id}.${pin.id}`,
+              pinId: pin.id,
+              role: 'supply',
+              volts,
+            })
+          } else {
+            circuit.add(
+              new VoltageSource(`${part.id}.${pin.id === '5V' ? '5V' : '3V3'}`, n, 0, volts),
+            )
+          }
         }
       }
     } else if (el.kind === 'button') {
@@ -343,6 +407,7 @@ export function compile(doc: CircuitDoc): CompileResult {
     behavioural,
     limitations: [...new Set(limitations)],
     problems,
+    shortedPins,
     unknowns: circuit.size,
   }
 }

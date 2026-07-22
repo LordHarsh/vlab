@@ -28,6 +28,7 @@ import {
 } from 'avr8js'
 import { compile, type CompileResult } from './model/compile'
 import { DHT11, G_RELEASED, R_PULLDOWN, type BehaviouralDevice } from './behavioural'
+import { MIN_RESISTANCE } from './devices'
 import type { CircuitDoc, PlacedPart } from './model/document'
 import type { SolveFault } from './types'
 
@@ -38,6 +39,8 @@ const R_DRIVE = 25
 const R_PULLUP = 20_000
 const G_FLOAT = 1e-8
 const VCC = 5
+/** ATmega328P absolute maximum per I/O pin, from the datasheet. */
+const PIN_MAX_CURRENT = 0.04
 
 export type PinDrive = 'low' | 'high' | 'float' | 'pullup'
 
@@ -148,18 +151,29 @@ export class SimulationEngine {
    * well. Each solution is weighted by how long it was actually held, which is
    * exact — §2.1's point that PWM composes from exact edges plus two operating
    * points, at no extra solve cost.
+   *
+   * `avg` holds one filtered value per metered part; `lastAvgCycle` is how far
+   * the filter has been integrated. See advanceAverage() for why the window has
+   * to close at snapshot time and not only on pin edges.
    */
-  private accum = new Map<string, number>()
-  private accumCycles = 0
-  private lastEvalCycle = 0
-  private averaged: Record<string, number> = {}
+  private avg = new Map<string, number>()
+  private lastAvgCycle = 0
   private devices: BehaviouralDevice[] = []
   /** Behavioural drive state, part of the memoisation key. */
   private deviceDrives = new Map<string, 'low' | 'release'>()
   /** Last logic level presented to each MCU input pin, for hysteresis. */
   private inputLevels = new Map<string, boolean>()
   private doc: CircuitDoc
-  private readonly avgWindowCycles = CLOCK_HZ * 0.05 // 50 ms, ~20 Hz flicker fusion
+  /**
+   * Display filter time constant, in CPU cycles — 25 ms of SIMULATED time.
+   *
+   * Long enough to swallow PWM: Timer1's 490 Hz gives a 2.04 ms period, and a
+   * first-order filter reduces its ripple to about T/(4*tau) = 2% of full
+   * scale. Short enough that anything a human could see is essentially
+   * immediate: 99% settled in 115 ms, well inside the eye's flicker-fusion
+   * window and only two 20 Hz snapshots.
+   */
+  private readonly avgTauCycles = CLOCK_HZ * 0.025
   private adc!: AVRADC
   /** Node voltages from the most recent solve, for the ADC to sample. */
   private voltages: Float64Array = new Float64Array(0)
@@ -338,26 +352,48 @@ export class SimulationEngine {
     return k
   }
 
-  /** Weight the outgoing solution by how long it was held. */
-  private accumulate(): void {
-    const dt = this.cpu.cycles - this.lastEvalCycle
-    this.lastEvalCycle = this.cpu.cycles
-    if (dt <= 0) return
-    for (const partId of Object.keys(this.latest.currents)) {
-      this.accum.set(partId, (this.accum.get(partId) ?? 0) + this.latest.currents[partId] * dt)
-    }
-    this.accumCycles += dt
-    if (this.accumCycles >= this.avgWindowCycles) {
-      const out: Record<string, number> = {}
-      for (const [partId, sum] of this.accum) out[partId] = sum / this.accumCycles
-      this.averaged = out
-      this.accum.clear()
-      this.accumCycles = 0
+  /**
+   * Integrate the display filter forward to the current cycle.
+   *
+   * Called from TWO places, and both are load-bearing:
+   *
+   *   - evaluate(), BEFORE `latest` is replaced, so the outgoing operating point
+   *     is weighted by exactly how long it was held;
+   *   - snapshot(), so the window closes at the moment the snapshot is taken.
+   *
+   * That second call is the whole fix. The averaging used to be closed only on
+   * a pin edge, which meant a snapshot published the average of the interval
+   * BEFORE the last edge and nothing moved between edges at all. Blink's
+   * symmetric 1 s hold turned that into a full 180° inversion — the LED was lit
+   * exactly when D13 was low — and a circuit that stopped being driven froze at
+   * its last value forever instead of decaying. The invariant now is that a
+   * snapshot reflects state up to the moment it is taken.
+   *
+   * The signal is piecewise constant between calls, so exp(-dt/tau) integrates
+   * the first-order filter EXACTLY at one exp() per call, whatever dt is. A
+   * long hold (Blink's 16e6 cycles) collapses to the instantaneous value; a
+   * short one (a PWM slice) barely moves it.
+   */
+  private advanceAverage(): void {
+    const now = this.cpu.cycles
+    const dt = now - this.lastAvgCycle
+    this.lastAvgCycle = now
+    const decay = dt > 0 ? Math.exp(-dt / this.avgTauCycles) : 1
+    const cur = this.latest.currents
+    // A part that no longer exists — deleted, or unwired by an edit — must not
+    // keep reporting the current it was carrying when it left.
+    for (const partId of this.avg.keys()) if (!(partId in cur)) this.avg.delete(partId)
+    for (const partId of Object.keys(cur)) {
+      const target = cur[partId]
+      const prev = this.avg.get(partId)
+      // A part seen for the first time starts AT its value rather than at zero,
+      // so a freshly loaded circuit reads correctly before any time has passed.
+      this.avg.set(partId, prev === undefined ? target : target + (prev - target) * decay)
     }
   }
 
   private evaluate(): void {
-    this.accumulate()
+    this.advanceAverage()
     const key = this.stateKey()
     const hit = this.cache.get(key)
     if (hit) {
@@ -440,20 +476,73 @@ export class SimulationEngine {
   private averagedBrightness(): Record<string, number> {
     const out: Record<string, number> = {}
     for (const partId of Object.keys(this.latest.brightness)) {
-      const i = Math.max(this.averaged[partId] ?? this.latest.currents[partId] ?? 0, 0)
+      const i = Math.max(this.avg.get(partId) ?? this.latest.currents[partId] ?? 0, 0)
       out[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
     }
     return out
   }
 
+  private averagedCurrents(): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const partId of Object.keys(this.latest.currents)) {
+      out[partId] = this.avg.get(partId) ?? this.latest.currents[partId]
+    }
+    return out
+  }
+
+  /**
+   * Everything wrong with the circuit right now.
+   *
+   * The solver's own faults, plus the ones it structurally cannot see: a pin
+   * wired straight to GND has no net of its own, so there is no node voltage or
+   * branch current to check. See ShortedPin in model/compile.ts.
+   */
+  private faults(): SolveFault[] {
+    const shorts = this.compiled.shortedPins
+    if (shorts.length === 0) return this.latest.faults
+    const out: SolveFault[] = []
+    for (const s of shorts) {
+      if (s.role === 'supply') {
+        out.push({
+          kind: 'short_circuit',
+          deviceId: s.deviceId,
+          // The engine models a plain wire as MIN_RESISTANCE, the same figure
+          // the 0 Ω resistor case reports, so the two agree on what a short is.
+          value: s.volts / MIN_RESISTANCE,
+          message:
+            `The ${s.volts} V supply pin is wired directly to GND — that is a short circuit. ` +
+            `On real hardware this destroys the board or the supply.`,
+        })
+      } else if (this.drives.get(s.pinId) === 'high') {
+        // Only while it is DRIVING. The same wire on an input pin is merely a
+        // pin tied low, which is harmless, and claiming otherwise would be the
+        // same class of dishonesty as missing the short in the first place.
+        const amps = s.volts / R_DRIVE
+        out.push({
+          kind: 'short_circuit',
+          deviceId: s.deviceId,
+          value: amps,
+          message:
+            `${s.pinId} is driving ${s.volts} V straight into GND — ` +
+            `${(amps * 1000).toFixed(0)} mA through a pin rated for ${(PIN_MAX_CURRENT * 1000).toFixed(0)} mA. ` +
+            `On real hardware this pin is destroyed.`,
+        })
+      }
+    }
+    return out.concat(this.latest.faults)
+  }
+
   snapshot(): EngineSnapshot {
+    // Close the averaging window HERE, so the reading reflects the recent past
+    // up to this instant rather than up to the last pin edge.
+    this.advanceAverage()
     const pins: Record<string, PinDrive> = {}
     for (const [name, d] of this.drives) pins[name] = d
     return {
       ledBrightness: this.averagedBrightness(),
-      currents: { ...this.latest.currents, ...this.averaged },
+      currents: this.averagedCurrents(),
       adc: adcCounts(this.adc),
-      faults: this.latest.faults,
+      faults: this.faults(),
       problems: this.compiled.problems,
       serial: this.serial.slice(-1500),
       pins,
