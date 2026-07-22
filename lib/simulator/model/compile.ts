@@ -289,7 +289,7 @@ export function compile(doc: CircuitDoc): CompileResult {
           pinNets.set(pin.id, n)
         } else if (pin.id === '5V') {
           circuit.add(new VoltageSource(`${part.id}.5V`, n, 0, 5))
-        } else if (pin.id === '3V3') {
+        } else if (pin.id === '3.3V') {
           circuit.add(new VoltageSource(`${part.id}.3V3`, n, 0, 3.3))
         } else if (pin.type === 'analog') {
           // An analog pin is a high-impedance input plus an ADC tap. It still

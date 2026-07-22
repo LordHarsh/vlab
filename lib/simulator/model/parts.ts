@@ -10,6 +10,8 @@
  * to that grid.
  */
 
+import { UNO_RENAME, wokwiGeometry } from './wokwi'
+
 export const PITCH = 10
 
 export type PinType = 'power' | 'gnd' | 'digital' | 'analog' | 'passive'
@@ -139,44 +141,20 @@ function makeBreadboard(): PartDefinition {
 // ─── Arduino Uno ──────────────────────────────────────────────────────────────
 
 function makeUno(): PartDefinition {
-  const pins: PinGeometry[] = []
-  // Digital header along the top, analog + power along the bottom.
-  const digital = ['D13', 'D12', 'D11', 'D10', 'D9', 'D8', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'D1', 'D0']
-  digital.forEach((id, i) => {
-    pins.push({ id, name: id, x: 30 + i * PITCH, y: 5, type: 'digital' })
-  })
-  const bottom: Array<[string, PinType]> = [
-    ['GND.1', 'gnd'], ['GND.2', 'gnd'], ['5V', 'power'], ['3V3', 'power'], ['VIN', 'power'],
-    ['A0', 'analog'], ['A1', 'analog'], ['A2', 'analog'], ['A3', 'analog'], ['A4', 'analog'], ['A5', 'analog'],
-  ]
-  bottom.forEach(([id, type], i) => {
-    pins.push({ id, name: id, x: 30 + i * PITCH, y: 95, type })
-  })
-
-  const labels = pins
-    .map(
-      (p) =>
-        `<text x="${p.x}" y="${p.y < 50 ? p.y + 12 : p.y - 6}" font-size="5" text-anchor="middle" fill="#dff3f0" font-family="monospace">${p.name.replace('.1', '').replace('.2', '')}</text>`,
-    )
-    .join('')
-
   return {
     type: 'arduino_uno',
     label: 'Arduino Uno',
-    width: 190,
-    height: 100,
-    pins,
-    // All GND pins are the same net on the real board.
-    buses: [['GND.1', 'GND.2']],
     electrical: { kind: 'mcu', board: 'arduino_uno' },
-    svg: `
-      <rect x="0" y="0" width="190" height="100" rx="6" fill="#16a3a3" stroke="#0f7d7d"/>
-      <rect x="24" y="0" width="146" height="10" fill="#0d5f5f"/>
-      <rect x="24" y="90" width="116" height="10" fill="#0d5f5f"/>
-      <rect x="60" y="35" width="70" height="30" rx="2" fill="#1b1b1b"/>
-      <text x="95" y="54" font-size="11" text-anchor="middle" fill="#ffffff" font-family="monospace">UNO</text>
-      ${labels}
-    `,
+    // All GND pins are the same net on the real board.
+    buses: [['GND.1', 'GND.2', 'GND.3']],
+    ...wokwiGeometry('arduino-uno', {
+      rename: UNO_RENAME,
+      // A5.2/A4.2 are the SCL/SDA duplicates on the top header. They are the
+      // same silicon pins as A4/A5, so exposing them as separate ids would let
+      // a student wire to "a different pin" that is electrically identical.
+      omit: ['A5.2', 'A4.2'],
+      subtle: ['AREF', 'IOREF', 'RESET'],
+    }),
   }
 }
 
@@ -185,12 +163,6 @@ function makeUno(): PartDefinition {
 const resistor: PartDefinition = {
   type: 'resistor',
   label: 'Resistor',
-  width: 60,
-  height: 20,
-  pins: [
-    { id: '1', name: 'A', x: 0, y: 10, type: 'passive' },
-    { id: '2', name: 'B', x: 60, y: 10, type: 'passive' },
-  ],
   electrical: { kind: 'resistor', defaultOhms: 220 },
   props: [
     {
@@ -201,55 +173,27 @@ const resistor: PartDefinition = {
       options: [0, 100, 220, 330, 470, 1000, 2200, 4700, 10000, 100000],
     },
   ],
-  svg: `
-    <line x1="0" y1="10" x2="16" y2="10" stroke="#9a9a9a" stroke-width="2"/>
-    <line x1="44" y1="10" x2="60" y2="10" stroke="#9a9a9a" stroke-width="2"/>
-    <rect x="16" y="3" width="28" height="14" rx="3" fill="#d9b382" stroke="#a8875c"/>
-    <rect x="21" y="3" width="3" height="14" fill="#7b3f00"/>
-    <rect x="26" y="3" width="3" height="14" fill="#111"/>
-    <rect x="31" y="3" width="3" height="14" fill="#b5442e"/>
-    <rect x="37" y="3" width="2" height="14" fill="#d4af37"/>
-  `,
+  ...wokwiGeometry('resistor'),
 }
 
 const led: PartDefinition = {
   type: 'led',
   label: 'LED',
-  width: 30,
-  height: 40,
-  pins: [
-    { id: 'A', name: 'Anode (+)', x: 10, y: 40, type: 'passive' },
-    { id: 'C', name: 'Cathode (−)', x: 20, y: 40, type: 'passive' },
-  ],
   electrical: { kind: 'led', color: 'red' },
-  svg: `
-    <line x1="10" y1="40" x2="10" y2="26" stroke="#9a9a9a" stroke-width="2"/>
-    <line x1="20" y1="40" x2="20" y2="30" stroke="#9a9a9a" stroke-width="2"/>
-    <path d="M4 26 A11 11 0 0 1 26 26 L26 30 L4 30 Z" fill="var(--led-fill, #b03030)" stroke="#7d2020"/>
-    <circle cx="15" cy="20" r="11" fill="var(--led-fill, #b03030)" stroke="#7d2020"/>
-  `,
+  ...wokwiGeometry('led'),
 }
 
 const pushButton: PartDefinition = {
   type: 'push_button',
   label: 'Push button',
-  width: 40,
-  height: 40,
-  pins: [
-    { id: '1a', name: '1a', x: 5, y: 5, type: 'passive' },
-    { id: '1b', name: '1b', x: 5, y: 35, type: 'passive' },
-    { id: '2a', name: '2a', x: 35, y: 5, type: 'passive' },
-    { id: '2b', name: '2b', x: 35, y: 35, type: 'passive' },
-  ],
   // The two pins on each side are permanently bridged inside the switch body —
   // a classic source of student confusion, and a real electrical fact.
   buses: [['1a', '1b'], ['2a', '2b']],
   electrical: { kind: 'button' },
   props: [{ key: 'pressed', label: 'Pressed', type: 'range', min: 0, max: 1, step: 1, default: 0 }],
-  svg: `
-    <rect x="2" y="2" width="36" height="36" rx="3" fill="#2b2b2b" stroke="#111"/>
-    <circle cx="20" cy="20" r="10" fill="#d8d8d8" stroke="#9a9a9a"/>
-  `,
+  ...wokwiGeometry('pushbutton', {
+    rename: { '1.l': '1a', '1.r': '1b', '2.l': '2a', '2.r': '2b' },
+  }),
 }
 
 
@@ -265,25 +209,14 @@ const pushButton: PartDefinition = {
 const potentiometer: PartDefinition = {
   type: 'potentiometer',
   label: 'Potentiometer',
-  width: 50,
-  height: 50,
-  pins: [
-    { id: '1', name: 'Left', x: 5, y: 50, type: 'passive' },
-    { id: '2', name: 'Wiper', x: 25, y: 50, type: 'passive' },
-    { id: '3', name: 'Right', x: 45, y: 50, type: 'passive' },
-  ],
   electrical: { kind: 'potentiometer', totalOhms: 10000 },
   props: [
     { key: 'position', label: 'Knob', type: 'range', min: 0, max: 100, step: 1, unit: '%', default: 50 },
   ],
-  svg: `
-    <circle cx="25" cy="25" r="20" fill="#2b2b2b" stroke="#111"/>
-    <circle cx="25" cy="25" r="14" fill="#4a4a4a"/>
-    <line x1="25" y1="25" x2="25" y2="12" stroke="#e8e8e8" stroke-width="2.5" stroke-linecap="round"/>
-    <line x1="5" y1="50" x2="5" y2="43" stroke="#9a9a9a" stroke-width="2"/>
-    <line x1="25" y1="50" x2="25" y2="45" stroke="#9a9a9a" stroke-width="2"/>
-    <line x1="45" y1="50" x2="45" y2="43" stroke="#9a9a9a" stroke-width="2"/>
-  `,
+  ...wokwiGeometry('potentiometer', {
+    rename: { GND: '1', SIG: '2', VCC: '3' },
+    types: { '1': 'passive', '2': 'passive', '3': 'passive' },
+  }),
 }
 
 const photoresistor: PartDefinition = {
@@ -311,13 +244,16 @@ const photoresistor: PartDefinition = {
 const buzzer: PartDefinition = {
   type: 'buzzer',
   label: 'Buzzer',
+  electrical: { kind: 'load', ohms: 300, label: 'Buzzer' },
+  // Hand-drawn on purpose. The harvested wokwi buzzer declares an 8x8 SVG but
+  // places its pins at (27,84) — it sizes itself with CSS outside the SVG, so
+  // the art and the pin coordinates do not share a coordinate system.
   width: 40,
   height: 40,
   pins: [
     { id: 'P', name: '+', x: 12, y: 40, type: 'passive' },
     { id: 'N', name: '-', x: 28, y: 40, type: 'passive' },
   ],
-  electrical: { kind: 'load', ohms: 300, label: 'Buzzer' },
   svg: `
     <circle cx="20" cy="20" r="18" fill="#1a1a1a" stroke="#000"/>
     <circle cx="20" cy="20" r="4" fill="#3a3a3a"/>
