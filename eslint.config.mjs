@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Third-party bundle used only as an input to the component-art harvest.
+    "public/vendor/**",
   ]),
 ]);
 

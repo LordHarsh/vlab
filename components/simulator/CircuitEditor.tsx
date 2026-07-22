@@ -121,7 +121,7 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
                 title={ex.label}
                 className="flex-1 px-2 py-1.5 rounded-lg text-[10px] border border-[#30363d] hover:border-[#58a6ff] text-[#8b949e]"
               >
-                {key === 'exp01' ? 'Exp 01' : key === 'pot' ? 'Pot' : 'Blank'}
+                {key === 'exp01' ? 'LED' : key === 'dht' ? 'Exp 01' : key === 'pot' ? 'Pot' : 'Blank'}
               </button>
             ))}
           </div>
@@ -313,6 +313,21 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
           {snapshot.solveError && (
             <p className="text-xs text-red-400 mb-2">Solver: {snapshot.solveError}</p>
           )}
+          {snapshot.limitations.length > 0 && (
+            <ul className="space-y-2 mb-3" data-testid="limitations">
+              {snapshot.limitations.map((l, i) => (
+                <li
+                  key={i}
+                  className="text-xs text-amber-300 leading-snug rounded-lg border border-amber-900 bg-amber-950/30 px-2.5 py-2"
+                >
+                  <span className="font-bold uppercase text-[9px] tracking-wider text-amber-400 block mb-0.5">
+                    not simulated
+                  </span>
+                  {l}
+                </li>
+              ))}
+            </ul>
+          )}
           {snapshot.faults.length > 0 && (
             <ul className="space-y-2 mb-3" data-testid="faults">
               {snapshot.faults.map((f, i) => (
@@ -330,7 +345,8 @@ export function CircuitEditor({ initial }: { initial?: CircuitDoc }) {
           )}
           {snapshot.problems.length === 0 &&
           !snapshot.solveError &&
-          snapshot.faults.length === 0 ? (
+          snapshot.faults.length === 0 &&
+          snapshot.limitations.length === 0 ? (
             <p className="text-xs text-green-400">No problems detected.</p>
           ) : (
             <ul className="space-y-1.5">

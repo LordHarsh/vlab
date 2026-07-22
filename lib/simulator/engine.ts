@@ -27,7 +27,8 @@ import {
   usart0Config,
 } from 'avr8js'
 import { compile, type CompileResult } from './model/compile'
-import type { CircuitDoc } from './model/document'
+import { DHT11, G_RELEASED, R_PULLDOWN, type BehaviouralDevice } from './behavioural'
+import type { CircuitDoc, PlacedPart } from './model/document'
 import type { SolveFault } from './types'
 
 export const CLOCK_HZ = 16_000_000
@@ -39,6 +40,18 @@ const G_FLOAT = 1e-8
 const VCC = 5
 
 export type PinDrive = 'low' | 'high' | 'float' | 'pullup'
+
+/**
+ * Input thresholds, from SIMULATOR_ARCHITECTURE.md §2.6.
+ *
+ * VIL 0.3*Vcc, VIH 0.6*Vcc, WITH HYSTERESIS from day one. Without the deadband
+ * a node sitting near mid-rail chatters across the threshold on every re-solve,
+ * producing thousands of spurious pin-change interrupts a second and livelocking
+ * the sketch — and it fails silently, as wrong interrupt counts rather than an
+ * error.
+ */
+const VIL = 0.3 * 5
+const VIH = 0.6 * 5
 
 function nortonFor(drive: PinDrive): { g: number; i: number } {
   switch (drive) {
@@ -101,6 +114,8 @@ export interface EngineSnapshot {
   pinEdges: number
   unknowns: number
   solveError: string | null
+  /** Honest statement of what the DC engine cannot do for this circuit (§2.3). */
+  limitations: string[]
 }
 
 export class SimulationEngine {
@@ -138,6 +153,12 @@ export class SimulationEngine {
   private accumCycles = 0
   private lastEvalCycle = 0
   private averaged: Record<string, number> = {}
+  private devices: BehaviouralDevice[] = []
+  /** Behavioural drive state, part of the memoisation key. */
+  private deviceDrives = new Map<string, 'low' | 'release'>()
+  /** Last logic level presented to each MCU input pin, for hysteresis. */
+  private inputLevels = new Map<string, boolean>()
+  private doc: CircuitDoc
   private readonly avgWindowCycles = CLOCK_HZ * 0.05 // 50 ms, ~20 Hz flicker fusion
   private adc!: AVRADC
   /** Node voltages from the most recent solve, for the ADC to sample. */
@@ -204,8 +225,10 @@ export class SimulationEngine {
      */
     this.adc = new AVRADC(this.cpu, adcConfig)
 
+    this.doc = doc
     this.compiled = compile(doc)
     this.rebuildWatchList()
+    this.buildBehavioural()
     this.evaluate()
   }
 
@@ -215,8 +238,10 @@ export class SimulationEngine {
    * program state they are trying to observe.
    */
   setDocument(doc: CircuitDoc): void {
+    this.doc = doc
     this.compiled = compile(doc)
     this.rebuildWatchList()
+    this.buildBehavioural()
     this.topologyVersion++
     this.cache.clear()
     this.dirtyFlag[0] = 1
@@ -228,6 +253,70 @@ export class SimulationEngine {
 
   /** Wired pins grouped by AVR port, so a port write only checks its own pins. */
   private watched: Record<'B' | 'C' | 'D', Array<[string, number]>> = { B: [], C: [], D: [] }
+
+  /**
+   * Instantiate tier-2 parts. Each gets a live view of its own net voltage and
+   * its own props, so moving the temperature slider changes what the next
+   * reading reports without rebuilding anything.
+   */
+  private buildBehavioural(): void {
+    this.devices = []
+    this.deviceDrives.clear()
+    for (const b of this.compiled.behavioural) {
+      if (b.protocol !== 'dht11') continue
+      this.devices.push(
+        new DHT11(b.partId, {
+          cpu: this.cpu,
+          voltage: () => (b.net < this.voltages.length ? this.voltages[b.net] : 0),
+          // The engine owns both the port and the cache key, so a device's
+          // drive can never diverge from what the cache thinks it is.
+          drive: (level) => {
+            if (this.deviceDrives.get(b.partId) === level) return
+            this.deviceDrives.set(b.partId, level)
+            b.port.set(level === 'low' ? 1 / R_PULLDOWN : G_RELEASED, 0)
+            this.dirtyFlag[0] = 1
+          },
+          props: () => this.partProps(b.partId),
+        }),
+      )
+    }
+  }
+
+  /**
+   * Push solved node voltages back into the emulator as digital input levels.
+   *
+   * This is the OTHER half of the PinBridge and it is easy to forget: avr8js
+   * takes external input through setPin(), so without this the circuit drives
+   * nothing back and digitalRead() never observes it. Every input-side
+   * experiment — a pushbutton, a sensor sharing a wire — depends on it.
+   */
+  private driveInputs(): void {
+    for (const name of this.wiredPins) {
+      const entry = PIN_MAP[name]
+      if (!entry) continue
+      const drive = this.drives.get(name)
+      // Only pins the sketch is not actively driving take an external level.
+      if (drive !== 'float' && drive !== 'pullup') continue
+
+      const netId = this.compiled.pinNets.get(name)
+      if (netId === undefined) continue
+      const v = netId < this.voltages.length ? this.voltages[netId] : 0
+
+      const prev = this.inputLevels.get(name) ?? false
+      const next = prev ? v > VIL : v > VIH
+      if (next === prev && this.inputLevels.has(name)) continue
+      this.inputLevels.set(name, next)
+
+      const [port, bit] = entry
+      const p = port === 'B' ? this.portB : port === 'C' ? this.portC : this.portD
+      p.setPin(bit, next)
+    }
+  }
+
+  private partProps(partId: string): Record<string, number | string> {
+    const part: PlacedPart | undefined = this.doc.parts.find((p) => p.id === partId)
+    return part ? part.props : {}
+  }
 
   private rebuildWatchList(): void {
     this.wiredPins = new Set(this.compiled.mcuPorts.keys())
@@ -241,6 +330,11 @@ export class SimulationEngine {
   private stateKey(): string {
     let k = `${this.topologyVersion}|`
     for (const name of this.wiredPins) k += name + this.drives.get(name)![0]
+    // Behavioural devices share the wire, so their drive is part of the
+    // operating point. Omitting it made every DHT11 transition a cache HIT on
+    // the previous solution — the sensor pulled its line low and the solver
+    // went on reporting it high.
+    for (const [id, level] of this.deviceDrives) k += '|' + id + level[0]
     return k
   }
 
@@ -269,7 +363,10 @@ export class SimulationEngine {
     if (hit) {
       this.cacheHits++
       this.latest = hit
+      this.voltages = hit.voltages
       this.dirtyFlag[0] = 0
+      this.driveInputs()
+      for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
       return
     }
 
@@ -302,13 +399,21 @@ export class SimulationEngine {
         // Perceptual curve — a linear map makes a dim LED look completely off.
         brightness[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
       }
-      this.latest = { brightness, currents, faults: res.faults, solveError }
+      this.latest = {
+        brightness,
+        currents,
+        faults: res.faults,
+        solveError,
+        voltages: res.voltages,
+      }
     } else {
       this.latest = EMPTY_SOLUTION
     }
 
     this.cache.set(key, this.latest)
     this.dirtyFlag[0] = 0
+    this.driveInputs()
+    for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
   }
 
   /**
@@ -358,6 +463,7 @@ export class SimulationEngine {
       pinEdges: this.pinEdges,
       unknowns: this.compiled.unknowns,
       solveError: this.latest.solveError,
+      limitations: this.compiled.limitations,
     }
   }
 }
@@ -367,6 +473,15 @@ interface CachedSolution {
   currents: Record<string, number>
   faults: SolveFault[]
   solveError: string | null
+  /**
+   * Node voltages for this operating point.
+   *
+   * These MUST be cached alongside the currents. Behavioural devices read their
+   * line voltage every poll, and a cache hit that restored the currents but left
+   * `voltages` holding some earlier state fed the DHT11 a stale line — it never
+   * saw the host release the wire, so it never answered.
+   */
+  voltages: Float64Array
 }
 
 const EMPTY_SOLUTION: CachedSolution = {
@@ -374,6 +489,7 @@ const EMPTY_SOLUTION: CachedSolution = {
   currents: {},
   faults: [],
   solveError: null,
+  voltages: new Float64Array(0),
 }
 
 /** What analogRead() would return right now, for display. */

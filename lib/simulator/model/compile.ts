@@ -42,6 +42,18 @@ export interface CompileResult {
   meters: Map<string, { readonly id: string; current: number }>
   /** Analog pin name (A0…A5) → the net it reads, for the ADC. */
   analogNets: Map<string, NetId>
+  /** Every MCU pin name → its net, so solved voltages can be fed back as inputs. */
+  pinNets: Map<string, NetId>
+  /**
+   * Parts needing a behavioural model, with the nets they drive. The engine
+   * instantiates these; the compiler only wires up their electrical side.
+   */
+  behavioural: Array<{ partId: string; protocol: string; port: NortonPort; net: NetId }>
+  /**
+   * Honest statement of what the DC engine cannot do for this circuit.
+   * §2.3: the failure mode must be a refusal, never a wrong number.
+   */
+  limitations: string[]
   /** Human-readable problems to surface in the editor before solving. */
   problems: string[]
   /** Matrix unknowns — the budget the architecture caps at ~15. */
@@ -170,6 +182,9 @@ export function compile(doc: CircuitDoc): CompileResult {
   const leds = new Map<string, Diode>()
   const meters = new Map<string, { readonly id: string; current: number }>()
   const analogNets = new Map<string, NetId>()
+  const pinNets = new Map<string, NetId>()
+  const behavioural: CompileResult['behavioural'] = []
+  const limitations: string[] = []
   const hasGround = groundRoot !== null
 
   for (const part of doc.parts) {
@@ -217,6 +232,35 @@ export function compile(doc: CircuitDoc): CompileResult {
       const r = new Resistor(part.id, a, b, el.ohms)
       circuit.add(r)
       meters.set(part.id, r)
+    } else if (el.kind === 'sensor') {
+      // The sensor shares its DATA line with the MCU, so it gets its own Norton
+      // port and the behavioural model drives it. Open-drain: it only pulls
+      // down, and releasing means going high-impedance.
+      const data = net({ partId: part.id, pinId: 'DATA' })
+      if (data === undefined) continue
+      const port = new NortonPort(part.id + '.data', 0, data, 1e-9, 0)
+      circuit.add(port)
+      behavioural.push({ partId: part.id, protocol: el.protocol, port, net: data })
+    } else if (el.kind === 'reactive') {
+      const a = net({ partId: part.id, pinId: '1' })
+      const b = net({ partId: part.id, pinId: '2' })
+      if (a === undefined || b === undefined) continue
+      if (el.element === 'capacitor') {
+        // DC steady state of a capacitor is an open circuit. That is the right
+        // answer for the operating point and the wrong answer for anything the
+        // student put the capacitor there to do, so say so.
+        circuit.add(new Resistor(part.id, a, b, 1e12))
+        limitations.push(
+          'Capacitors are held at their DC steady state (no current flows). ' +
+            'Charging, discharging and timing need transient simulation, which is not available yet.',
+        )
+      } else {
+        circuit.add(new Resistor(part.id, a, b, 0.01))
+        limitations.push(
+          'Inductors are held at their DC steady state (a plain wire). ' +
+            'Current ramp and back-EMF need transient simulation, which is not available yet.',
+        )
+      }
     } else if (el.kind === 'diode') {
       const a = net({ partId: part.id, pinId: 'A' })
       const c = net({ partId: part.id, pinId: 'C' })
@@ -242,6 +286,7 @@ export function compile(doc: CircuitDoc): CompileResult {
           const port = new NortonPort(`${part.id}.${pin.id}`, 0, n, 1e-8, 0)
           circuit.add(port)
           mcuPorts.set(pin.id, port)
+          pinNets.set(pin.id, n)
         } else if (pin.id === '5V') {
           circuit.add(new VoltageSource(`${part.id}.5V`, n, 0, 5))
         } else if (pin.id === '3V3') {
@@ -254,6 +299,7 @@ export function compile(doc: CircuitDoc): CompileResult {
           circuit.add(port)
           mcuPorts.set(pin.id, port)
           analogNets.set(pin.id, n)
+          pinNets.set(pin.id, n)
         }
       }
     } else if (el.kind === 'button') {
@@ -293,6 +339,9 @@ export function compile(doc: CircuitDoc): CompileResult {
     leds,
     meters,
     analogNets,
+    pinNets,
+    behavioural,
+    limitations: [...new Set(limitations)],
     problems,
     unknowns: circuit.size,
   }

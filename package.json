@@ -42,6 +42,7 @@
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.6",
     "@types/react-dom": "^19.0.2",
+    "@wokwi/elements": "^1.9.2",
     "autoprefixer": "^10.4.20",
     "dotenv": "^17.2.3",
     "eslint": "^9.18.0",

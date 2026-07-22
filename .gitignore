@@ -55,3 +55,7 @@ next-env.d.ts
 # Screenshots and local images
 *.png
 !public/**/*.png
+
+# wokwi-elements bundle: a dev-only input to the art harvest.
+# The harvested output (lib/simulator/model/wokwi-art.generated.json) IS committed.
+/public/vendor/

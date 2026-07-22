@@ -61,8 +61,34 @@ export const POT_ADC: CircuitDoc = {
   ],
 }
 
+/**
+ * Experiment 01 as the lab sheet actually describes it: DHT11 on D2 with its
+ * 10k pull-up, and the threshold LED on D13.
+ */
+export const EXPERIMENT_01_DHT: CircuitDoc = {
+  parts: [
+    { id: 'uno', type: 'arduino_uno', x: 60, y: 40, rotation: 0, props: {} },
+    { id: 'dht', type: 'dht11', x: 120, y: 280, rotation: 0, props: { temperature: 24, humidity: 45 } },
+    { id: 'rpull', type: 'resistor', x: 260, y: 240, rotation: 0, props: { ohms: 10000 } },
+    { id: 'r1', type: 'resistor', x: 420, y: 320, rotation: 0, props: { ohms: 220 } },
+    { id: 'led1', type: 'led', x: 560, y: 300, rotation: 0, props: {} },
+  ],
+  wires: [
+    { id: 'd1', from: { partId: 'dht', pinId: 'VCC' }, to: { partId: 'uno', pinId: '5V' }, color: '#e04a4a' },
+    { id: 'd2', from: { partId: 'dht', pinId: 'GND' }, to: { partId: 'uno', pinId: 'GND.1' }, color: '#111827' },
+    { id: 'd3', from: { partId: 'dht', pinId: 'DATA' }, to: { partId: 'uno', pinId: 'D2' }, color: '#2f7d32' },
+    // The datasheet's 10k pull-up. Without it the open-drain line never rises.
+    { id: 'd4', from: { partId: 'rpull', pinId: '1' }, to: { partId: 'dht', pinId: 'DATA' }, color: '#eab308' },
+    { id: 'd5', from: { partId: 'rpull', pinId: '2' }, to: { partId: 'uno', pinId: '5V' }, color: '#e04a4a' },
+    { id: 'd6', from: { partId: 'uno', pinId: 'D13' }, to: { partId: 'r1', pinId: '1' }, color: '#2563eb' },
+    { id: 'd7', from: { partId: 'r1', pinId: '2' }, to: { partId: 'led1', pinId: 'A' }, color: '#2563eb' },
+    { id: 'd8', from: { partId: 'led1', pinId: 'C' }, to: { partId: 'uno', pinId: 'GND.2' }, color: '#111827' },
+  ],
+}
+
 export const EXAMPLES: Record<string, { label: string; doc: CircuitDoc }> = {
   exp01: { label: 'Experiment 01 — LED + 220 Ω', doc: EXPERIMENT_01 },
+  dht: { label: 'Experiment 01 — DHT11 + LED', doc: EXPERIMENT_01_DHT },
   pot: { label: 'Potentiometer → analogRead', doc: POT_ADC },
   blank: { label: 'Blank board', doc: BLANK },
 }

@@ -48,6 +48,16 @@ export interface PartDefinition {
     /** Modelled by its coil/driver resistance; activity is reported, not solved. */
     | { kind: 'load'; ohms: number; label: string }
     | { kind: 'diode' }
+    /** Talks a wire protocol; needs a behavioural model (§7.1 tier 2). */
+    | { kind: 'sensor'; protocol: 'dht11' }
+    /**
+     * Capacitor or inductor. The interactive engine is DC-only, so these are
+     * solved at their DC limit — a cap is open, an inductor is a wire. That is
+     * the correct steady state, but charge and discharge need transient
+     * simulation, which does not exist yet. The compiler says so out loud
+     * rather than letting the part sit there doing nothing (§2.3).
+     */
+    | { kind: 'reactive'; element: 'capacitor' | 'inductor' }
     | { kind: 'passive' }
   /** Editable properties surfaced in the inspector. */
   props?: Array<{
@@ -353,6 +363,61 @@ const diode: PartDefinition = {
   `,
 }
 
+
+// ─── Behavioural sensors (tier 2) ─────────────────────────────────────────────
+
+const dht11: PartDefinition = {
+  type: 'dht11',
+  label: 'DHT11 sensor',
+  width: 40,
+  height: 55,
+  pins: [
+    { id: 'VCC', name: 'VCC', x: 8, y: 55, type: 'power' },
+    { id: 'DATA', name: 'DATA', x: 20, y: 55, type: 'digital' },
+    { id: 'GND', name: 'GND', x: 32, y: 55, type: 'passive' },
+  ],
+  electrical: { kind: 'sensor', protocol: 'dht11' },
+  props: [
+    { key: 'temperature', label: 'Temperature', type: 'range', min: 0, max: 50, step: 1, unit: '°C', default: 24 },
+    { key: 'humidity', label: 'Humidity', type: 'range', min: 20, max: 90, step: 1, unit: '%', default: 45 },
+  ],
+  svg: `
+    <rect x="2" y="2" width="36" height="42" rx="3" fill="#3b7fd4" stroke="#2a5c9c"/>
+    <circle cx="11" cy="13" r="3" fill="#1e3f6b"/><circle cx="20" cy="13" r="3" fill="#1e3f6b"/>
+    <circle cx="29" cy="13" r="3" fill="#1e3f6b"/><circle cx="11" cy="23" r="3" fill="#1e3f6b"/>
+    <circle cx="20" cy="23" r="3" fill="#1e3f6b"/><circle cx="29" cy="23" r="3" fill="#1e3f6b"/>
+    <circle cx="11" cy="33" r="3" fill="#1e3f6b"/><circle cx="20" cy="33" r="3" fill="#1e3f6b"/>
+    <circle cx="29" cy="33" r="3" fill="#1e3f6b"/>
+    <line x1="8" y1="55" x2="8" y2="44" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="20" y1="55" x2="20" y2="44" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="32" y1="55" x2="32" y2="44" stroke="#9a9a9a" stroke-width="2"/>
+  `,
+}
+
+// ─── Reactive parts — present, but honest about what they do ──────────────────
+
+const capacitor: PartDefinition = {
+  type: 'capacitor',
+  label: 'Capacitor',
+  width: 40,
+  height: 30,
+  pins: [
+    { id: '1', name: 'A', x: 0, y: 15, type: 'passive' },
+    { id: '2', name: 'B', x: 40, y: 15, type: 'passive' },
+  ],
+  electrical: { kind: 'reactive', element: 'capacitor' },
+  props: [
+    { key: 'microfarads', label: 'Capacitance', type: 'select', unit: 'uF',
+      options: [1, 10, 47, 100, 220, 470] },
+  ],
+  svg: `
+    <line x1="0" y1="15" x2="16" y2="15" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="24" y1="15" x2="40" y2="15" stroke="#9a9a9a" stroke-width="2"/>
+    <rect x="15" y="4" width="3" height="22" fill="#d8d8d8"/>
+    <rect x="22" y="4" width="3" height="22" fill="#d8d8d8"/>
+  `,
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const PART_LIBRARY: Record<string, PartDefinition> = {
@@ -366,6 +431,8 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   buzzer,
   dc_motor: dcMotor,
   diode,
+  dht11,
+  capacitor,
 }
 
 /** Palette order. Breadboard and board first — students place those first too. */
@@ -380,6 +447,8 @@ export const PALETTE: string[] = [
   'diode',
   'buzzer',
   'dc_motor',
+  'dht11',
+  'capacitor',
 ]
 
 export function getPart(type: string): PartDefinition {

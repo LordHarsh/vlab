@@ -18,6 +18,7 @@ const EMPTY: EngineSnapshot = {
   pinEdges: 0,
   unknowns: 0,
   solveError: null,
+  limitations: [],
 }
 
 /**
