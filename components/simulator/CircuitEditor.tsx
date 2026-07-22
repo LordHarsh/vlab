@@ -5,7 +5,7 @@ import { CircuitCanvas } from './CircuitCanvas'
 import { compile } from '@/lib/simulator/model/compile'
 import { getPart } from '@/lib/simulator/model/parts'
 import { useSimulator } from '@/lib/simulator/worker/useSimulator'
-import { docReducer, type CircuitDoc } from '@/lib/simulator/model/document'
+import { adoptIds, docReducer, type CircuitDoc } from '@/lib/simulator/model/document'
 import { useAutosave, type RemoteTarget } from '@/lib/simulator/useAutosave'
 import { EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
 
@@ -23,10 +23,11 @@ export function CircuitEditor({
   /** Omitted in the dev harness, where there is no class or simulation. */
   remote?: RemoteTarget
 }) {
-  const [state, dispatch] = useReducer(docReducer, {
-    doc: initial ?? EXPERIMENT_01,
-    past: [],
-    future: [],
+  // The lazy initialiser (rather than a plain initial value) so the starting
+  // document's ids are claimed too — it never passes through the 'load' action.
+  const [state, dispatch] = useReducer(docReducer, initial ?? EXPERIMENT_01, (doc) => {
+    adoptIds(doc)
+    return { doc, past: [], future: [] }
   })
   const [selected, setSelected] = useState<string | null>(null)
   const [hexUrl, setHexUrl] = useState(FIRMWARE[0].url)

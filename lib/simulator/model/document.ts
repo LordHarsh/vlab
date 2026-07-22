@@ -128,6 +128,10 @@ export function docReducer(state: DocState, action: DocAction): DocState {
   }
 
   if (action.type === 'load') {
+    // Every document that becomes editor state passes through here — the
+    // authored examples, an IndexedDB restore, and a server load. Claiming its
+    // ids before the first edit is what stops newId() colliding with them.
+    adoptIds(action.doc)
     return { doc: action.doc, past: [], future: [] }
   }
 
@@ -213,4 +217,31 @@ export function newId(prefix: string): string {
 
 export function resetIds(): void {
   counter = 0
+}
+
+/**
+ * Raise the id counter above every numeric id already present in `doc`.
+ *
+ * Without this, a fresh session starts at zero and newId('w') hands back "w1"
+ * — which EXAMPLES already uses. The duplicate key made React render only the
+ * first of the pair, so the header counted a wire the canvas had silently
+ * dropped, and the colliding id was then autosaved. Anything keyed by wire id
+ * (delete, in particular) would also hit the wrong one.
+ *
+ * Reloading did not clear it: a restored document still carries w1-w6 while
+ * the module-level counter restarts at 0, so the collision recurs every visit.
+ *
+ * Monotonic and idempotent, so React StrictMode's double-invoke of the reducer
+ * is harmless.
+ */
+export function adoptIds(doc: CircuitDoc): void {
+  let max = counter
+  const consider = (id: string) => {
+    // Ids are `${prefix}${n}` — take the trailing run of digits.
+    const m = /(\d+)$/.exec(id)
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  for (const p of doc.parts) consider(p.id)
+  for (const w of doc.wires) consider(w.id)
+  counter = max
 }
