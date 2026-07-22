@@ -5,23 +5,30 @@
  * Ported from `simDS18` in the reference lab HTML.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { SimLog, SimPanel, SliderRow, useSimLog } from './shared'
 import type { SimProps } from './types'
 
+const TEMP_0 = 25
+
 export function Ds18b20Sim({ platform }: SimProps) {
-  const [temp, setTemp] = useState(25)
+  const [temp, setTemp] = useState(TEMP_0)
   const { lines, log } = useSimLog()
 
-  function read(t: number) {
-    const f = (t * 9) / 5 + 32
-    log(`Temperature: ${t.toFixed(3)}°C  |  ${f.toFixed(3)}°F  |  Device: 28-abcdef012345`)
-  }
+  const read = useCallback(
+    (t: number) => {
+      const f = (t * 9) / 5 + 32
+      log(`Temperature: ${t.toFixed(3)}°C  |  ${f.toFixed(3)}°F  |  Device: 28-abcdef012345`)
+    },
+    [log]
+  )
 
-  // The reference auto-runs simDS18() shortly after the experiment opens.
+  // The reference auto-runs simDS18() shortly after the experiment opens. Run the
+  // real function against the initial slider value so the first line can never
+  // drift from the slider beside it.
   useEffect(() => {
-    log('Temperature: 25.000°C  |  77.000°F  |  Device: 28-abcdef012345')
-  }, [log])
+    read(TEMP_0)
+  }, [read])
 
   return (
     <SimPanel>

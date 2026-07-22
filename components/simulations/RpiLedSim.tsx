@@ -26,7 +26,8 @@ export function RpiLedSim({ platform }: SimProps) {
       </p>
 
       <CtrlRow>
-        <CtrlButton active={on} onClick={press}>
+        {/* Reference: the push button is a plain control — it never latches. */}
+        <CtrlButton onClick={press}>
           🔘 PRESS BUTTON
         </CtrlButton>
       </CtrlRow>

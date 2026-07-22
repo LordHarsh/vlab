@@ -8,25 +8,33 @@
  * uses the identical simulation for both — only the caption differs.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { LedRow, SimLog, SimPanel, SliderRow, useSimLog } from './shared'
 import type { SimProps } from './types'
 
+const TEMP_0 = 28
+const HUM_0 = 55
+
 export function Dht11Sim({ platform }: SimProps) {
-  const [temp, setTemp] = useState(28)
-  const [hum, setHum] = useState(55)
+  const [temp, setTemp] = useState(TEMP_0)
+  const [hum, setHum] = useState(HUM_0)
   const { lines, log } = useSimLog()
 
   const hot = temp > 30
 
-  function read(t: number, h: number) {
-    log(`Humidity: ${h}%  Temperature: ${t}°C${t > 30 ? ' ⚠ ALERT' : ''}`)
-  }
+  const read = useCallback(
+    (t: number, h: number) => {
+      log(`Humidity: ${h}%  Temperature: ${t}°C${t > 30 ? ' ⚠ ALERT' : ''}`)
+    },
+    [log]
+  )
 
-  // The reference auto-runs simDHT() shortly after the experiment opens.
+  // The reference auto-runs simDHT() shortly after the experiment opens. Run the
+  // real function against the initial slider values so the first line can never
+  // drift from the sliders beside it.
   useEffect(() => {
-    log('Humidity: 55%  Temperature: 28°C')
-  }, [log])
+    read(TEMP_0, HUM_0)
+  }, [read])
 
   return (
     <SimPanel>

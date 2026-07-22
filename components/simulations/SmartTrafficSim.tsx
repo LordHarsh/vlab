@@ -6,30 +6,36 @@
  * Green time = (3000 + density * 70) ms.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { LedStack, SimLog, SimPanel, SimStage, SliderRow, useSimLog } from './shared'
 import type { SimProps } from './types'
 
 const LANES = [1, 2, 3, 4] as const
+const DENSITY_0 = [20, 40, 60, 80]
 
 export function SmartTrafficSim({ platform }: SimProps) {
-  const [density, setDensity] = useState<number[]>([20, 40, 60, 80])
+  const [density, setDensity] = useState<number[]>([...DENSITY_0])
   const { lines, log } = useSimLog()
 
   const max = Math.max(...density)
   const activeIdx = density.indexOf(max) + 1
 
-  function evaluate(ds: number[]) {
-    const m = Math.max(...ds)
-    const lane = ds.indexOf(m) + 1
-    const greenTime = (3000 + m * 70) / 1000
-    log(`Lane ${lane} gets GREEN (density ${m}%) — Green time: ${greenTime.toFixed(1)}s`)
-  }
+  const evaluate = useCallback(
+    (ds: number[]) => {
+      const m = Math.max(...ds)
+      const lane = ds.indexOf(m) + 1
+      const greenTime = (3000 + m * 70) / 1000
+      log(`Lane ${lane} gets GREEN (density ${m}%) — Green time: ${greenTime.toFixed(1)}s`)
+    },
+    [log]
+  )
 
   // The reference auto-runs simSmartTraffic() shortly after the experiment opens.
+  // Run the real function against the initial densities so the first line can
+  // never drift from the sliders above it.
   useEffect(() => {
-    log('Lane 4 gets GREEN (density 80%) — Green time: 8.6s')
-  }, [log])
+    evaluate(DENSITY_0)
+  }, [evaluate])
 
   return (
     <SimPanel>
@@ -61,6 +67,9 @@ export function SmartTrafficSim({ platform }: SimProps) {
               <LedStack
                 key={i}
                 on
+                // Reference: inactive lanes keep the solid red fill but no halo —
+                // only the lane holding green glows.
+                glow={i === activeIdx}
                 color={i === activeIdx ? '#22c55e' : '#ef4444'}
                 caption={`L${i}`}
               />

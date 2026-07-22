@@ -78,16 +78,11 @@ export function MotorSim({ platform }: SimProps) {
         }}
       />
 
+      {/* Reference: all four motor buttons are plain controls — none latch. */}
       <CtrlRow>
-        <CtrlButton active={dir === 'forward' && speed > 0} onClick={forward}>
-          ▶ FORWARD
-        </CtrlButton>
-        <CtrlButton active={dir === 'reverse'} onClick={reverse}>
-          ◀ REVERSE
-        </CtrlButton>
-        <CtrlButton active={dir === 'stopped'} onClick={stop}>
-          ■ STOP
-        </CtrlButton>
+        <CtrlButton onClick={forward}>▶ FORWARD</CtrlButton>
+        <CtrlButton onClick={reverse}>◀ REVERSE</CtrlButton>
+        <CtrlButton onClick={stop}>■ STOP</CtrlButton>
         <CtrlButton onClick={stepper}>⟳ STEP (512)</CtrlButton>
       </CtrlRow>
 

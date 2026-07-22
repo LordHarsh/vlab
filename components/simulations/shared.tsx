@@ -13,7 +13,7 @@
  *   accent  #1477d1   radius 5px         no drop shadows
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 
 export const ACCENT = '#1477d1'
 
@@ -102,11 +102,17 @@ export function SliderRow({
   step?: number
   onChange: (v: number) => void
 }) {
+  // Labels are not unique across the eleven simulations ("Temperature (°C)"
+  // appears in both DHT11 and DS18B20) and contain spaces and parentheses, so
+  // they cannot be used as ids. `useId` is unique per instance; stripping the
+  // framework's punctuation keeps the id selector-safe.
+  const inputId = `sl-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
+
   return (
     <div className="mb-3 last:mb-0">
       <div className="mb-1 flex items-baseline justify-between gap-3">
         <label
-          htmlFor={`sl-${label}`}
+          htmlFor={inputId}
           className="min-w-0 font-mono text-[11px] leading-tight text-[#6b7c8d] sm:text-[12px]"
         >
           {label}
@@ -116,7 +122,7 @@ export function SliderRow({
         </span>
       </div>
       <input
-        id={`sl-${label}`}
+        id={inputId}
         type="range"
         min={min}
         max={max}
@@ -170,10 +176,13 @@ export function Led({
   on,
   color,
   size = 20,
+  glow = on,
 }: {
   on: boolean
   color: string
   size?: number
+  /** Halo, independent of the fill — the reference lights some LEDs without one. */
+  glow?: boolean
 }) {
   return (
     <span
@@ -184,7 +193,7 @@ export function Led({
         height: size,
         background: on ? color : LED_OFF_FILL,
         borderColor: on ? color : LED_OFF_BORDER,
-        boxShadow: on ? `0 0 0 4px ${color}26` : 'none',
+        boxShadow: on && glow ? `0 0 0 4px ${color}26` : 'none',
       }}
     />
   )
@@ -196,15 +205,17 @@ export function LedStack({
   color,
   caption,
   size = 20,
+  glow = on,
 }: {
   on: boolean
   color: string
   caption: string
   size?: number
+  glow?: boolean
 }) {
   return (
     <div className="flex min-w-0 flex-col items-center gap-1.5">
-      <Led on={on} color={color} size={size} />
+      <Led on={on} color={color} size={size} glow={glow} />
       <span className="font-mono text-[10px] uppercase tracking-wide text-[#6b7c8d]">
         {caption}
       </span>

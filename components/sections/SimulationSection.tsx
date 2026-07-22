@@ -18,14 +18,15 @@ export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | (string & {})
 export function SimulationSection({
   type = 'tinkercad',
   simType = null,
-  designId,
+  designId = null,
   height = 500,
   title = 'Interactive Simulation',
   platform = null,
 }: {
   type?: SimulationKind
   simType?: string | null
-  designId: string | null
+  /** Tinkercad only — the `builtin` and `native` paths never read it. */
+  designId?: string | null
   height?: number
   title?: string
   platform?: string | null

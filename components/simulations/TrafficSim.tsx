@@ -27,19 +27,32 @@ export function TrafficSim({ platform }: SimProps) {
   const [phase, setPhase] = useState(0)
   const { lines, log } = useSimLog()
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Port of the reference's `tPhase`: the phase the NEXT step will show. */
+  const nextPhase = useRef(0)
 
   const current = PHASES[phase % 3].l
 
   useEffect(() => {
     if (!running) return
-    const p = PHASES[phase % 3]
-    log(`${p.l} — ${MESSAGE[p.l]}`)
-    timer.current = setTimeout(() => setPhase((x) => x + 1), p.t * 1000)
+    // Port of trafficStep(): show and log a phase, then advance the counter
+    // *before* arming the timer. Because the counter moves inside the step,
+    // resuming after a pause continues with the next phase — the reference's
+    // toggleTraffic() calls trafficStep() directly — instead of repeating the
+    // phase already on screen.
+    const step = () => {
+      const i = nextPhase.current
+      const p = PHASES[i % 3]
+      setPhase(i)
+      log(`${p.l} — ${MESSAGE[p.l]}`)
+      nextPhase.current = i + 1
+      timer.current = setTimeout(step, p.t * 1000)
+    }
+    step()
     return () => {
       if (timer.current) clearTimeout(timer.current)
       timer.current = null
     }
-  }, [running, phase, log])
+  }, [running, log])
 
   return (
     <SimPanel>

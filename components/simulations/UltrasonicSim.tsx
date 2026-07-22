@@ -5,28 +5,36 @@
  * Ported from `simUltrasonic` / `togglePIR` in the reference lab HTML.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CtrlButton, CtrlRow, LedRow, SimLog, SimPanel, SliderRow, useSimLog } from './shared'
 import type { SimProps } from './types'
 
+const DIST_0 = 150
+const PIR_0 = false
+
 export function UltrasonicSim({ platform }: SimProps) {
-  const [dist, setDist] = useState(150)
-  const [pir, setPir] = useState(false)
+  const [dist, setDist] = useState(DIST_0)
+  const [pir, setPir] = useState(PIR_0)
   const { lines, log } = useSimLog()
 
   const alert = pir || dist < 20
 
-  function read(d: number, motion: boolean) {
-    const on = motion || d < 20
-    log(
-      `Distance: ${d} cm  |  Motion: ${motion ? 'DETECTED' : 'None'}  |  LED: ${on ? 'ON' : 'OFF'}`
-    )
-  }
+  const read = useCallback(
+    (d: number, motion: boolean) => {
+      const on = motion || d < 20
+      log(
+        `Distance: ${d} cm  |  Motion: ${motion ? 'DETECTED' : 'None'}  |  LED: ${on ? 'ON' : 'OFF'}`
+      )
+    },
+    [log]
+  )
 
   // The reference auto-runs simUltrasonic() shortly after the experiment opens.
+  // Run the real function against the initial state so the first line can never
+  // drift from the controls beside it.
   useEffect(() => {
-    log('Distance: 150 cm  |  Motion: None  |  LED: OFF')
-  }, [log])
+    read(DIST_0, PIR_0)
+  }, [read])
 
   return (
     <SimPanel>
@@ -60,7 +68,7 @@ export function UltrasonicSim({ platform }: SimProps) {
         <CtrlButton onClick={() => read(dist, pir)}>READ SENSORS</CtrlButton>
       </CtrlRow>
 
-      <LedRow on={alert} color="#1477d1" label={alert ? 'LED ON' : 'LED OFF'} />
+      <LedRow on={alert} color="#00d4ff" label={alert ? 'LED ON' : 'LED OFF'} />
 
       <SimLog lines={lines} />
     </SimPanel>

@@ -6,9 +6,12 @@
  * Normal ranges: 36.1–37.2°C and 60–100 BPM.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { SimLog, SimPanel, SliderRow, useSimLog } from './shared'
 import type { SimProps } from './types'
+
+const TEMP_0 = 36.8
+const BPM_0 = 72
 
 function evaluate(t: number, b: number) {
   const tempOk = t >= 36.1 && t <= 37.2
@@ -21,19 +24,24 @@ function evaluate(t: number, b: number) {
 }
 
 export function HealthSim({ platform }: SimProps) {
-  const [temp, setTemp] = useState(36.8)
-  const [bpm, setBpm] = useState(72)
+  const [temp, setTemp] = useState(TEMP_0)
+  const [bpm, setBpm] = useState(BPM_0)
   const { lines, log } = useSimLog()
 
-  function read(t: number, b: number) {
-    const { status, detail } = evaluate(t, b)
-    log(`Temp: ${t}°C  BPM: ${b}  Status: ${status}${detail} → ThingSpeak updated`)
-  }
+  const read = useCallback(
+    (t: number, b: number) => {
+      const { status, detail } = evaluate(t, b)
+      log(`Temp: ${t}°C  BPM: ${b}  Status: ${status}${detail} → ThingSpeak updated`)
+    },
+    [log]
+  )
 
-  // The reference auto-runs simHealth() shortly after the experiment opens.
+  // The reference auto-runs simHealth() shortly after the experiment opens. Run
+  // the real function against the initial slider values so the first line can
+  // never drift from the sliders beside it.
   useEffect(() => {
-    log('Temp: 36.8°C  BPM: 72  Status: ✅ NORMAL → ThingSpeak updated')
-  }, [log])
+    read(TEMP_0, BPM_0)
+  }, [read])
 
   return (
     <SimPanel>

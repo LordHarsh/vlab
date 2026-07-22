@@ -39,7 +39,8 @@ export function PirAlarmSim({ platform }: SimProps) {
       </p>
 
       <CtrlRow>
-        <CtrlButton active={alarm} onClick={trigger}>
+        {/* Reference: the trigger is a plain control — only the LEDs show state. */}
+        <CtrlButton onClick={trigger}>
           👋 TRIGGER MOTION
         </CtrlButton>
       </CtrlRow>
