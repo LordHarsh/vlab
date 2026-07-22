@@ -2,10 +2,9 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react'
 import {
-  PALETTE,
-  PART_LIBRARY,
   PITCH,
   getPart,
+  type PartDefinition,
   type PinGeometry,
 } from '@/lib/simulator/model/parts'
 import {
@@ -160,40 +159,10 @@ export function CircuitCanvas({
   }
 
   return (
-    <div className="relative w-full h-full bg-[#0d1117] overflow-hidden">
-      {/* Palette */}
-      <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 w-40">
-        <div className="text-[10px] uppercase tracking-wider text-[#8b949e] mb-0.5">Parts</div>
-        {PALETTE.map((type) => (
-          <button
-            key={type}
-            data-testid={`palette-${type}`}
-            onClick={() => {
-              const def = PART_LIBRARY[type]
-              const id = newId(type.slice(0, 3) + '_')
-              dispatch({
-                type: 'addPart',
-                part: {
-                  id,
-                  type,
-                  x: snap(60 + doc.parts.length * 20),
-                  y: snap(60 + doc.parts.length * 30),
-                  rotation: 0,
-                  props:
-                    def.electrical.kind === 'resistor' ? { ohms: def.electrical.defaultOhms } : {},
-                },
-              })
-              onSelect(id)
-            }}
-            className="text-left px-3 py-2 rounded-lg text-xs bg-[#161b22] border border-[#30363d] hover:border-[#58a6ff] text-[#c9d1d9] transition-colors"
-          >
-            {PART_LIBRARY[type].label}
-          </button>
-        ))}
-      </div>
-
-      {/* Zoom readout */}
-      <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#6e7681] font-mono">
+    <div className="relative w-full h-full bg-[#f4f5f6] overflow-hidden">
+      {/* Zoom readout. The parts palette now lives in the right rail — floating
+          it over the artwork hid the very circuit it was there to build. */}
+      <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#6b7c8d] font-mono">
         {Math.round(view.z * 100)}% · scroll to zoom · drag background to pan
       </div>
 
@@ -212,7 +181,7 @@ export function CircuitCanvas({
       >
         <defs>
           <pattern id="grid" width={PITCH} height={PITCH} patternUnits="userSpaceOnUse">
-            <circle cx={0} cy={0} r={0.6} fill="#21262d" />
+            <circle cx={0} cy={0} r={0.6} fill="#d3d8dd" />
           </pattern>
         </defs>
 
@@ -234,7 +203,7 @@ export function CircuitCanvas({
                 key={w.id}
                 d={wirePath(pa, pb)}
                 fill="none"
-                stroke={lit ? '#58a6ff' : w.color}
+                stroke={lit ? '#1477d1' : w.color}
                 strokeWidth={lit ? 3.5 : 2.5}
                 strokeLinecap="round"
                 className="cursor-pointer"
@@ -288,7 +257,7 @@ export function CircuitCanvas({
                     height={def.height + 8}
                     rx={4}
                     fill="none"
-                    stroke="#58a6ff"
+                    stroke="#1477d1"
                     strokeWidth={1.5}
                     strokeDasharray="4 3"
                     pointerEvents="none"
@@ -304,6 +273,7 @@ export function CircuitCanvas({
                   <Pin
                     key={pin.id}
                     pin={pin}
+                    hitR={hitRadius(def)}
                     partId={part.id}
                     netOf={netOf}
                     hoverNet={hoverNet}
@@ -332,7 +302,7 @@ export function CircuitCanvas({
                 <path
                   d={wirePath(from, { x: wire.x, y: wire.y })}
                   fill="none"
-                  stroke="#58a6ff"
+                  stroke="#1477d1"
                   strokeWidth={2.5}
                   strokeDasharray="5 4"
                   pointerEvents="none"
@@ -345,8 +315,37 @@ export function CircuitCanvas({
   )
 }
 
+/**
+ * How wide a pin's invisible hit target may grow.
+ *
+ * Bigger is better up to a point — a 0.1in hole is ~4px at 1x zoom, far below
+ * any usable pointer target — but SVG hit-testing picks the TOPMOST shape, not
+ * the nearest. A radius larger than the pin pitch would park a neighbour's
+ * circle over this pin's centre and make it unpickable, so the target widens to
+ * 12 units on sparse parts (discretes, sensors) and holds at the previous flat
+ * 7 on dense 0.1in headers, where 7 was already the practical ceiling. The
+ * floor is 7, not the derived value, so no pin ends up SMALLER than it was.
+ */
+const hitRadiusCache = new Map<string, number>()
+function hitRadius(def: PartDefinition): number {
+  const cached = hitRadiusCache.get(def.type)
+  if (cached !== undefined) return cached
+
+  const pins = def.pins.filter((p) => !p.subtle)
+  let min = Infinity
+  for (let i = 0; i < pins.length; i++) {
+    for (let j = i + 1; j < pins.length; j++) {
+      min = Math.min(min, Math.hypot(pins[i].x - pins[j].x, pins[i].y - pins[j].y))
+    }
+  }
+  const r = pins.length < 2 ? 12 : Math.max(7, Math.min(12, min - 3))
+  hitRadiusCache.set(def.type, r)
+  return r
+}
+
 function Pin({
   pin,
+  hitR,
   partId,
   netOf,
   hoverNet,
@@ -357,6 +356,8 @@ function Pin({
   onUp,
 }: {
   pin: PinGeometry
+  /** Radius of the invisible pointer target, in world units. */
+  hitR: number
   partId: string
   netOf?: Map<string, number>
   hoverNet: number | null
@@ -366,6 +367,7 @@ function Pin({
   onDown: (e: React.PointerEvent) => void
   onUp: (e: React.PointerEvent) => void
 }) {
+  const [hover, setHover] = useState(false)
   const net = netOf?.get(`${partId} ${pin.id}`)
   const lit = hoverNet != null && net === hoverNet
   const color =
@@ -373,21 +375,38 @@ function Pin({
 
   return (
     <g
-      onPointerEnter={onEnter}
-      onPointerLeave={onLeave}
+      onPointerEnter={() => {
+        setHover(true)
+        onEnter()
+      }}
+      onPointerLeave={() => {
+        setHover(false)
+        onLeave()
+      }}
       onPointerDown={onDown}
       onPointerUp={onUp}
       className="cursor-crosshair"
     >
-      {/* Generous invisible hit target — a 0.1in hole is ~4px at 1x zoom, far
-          below any usable pointer target, let alone a 44px touch target. */}
-      <circle cx={pin.x} cy={pin.y} r={pin.subtle ? 5 : 7} fill="transparent" />
+      {/* Generous invisible hit target — see hitRadius() above. */}
+      <circle cx={pin.x} cy={pin.y} r={pin.subtle ? 5 : hitR} fill="transparent" />
+      {/* Hover halo: the only thing that told a student a pin was live used to
+          be the cursor, which they cannot see until they are already on it. */}
+      {hover && (
+        <circle
+          cx={pin.x}
+          cy={pin.y}
+          r={pin.subtle ? 4.5 : 7}
+          fill="#1477d1"
+          opacity={0.28}
+          pointerEvents="none"
+        />
+      )}
       <circle
         cx={pin.x}
         cy={pin.y}
         r={lit ? 4 : pin.subtle ? 1.8 : 2.8}
-        fill={lit ? '#58a6ff' : color}
-        opacity={pin.subtle && !lit && !wiring ? 0.25 : 1}
+        fill={lit ? '#1477d1' : color}
+        opacity={pin.subtle && !lit && !wiring && !hover ? 0.25 : 1}
         pointerEvents="none"
       />
       {/* Template string, not two children: a browser treats <title> as a single
