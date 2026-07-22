@@ -1,9 +1,116 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay } from 'lucide-react'
+import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay, AlertTriangle } from 'lucide-react'
+import { SIM_REGISTRY } from '@/components/simulations'
 
+export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | (string & {})
+
+/**
+ * Dispatches a simulation section to the right renderer.
+ *
+ *  - `tinkercad` — the Tinkercad embed below, untouched. Migration 015 calls it
+ *    "the permanent fallback for every experiment the native simulator cannot
+ *    yet cover"; it must never be removed.
+ *  - `builtin`   — one of the in-app simulations keyed by `config.sim_type`.
+ *  - `native`    — the native circuit editor. Not wired into sections yet.
+ */
 export function SimulationSection({
+  type = 'tinkercad',
+  simType = null,
+  designId,
+  height = 500,
+  title = 'Interactive Simulation',
+  platform = null,
+}: {
+  type?: SimulationKind
+  simType?: string | null
+  designId: string | null
+  height?: number
+  title?: string
+  platform?: string | null
+}) {
+  if (type === 'builtin') {
+    return <BuiltinSimulation simType={simType} title={title} platform={platform} />
+  }
+
+  if (type === 'native') {
+    return <NativePlaceholder title={title} />
+  }
+
+  return <TinkercadSimulation designId={designId} height={height} title={title} />
+}
+
+/* ── Built-in simulations ─────────────────────────────────────────────── */
+
+function BuiltinSimulation({
+  simType,
+  title,
+  platform,
+}: {
+  simType: string | null
+  title: string
+  platform: string | null
+}) {
+  const Sim = simType ? SIM_REGISTRY[simType] : undefined
+
+  if (!Sim) {
+    return (
+      <SimNotice
+        heading="This simulation isn’t available yet"
+        body={
+          simType
+            ? `This section asks for the built-in simulation “${simType}”, but no simulation is registered under that name. Please let your instructor know.`
+            : 'This section is marked as a built-in simulation but no simulation key was configured for it. Please let your instructor know.'
+        }
+      />
+    )
+  }
+
+  return (
+    <div className="w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#dfe3e8] bg-white px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-green-600" />
+          <span className="truncate text-sm font-semibold text-[#34495e]">{title}</span>
+        </div>
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[#6b7c8d]">
+          Interactive simulation
+        </span>
+      </div>
+      <div className="p-3 sm:p-4">
+        <Sim platform={platform} />
+      </div>
+    </div>
+  )
+}
+
+/* ── Native circuit editor (not wired into sections yet) ──────────────── */
+
+function NativePlaceholder({ title }: { title: string }) {
+  return (
+    <SimNotice
+      heading={title}
+      body="This experiment uses the native circuit editor, which isn’t available in the lesson view yet."
+    />
+  )
+}
+
+function SimNotice({ heading, body }: { heading: string; body: string }) {
+  return (
+    <div className="w-full max-w-full rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] px-4 py-8 text-center sm:py-10">
+      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#dfe3e8] bg-white">
+        <AlertTriangle className="h-5 w-5 text-[#6b7c8d]" />
+      </div>
+      <p className="text-sm font-semibold text-[#34495e]">{heading}</p>
+      <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-[#6b7c8d]">{body}</p>
+    </div>
+  )
+}
+
+/* ── Tinkercad embed — unchanged ──────────────────────────────────────── */
+
+function TinkercadSimulation({
   designId,
   height = 500,
   title = 'Interactive Simulation',

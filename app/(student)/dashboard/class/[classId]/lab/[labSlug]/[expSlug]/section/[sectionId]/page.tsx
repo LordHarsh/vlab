@@ -19,6 +19,15 @@ import { SimulationSection } from '@/components/sections/SimulationSection'
 import { QuizSection } from '@/components/sections/QuizSection'
 import { FeedbackSection } from '@/components/sections/FeedbackSection'
 
+/** Derives a display platform from the experiment slug, e.g. `dht11-rpi`. */
+function platformFromSlug(slug: string | undefined): string | null {
+  if (!slug) return null
+  const s = slug.toLowerCase()
+  if (s.includes('rpi') || s.includes('raspberry')) return 'Raspberry Pi'
+  if (s.includes('arduino')) return 'Arduino'
+  return null
+}
+
 export default async function SectionPage({
   params,
 }: {
@@ -29,7 +38,7 @@ export default async function SectionPage({
     sectionId: string
   }>
 }) {
-  const { classId, sectionId } = await params
+  const { classId, expSlug, sectionId } = await params
   const { userId } = await auth()
   if (!userId) redirect('/sign-in')
 
@@ -65,20 +74,30 @@ export default async function SectionPage({
   let simDesignId: string | null = null
   let simHeight = 500
   let simTitle = 'Interactive Simulation'
+  // 'tinkercad' stays the default so a row that predates the type column, or one
+  // whose type we do not recognise, still gets the permanent Tinkercad fallback.
+  let simKind = 'tinkercad'
+  let simType: string | null = null
   if (section.type === 'simulation') {
     const simId: string | undefined = content?.simulation_id
     if (simId) {
       const { data: sim } = await supabase
         .from('simulations')
-        .select('title, config')
+        .select('title, type, config')
         .eq('id', simId)
         .single()
       const cfg = sim?.config as Record<string, unknown> | null
       simDesignId = (cfg?.design_id as string) ?? null
       simHeight = (cfg?.height as number) ?? 500
       simTitle = sim?.title ?? 'Interactive Simulation'
+      simKind = sim?.type ?? 'tinkercad'
+      simType = (cfg?.sim_type as string) ?? null
     }
   }
+
+  // Best effort only — there is no platform column, so fall back to the slug.
+  // Must never throw: the simulations treat an absent platform as optional.
+  const simPlatform = platformFromSlug(expSlug)
 
   function renderSection() {
     const c = content
@@ -96,7 +115,16 @@ export default async function SectionPage({
       case 'code':
         return <CodeSection content={c} />
       case 'simulation':
-        return <SimulationSection designId={simDesignId} height={simHeight} title={simTitle} />
+        return (
+          <SimulationSection
+            type={simKind}
+            simType={simType}
+            designId={simDesignId}
+            height={simHeight}
+            title={simTitle}
+            platform={simPlatform}
+          />
+        )
       case 'quiz': {
         const quizId: string | undefined = c?.quiz_id
         if (!quizId) {
