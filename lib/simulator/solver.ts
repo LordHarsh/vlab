@@ -8,6 +8,7 @@
  */
 
 import { luFactor, luSolve } from './linalg'
+import { isReactive, type ReactiveDevice } from './devices'
 import {
   type Device,
   type NetId,
@@ -25,6 +26,16 @@ export class Circuit {
   private extraCount = 0
   private n = 0
 
+  /**
+   * True once at least one capacitor or inductor has been added. The compiler
+   * sets nothing directly — it just adds the devices; the engine reads this flag
+   * to decide whether a transient loop is needed (TRANSIENT_DESIGN.md §4).
+   */
+  hasReactive = false
+
+  /** Reactive devices, cached; invalidated whenever a device is added. */
+  private reactiveCache: ReactiveDevice[] | null = null
+
   /** Solution carried between solves — a warm start worth several iterations. */
   private x: Float64Array = new Float64Array(0)
 
@@ -39,7 +50,14 @@ export class Circuit {
 
   add(...devices: Device[]): void {
     this.devices.push(...devices)
+    for (const d of devices) if (isReactive(d)) this.hasReactive = true
+    this.reactiveCache = null
     this.dirty = true
+  }
+
+  private reactive(): ReactiveDevice[] {
+    if (this.reactiveCache === null) this.reactiveCache = this.devices.filter(isReactive)
+    return this.reactiveCache
   }
 
   private dirty = true
@@ -105,6 +123,56 @@ export class Circuit {
     // is what rescues circuits with a floating subnet or a hard nonlinearity.
     const stepped = this.gminStepping(o)
     return stepped
+  }
+
+  /**
+   * Reset every reactive device to its t=0 initial condition and discard the
+   * warm start. Call once before a transient run (TRANSIENT_DESIGN.md §2).
+   * Leaves the DC solve() path completely untouched.
+   */
+  beginTransient(): void {
+    if (this.dirty) this.layout()
+    for (const d of this.reactive()) d.resetTransient()
+    this.x = new Float64Array(this.n)
+  }
+
+  /**
+   * Advance one transient step of size `h` seconds (backward Euler).
+   *
+   *   1. set h on every reactive device, so stamp() builds the right Geq/Ieq;
+   *   2. run the EXISTING Newton solve — companions make caps/inductors linear,
+   *      diodes/LEDs stay nonlinear, so the whole thing goes through solve() as-is;
+   *   3. on success, advance each reactive device's stored state from the
+   *      converged voltages. On failure, state is NOT advanced (return ok:false).
+   *
+   * solve() itself is unchanged. Read a node voltage from the returned
+   * SolveResult.voltages[net] after each step.
+   */
+  transientStep(h: number, opts: Partial<SolveOptions> = {}): SolveResult {
+    if (this.dirty) this.layout()
+    if (!(h > 0) || !Number.isFinite(h)) {
+      return {
+        ok: false,
+        voltages: new Float64Array(this.nextNet),
+        x: new Float64Array(this.n),
+        iterations: 0,
+        usedGminStepping: false,
+        faults: [],
+        error: `transientStep requires a finite h > 0 (got ${h}).`,
+      }
+    }
+
+    const reactive = this.reactive()
+    for (const d of reactive) d.setStep(h)
+
+    const res = this.solve(opts)
+
+    if (res.ok && reactive.length > 0) {
+      // this.x holds the converged solution after solve(); read voltages from it.
+      const readCtx = { voltage: (net: NetId): number => (net === 0 ? 0 : this.x[net - 1]) }
+      for (const d of reactive) d.advance(readCtx)
+    }
+    return res
   }
 
   private gminStepping(o: SolveOptions): SolveResult {

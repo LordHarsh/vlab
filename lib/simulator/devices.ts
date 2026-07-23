@@ -8,6 +8,37 @@
 
 import { type Device, type StampContext, type NetId, type SolveFault, VT } from './types'
 
+/**
+ * Read-only view of the converged solution handed to a reactive device after a
+ * transient step succeeds, so it can advance its stored state. Deliberately
+ * narrower than StampContext: advancing must only READ node voltages, never
+ * touch the matrix, and a full StampContext satisfies this shape structurally.
+ */
+export interface TransientContext {
+  voltage(net: NetId): number
+}
+
+/**
+ * A device with memory: a capacitor or inductor whose companion model depends on
+ * a timestep `h` and on state stored from the previous accepted step. The DC
+ * solver knows nothing about these methods — Circuit.transientStep() drives them
+ * (see solver.ts). At DC (no step set) they stamp exactly as the old stub did, so
+ * a plain solve() of a cap/inductor circuit is byte-for-byte unchanged.
+ */
+export interface ReactiveDevice extends Device {
+  /** Set the timestep for the NEXT stamp(). h <= 0 means DC mode. */
+  setStep(h: number): void
+  /** Advance stored state from the converged voltages of the step just solved. */
+  advance(ctx: TransientContext): void
+  /** Return to the t=0 initial condition (uncharged cap / zero inductor current). */
+  resetTransient(): void
+}
+
+export function isReactive(d: Device): d is ReactiveDevice {
+  const r = d as Partial<ReactiveDevice>
+  return typeof r.setStep === 'function' && typeof r.advance === 'function'
+}
+
 // ─── Linear devices ───────────────────────────────────────────────────────────
 
 /** Stamp a conductance between two nets. The workhorse of every device. */
@@ -249,6 +280,161 @@ export class NortonPort implements Device {
         `${mA} mA through a pin rated for ${(this.maxCurrent * 1000).toFixed(0)} mA. ` +
         `On real hardware this pin is destroyed.`,
     }
+  }
+}
+
+// ─── Reactive devices (backward-Euler companion models) ───────────────────────
+
+/**
+ * Conductance ceiling for a reactive companion, in siemens: the same 1/MIN_RESISTANCE
+ * a wire is clamped to. As h→0, Geq = C/h → ∞; a step so small that C/h exceeds
+ * this is finer than the LU can represent against the rest of the matrix anyway.
+ */
+const MAX_CONDUCTANCE = 1 / MIN_RESISTANCE
+
+/**
+ * Capacitor, backward-Euler companion (TRANSIENT_DESIGN.md §1.1).
+ *
+ *   i_C = C·dv/dt.  BE over one step h:  i_C(t) = (C/h)·v(t) − (C/h)·v_prev
+ *
+ * so the companion is a conductance Geq = C/h in parallel with a current source
+ * Ieq = Geq·v_prev. The source is stamped INTO node a (out of b) — the sign is
+ * load-bearing: flip it and an RC cap charges the wrong way. Pinned by §3.1.
+ *
+ * DC mode (no step set, h <= 0): stamps as a 1e12 Ω open, byte-for-byte the
+ * behaviour of the resistor stub it replaces, so a plain DC solve() is unchanged.
+ */
+export class Capacitor implements ReactiveDevice {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Timestep in seconds; <= 0 means DC mode. */
+  private h = 0
+  /** Branch voltage (va − vb) at the end of the previous accepted step. */
+  private vPrev: number
+  /** Initial condition, restored by resetTransient(). */
+  private readonly v0: number
+
+  /** Reported current i_C for the step just advanced, amps (a → b). */
+  current = 0
+
+  constructor(
+    readonly id: string,
+    private a: NetId,
+    private b: NetId,
+    private farads: number,
+    v0 = 0,
+  ) {
+    this.v0 = v0
+    this.vPrev = v0
+  }
+
+  setStep(h: number): void {
+    this.h = h
+  }
+
+  resetTransient(): void {
+    this.vPrev = this.v0
+    this.current = 0
+  }
+
+  /** Companion conductance for the current step, clamped. */
+  private geq(): number {
+    if (!(this.h > 0)) return 1e-12 // DC: a 1e12 Ω open, the stub it replaces.
+    return Math.min(this.farads / this.h, MAX_CONDUCTANCE)
+  }
+
+  stamp(ctx: StampContext): void {
+    if (!Number.isFinite(this.farads) || this.farads < 0) {
+      throw new Error(
+        `Capacitor "${this.id}" has an invalid capacitance (${this.farads}). ` +
+          `Capacitance must be a finite, non-negative number.`,
+      )
+    }
+    const g = this.geq()
+    stampConductance(ctx, this.a, this.b, g)
+    if (this.h > 0) {
+      // Ieq = Geq·v_prev, injected INTO node a (out of b). See the class note.
+      stampCurrent(ctx, this.b, this.a, g * this.vPrev)
+    }
+  }
+
+  advance(ctx: TransientContext): void {
+    const vNew = ctx.voltage(this.a) - ctx.voltage(this.b)
+    // i_C = Geq·(v(t) − v_prev) = C·dv/dt for this step, using pre-update v_prev.
+    this.current = this.geq() * (vNew - this.vPrev)
+    this.vPrev = vNew
+  }
+}
+
+/**
+ * Inductor, backward-Euler companion (TRANSIENT_DESIGN.md §1.2).
+ *
+ *   v = L·di/dt.  BE:  i_L(t) = i_L(t−h) + (h/L)·v(t)
+ *
+ * Norton companion: Geq = h/L in parallel with a source Ieq = i_prev pushing
+ * a → b. DC mode (h <= 0) stamps as a 0.01 Ω near-short, the stub it replaces.
+ */
+export class Inductor implements ReactiveDevice {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  private h = 0
+  /** Branch current (a → b) at the end of the previous accepted step. */
+  private iPrev: number
+  private readonly i0: number
+
+  /** Reported current i_L for the step just advanced, amps (a → b). */
+  current = 0
+
+  constructor(
+    readonly id: string,
+    private a: NetId,
+    private b: NetId,
+    private henries: number,
+    i0 = 0,
+  ) {
+    this.i0 = i0
+    this.iPrev = i0
+    this.current = i0
+  }
+
+  setStep(h: number): void {
+    this.h = h
+  }
+
+  resetTransient(): void {
+    this.iPrev = this.i0
+    this.current = this.i0
+  }
+
+  private geq(): number {
+    if (!(this.h > 0)) return 1 / 0.01 // DC: a 0.01 Ω short, the stub it replaces.
+    return Math.min(this.h / this.henries, MAX_CONDUCTANCE)
+  }
+
+  stamp(ctx: StampContext): void {
+    if (!Number.isFinite(this.henries) || this.henries <= 0) {
+      throw new Error(
+        `Inductor "${this.id}" has an invalid inductance (${this.henries}). ` +
+          `Inductance must be a finite, positive number.`,
+      )
+    }
+    const g = this.geq()
+    stampConductance(ctx, this.a, this.b, g)
+    if (this.h > 0) {
+      // Ieq = i_prev pushing a → b.
+      stampCurrent(ctx, this.a, this.b, this.iPrev)
+    }
+  }
+
+  advance(ctx: TransientContext): void {
+    const v = ctx.voltage(this.a) - ctx.voltage(this.b)
+    // i_L(t) = i_prev + (h/L)·v(t) = i_prev + Geq·v(t).
+    this.iPrev = this.iPrev + this.geq() * v
+    this.current = this.iPrev
   }
 }
 

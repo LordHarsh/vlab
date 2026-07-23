@@ -6,8 +6,10 @@
 
 import { Circuit } from '../solver'
 import {
+  Capacitor,
   Diode as DiodeDevice,
   DIODE_1N4148,
+  Inductor,
   NortonPort,
   Resistor,
   VoltageSource,
@@ -302,16 +304,21 @@ export function compile(doc: CircuitDoc): CompileResult {
       const b = net({ partId: part.id, pinId: '2' })
       if (a === undefined || b === undefined) continue
       if (el.element === 'capacitor') {
-        // DC steady state of a capacitor is an open circuit. That is the right
-        // answer for the operating point and the wrong answer for anything the
-        // student put the capacitor there to do, so say so.
-        circuit.add(new Resistor(part.id, a, b, 1e12))
+        // A real reactive device now: transient stepping (Circuit.transientStep)
+        // charges and discharges it. Circuit.hasReactive is set automatically by
+        // add(). At DC (a plain solve, which is what the interactive engine still
+        // runs) the Capacitor stamps as a 1e12 Ω open — its true steady state —
+        // so the honest limitation below stays accurate until the engine drives a
+        // transient loop (TRANSIENT_DESIGN.md §4).
+        const microfarads = Number(part.props.microfarads ?? 1)
+        circuit.add(new Capacitor(part.id, a, b, microfarads * 1e-6))
         limitations.push(
           'Capacitors are held at their DC steady state (no current flows). ' +
             'Charging, discharging and timing need transient simulation, which is not available yet.',
         )
       } else {
-        circuit.add(new Resistor(part.id, a, b, 0.01))
+        const millihenries = Number(part.props.millihenries ?? 1)
+        circuit.add(new Inductor(part.id, a, b, millihenries * 1e-3))
         limitations.push(
           'Inductors are held at their DC steady state (a plain wire). ' +
             'Current ramp and back-EMF need transient simulation, which is not available yet.',
