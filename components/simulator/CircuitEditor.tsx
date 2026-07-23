@@ -240,8 +240,11 @@ export function CircuitEditor({
         </span>
       </header>
 
-      {/* Toolbar strip */}
-      <div className="h-12 shrink-0 flex items-center gap-2 px-3 bg-[#f4f5f6] border-b border-[#dfe3e8] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Toolbar strip. Below md it wraps onto as many rows as it needs so every
+          control — the Start/Stop button above all — stays on-screen and
+          tappable at 390px. From md up it is the original single fixed-height
+          row (content fits, so the overflow only ever acts as a safety net). */}
+      <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 bg-[#f4f5f6] border-b border-[#dfe3e8] md:h-12 md:py-0 md:flex-nowrap md:overflow-x-auto md:[scrollbar-width:none] md:[&::-webkit-scrollbar]:hidden">
         <button
           onClick={() => dispatch({ type: 'undo' })}
           disabled={state.past.length === 0}
@@ -259,7 +262,7 @@ export function CircuitEditor({
           Redo
         </button>
 
-        <div className="w-px h-6 shrink-0 bg-[#dfe3e8]" />
+        <div className="hidden md:block w-px h-6 shrink-0 bg-[#dfe3e8]" />
 
         <span className="text-[11px] text-[#6b7c8d] shrink-0">Firmware</span>
         <div className="flex shrink-0">
@@ -282,7 +285,7 @@ export function CircuitEditor({
           ))}
         </div>
 
-        <div className="w-px h-6 shrink-0 bg-[#dfe3e8]" />
+        <div className="hidden md:block w-px h-6 shrink-0 bg-[#dfe3e8]" />
 
         <button
           onClick={running ? stop : start}
@@ -298,7 +301,7 @@ export function CircuitEditor({
           Reset MCU
         </button>
 
-        <div className="ml-auto flex items-center gap-3 pl-3 text-[11px] text-[#6b7c8d] shrink-0">
+        <div className="flex items-center gap-3 text-[11px] text-[#6b7c8d] shrink-0 md:ml-auto md:pl-3">
           <span data-testid="speed">{speedRatio.toFixed(2)}× real time</span>
           <span data-testid="simtime">{snapshot.simSeconds.toFixed(1)} s</span>
           <span className="hidden lg:inline">
@@ -423,7 +426,7 @@ export function CircuitEditor({
                 <button
                   key={key}
                   data-testid={`load-${key}`}
-                  onClick={() => dispatch({ type: 'load', doc: ex.doc })}
+                  onClick={() => dispatch({ type: 'loadInto', doc: ex.doc })}
                   title={ex.label}
                   className={BTN}
                 >

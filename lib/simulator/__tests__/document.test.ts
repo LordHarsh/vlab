@@ -278,5 +278,49 @@ for (const [key, ex] of Object.entries(EXAMPLES)) {
   }
 }
 
+// ── 7. Loading a starter circuit is undoable; the mount restore is not ────────
+// The right-rail "Starter circuits" buttons dispatch `loadInto`: a mis-click
+// that swaps out a student's build must be recoverable, so the outgoing work is
+// pushed onto `past`. The on-mount / IndexedDB / server restore dispatches
+// `load`, which replaces history wholesale — a freshly loaded page must have
+// nothing to undo (the Undo button is disabled while `past` is empty).
+{
+  resetIds()
+
+  // A student opens the experiment and builds on it.
+  let s = load(structuredClone(EXPERIMENT_01))
+  check('7.1 a fresh load leaves nothing to undo', s.past.length === 0, `past=${s.past.length}`)
+
+  s = docReducer(s, {
+    type: 'addPart',
+    part: { id: 'r_new', type: 'resistor', x: 100, y: 100, rotation: 0, props: { ohms: 220 } },
+  })
+  const built = s.doc
+  check('7.2 the build has the added part', built.parts.length === EXPERIMENT_01.parts.length + 1)
+
+  // A mis-click on a "Starter circuits" button.
+  s = docReducer(s, { type: 'loadInto', doc: EXAMPLES.pot.doc })
+  check('7.3 loadInto swaps in the starter circuit', s.doc === EXAMPLES.pot.doc)
+  check('7.4 loadInto pushes the outgoing build onto past',
+    s.past[s.past.length - 1] === built, `past=${s.past.length}`)
+
+  // Undo brings the whole build back — nothing is lost.
+  s = docReducer(s, { type: 'undo' })
+  check('7.5 undo after a starter load restores the build', s.doc === built)
+  check('7.6 ... with the added part intact', s.doc.parts.some((p) => p.id === 'r_new'))
+
+  // Redo re-applies the starter.
+  s = docReducer(s, { type: 'redo' })
+  check('7.7 redo re-applies the starter circuit', s.doc === EXAMPLES.pot.doc)
+
+  // The on-mount / server restore replaces history: no bogus undo entry, so on
+  // a fresh page there is nothing to undo.
+  const restore = docReducer(
+    { doc: built, past: [], future: [] },
+    { type: 'load', doc: EXAMPLES.pot.doc },
+  )
+  check('7.8 the mount load records no undo entry', restore.past.length === 0, `past=${restore.past.length}`)
+}
+
 console.log(`\n${passed}/${passed + failed} passed${failed ? `, ${failed} FAILED` : ''}`)
 process.exit(failed ? 1 : 0)

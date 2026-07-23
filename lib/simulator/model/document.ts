@@ -122,7 +122,13 @@ export type DocAction =
       transient?: boolean
     }
   | { type: 'removeWaypoint'; id: string; index: number }
+  // Replace the whole document AND reset history. The initial mount and an
+  // IndexedDB/server restore use this: there is nothing before them to undo.
   | { type: 'load'; doc: CircuitDoc }
+  // Replace the whole document but keep it UNDOABLE. The "Starter circuits"
+  // buttons use this so a mis-click that swaps out a student's build can be
+  // taken back with one press.
+  | { type: 'loadInto'; doc: CircuitDoc }
   | { type: 'undo' }
   | { type: 'redo' }
 
@@ -173,12 +179,22 @@ export function docReducer(state: DocState, action: DocAction): DocState {
     }
   }
 
-  if (action.type === 'load') {
+  if (action.type === 'load' || action.type === 'loadInto') {
     // Every document that becomes editor state passes through here — the
     // authored examples, an IndexedDB restore, and a server load. Claiming its
     // ids before the first edit is what stops newId() colliding with them.
     adoptIds(action.doc)
-    return { doc: action.doc, past: [], future: [] }
+    return {
+      doc: action.doc,
+      // A 'loadInto' is a student-initiated swap (the "Starter circuits"
+      // buttons): it must be undoable, so the outgoing document is pushed onto
+      // the past like any other edit. A 'load' is the mount restore or a server
+      // load — nothing precedes it, so history is wiped and a fresh page has no
+      // spurious undo entry.
+      past: action.type === 'loadInto' ? [...state.past, state.doc].slice(-HISTORY_LIMIT) : [],
+      // A new load always invalidates any redo branch.
+      future: [],
+    }
   }
 
   const doc = applyEdit(state.doc, action)
