@@ -1,0 +1,25 @@
+-- 019_close_self_enroll_bypass.sql
+--
+-- Fixes an access-control bypass found in QA.
+--
+-- The "enrollments: student insert own" policy let an authenticated student
+-- insert their OWN enrollment row directly (with_check was only
+-- student_id = self AND role = student). Every real enrollment gate — join
+-- code, active/unexpired invite, capacity — lives in the server action
+-- lib/actions/enrollment.ts, which a direct insert from the browser client
+-- skips. With a class_id UUID (which leaks via shared URLs/screens) a student
+-- could enroll into any class and unlock its gated content.
+--
+-- Removing the policy closes the bypass. It breaks no legitimate path:
+--   - Join-code enrollment (enrollment.ts) uses the SERVICE-ROLE client, which
+--     bypasses RLS entirely.
+--   - Educator manual enrollment (classes.ts) is authorised by the separate
+--     "enrollments: educator write own classes" policy (is_educator_of_class).
+--   - Admin writes use "enrollments: admin write all".
+-- The student self-insert policy was the only path that skipped validation, so
+-- it is pure attack surface.
+--
+-- Students keep their other enrollment rights: "student read own" (SELECT) and
+-- "student drop own" (UPDATE status='dropped') are untouched.
+
+drop policy if exists "enrollments: student insert own" on public.enrollments;
