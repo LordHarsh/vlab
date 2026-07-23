@@ -32,6 +32,22 @@ export async function submitFeedback(
     return { success: false, error: 'Profile not found' }
   }
 
+  // The student must actually be enrolled in this class. RLS scopes the row to
+  // the student, but without this an enrolled student could submit feedback for
+  // a class they were never in — the app-layer half of the same gate the
+  // simulator and progress actions apply.
+  const { data: enrollment } = await supabase
+    .from('enrollments')
+    .select('id')
+    .eq('class_id', classId)
+    .eq('student_id', profile.id)
+    .eq('status', 'active')
+    .single()
+
+  if (!enrollment) {
+    return { success: false, error: 'You are not enrolled in this class.' }
+  }
+
   // Check for existing submission (one per student/experiment/class)
   const { data: existing } = await supabase
     .from('feedback_responses')
