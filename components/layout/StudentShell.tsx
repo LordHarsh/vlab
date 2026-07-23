@@ -74,6 +74,7 @@ export function StudentShell({
           </div>
           <span className="font-bold text-[#222222] text-lg tracking-tight">VLab</span>
           <button
+            aria-label="Close menu"
             className="ml-auto lg:hidden text-[#6a6a6a] hover:text-[#222222]"
             onClick={() => setSidebarOpen(false)}
           >
@@ -143,6 +144,8 @@ export function StudentShell({
         <header className="sticky top-0 z-20 bg-white border-b border-[#f2f2f2] flex items-center gap-3 px-4 py-3 lg:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={sidebarOpen}
             className="text-[#222222] hover:text-[#ff385c] transition-colors"
           >
             <Menu className="w-6 h-6" />

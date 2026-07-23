@@ -28,7 +28,7 @@ const BTN =
   'h-8 shrink-0 px-2.5 rounded-[3px] text-xs border border-[#dfe3e8] bg-white text-[#34495e] ' +
   'transition-colors hover:border-[#1477d1] disabled:opacity-40 disabled:hover:border-[#dfe3e8]'
 
-const SECTION_LABEL = 'text-[10px] uppercase tracking-wider text-[#6b7c8d]'
+const SECTION_LABEL = 'text-[10px] uppercase tracking-wider text-[#566573]'
 
 /**
  * Where a newly picked part lands.
@@ -112,11 +112,11 @@ function PartsPalette({
         placeholder="Search parts"
         aria-label="Search parts"
         data-testid="palette-search"
-        className="w-full h-[37px] mb-3 px-2.5 rounded-none bg-white border-[0.8px] border-[#dfe3e8] text-[15px] text-[#34495e] placeholder:text-[#6b7c8d] outline-none focus:border-[#1477d1]"
+        className="w-full h-[37px] mb-3 px-2.5 rounded-none bg-white border-[0.8px] border-[#dfe3e8] text-[15px] text-[#34495e] placeholder:text-[#566573] outline-none focus:border-[#1477d1]"
       />
 
       {shown.length === 0 ? (
-        <p className="text-xs text-[#6b7c8d]" data-testid="palette-empty">
+        <p className="text-xs text-[#566573]" data-testid="palette-empty">
           No parts match that search.
         </p>
       ) : (
@@ -214,7 +214,7 @@ export function CircuitEditor({
       <header className="h-12 shrink-0 flex items-center justify-between gap-3 px-4 bg-white border-b border-[#dfe3e8]">
         <div className="flex items-baseline gap-3 min-w-0">
           <h1 className="text-sm font-semibold text-[#34495e] shrink-0">Circuit editor</h1>
-          <p className="text-[11px] text-[#6b7c8d] truncate">
+          <p className="text-[11px] text-[#566573] truncate">
             {doc.parts.length} parts · {doc.wires.length} wires · {snapshot.unknowns} unknowns
           </p>
         </div>
@@ -225,7 +225,7 @@ export function CircuitEditor({
               ? 'text-amber-600'
               : saveState === 'saved'
                 ? 'text-green-700'
-                : 'text-[#6b7c8d]'
+                : 'text-[#566573]'
           }`}
         >
           {saveState === 'saving'
@@ -264,7 +264,7 @@ export function CircuitEditor({
 
         <div className="hidden md:block w-px h-6 shrink-0 bg-[#dfe3e8]" />
 
-        <span className="text-[11px] text-[#6b7c8d] shrink-0">Firmware</span>
+        <span className="text-[11px] text-[#566573] shrink-0">Firmware</span>
         <div className="flex shrink-0">
           {FIRMWARE.map((f, i) => (
             <button
@@ -277,7 +277,7 @@ export function CircuitEditor({
               } ${i === FIRMWARE.length - 1 ? 'rounded-r-[3px]' : ''} ${
                 hexUrl === f.url
                   ? 'z-10 border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
-                  : 'border-[#dfe3e8] bg-white text-[#6b7c8d] hover:border-[#1477d1]'
+                  : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1]'
               }`}
             >
               {f.label}
@@ -301,7 +301,7 @@ export function CircuitEditor({
           Reset MCU
         </button>
 
-        <div className="flex items-center gap-3 text-[11px] text-[#6b7c8d] shrink-0 md:ml-auto md:pl-3">
+        <div className="flex items-center gap-3 text-[11px] text-[#566573] shrink-0 md:ml-auto md:pl-3">
           <span data-testid="speed">{speedRatio.toFixed(2)}× real time</span>
           <span data-testid="simtime">{snapshot.simSeconds.toFixed(1)} s</span>
           <span className="hidden lg:inline">
@@ -340,7 +340,10 @@ export function CircuitEditor({
               {selectedDef.props?.map((prop) =>
                 prop.type === 'range' ? (
                   <div key={prop.key} className="mb-3">
-                    <label className="flex justify-between text-[10px] text-[#6b7c8d] mb-1">
+                    <label
+                      htmlFor={`prop-input-${prop.key}`}
+                      className="flex justify-between text-[10px] text-[#566573] mb-1"
+                    >
                       <span>{prop.label}</span>
                       <span className="text-[#34495e] tabular-nums">
                         {Number(selectedPart.props[prop.key] ?? prop.default ?? 0)}
@@ -349,6 +352,7 @@ export function CircuitEditor({
                     </label>
                     <input
                       type="range"
+                      id={`prop-input-${prop.key}`}
                       data-testid={`prop-${prop.key}`}
                       min={prop.min}
                       max={prop.max}
@@ -367,8 +371,14 @@ export function CircuitEditor({
                   </div>
                 ) : (
                   <div key={prop.key} className="mb-3">
-                    <label className="block text-[10px] text-[#6b7c8d] mb-1">{prop.label}</label>
+                    <label
+                      htmlFor={`prop-input-${prop.key}`}
+                      className="block text-[10px] text-[#566573] mb-1"
+                    >
+                      {prop.label}
+                    </label>
                     <select
+                      id={`prop-input-${prop.key}`}
                       data-testid={`prop-${prop.key}`}
                       value={String(selectedPart.props[prop.key] ?? '')}
                       onChange={(e) =>
@@ -446,7 +456,7 @@ export function CircuitEditor({
           <div className="px-4 py-4 border-b border-[#dfe3e8]">
             <div className={`${SECTION_LABEL} mb-2`}>Pins driven high</div>
             {highPins.length === 0 ? (
-              <p className="text-xs text-[#6b7c8d]">none</p>
+              <p className="text-xs text-[#566573]">none</p>
             ) : (
               <div className="flex flex-wrap gap-1" data-testid="high-pins">
                 {highPins.map(([name]) => (
@@ -468,7 +478,7 @@ export function CircuitEditor({
               <div className="grid grid-cols-3 gap-1.5" data-testid="adc">
                 {Object.entries(snapshot.adc).map(([name, counts]) => (
                   <div key={name} className="text-[10px]">
-                    <span className="text-[#6b7c8d]">{name}</span>{' '}
+                    <span className="text-[#566573]">{name}</span>{' '}
                     <span className="text-[#34495e] tabular-nums">{counts}</span>
                   </div>
                 ))}
@@ -480,11 +490,11 @@ export function CircuitEditor({
           <div className="px-4 py-4 border-b border-[#dfe3e8]">
             <div className={`${SECTION_LABEL} mb-2`}>Measurements</div>
             {readings.length === 0 ? (
-              <p className="text-xs text-[#6b7c8d]">No components to measure yet.</p>
+              <p className="text-xs text-[#566573]">No components to measure yet.</p>
             ) : (
               readings.map(([partId, current]) => (
                 <div key={partId} className="flex justify-between items-baseline mb-1">
-                  <span className="text-xs text-[#6b7c8d]">{partId}</span>
+                  <span className="text-xs text-[#566573]">{partId}</span>
                   <span className="text-[#34495e] tabular-nums" data-testid={`reading-${partId}`}>
                     {/* Magnitude, not signed: the sign is just which pin the student
                         wired first, which is arbitrary and confusing — a beginner reads
@@ -575,7 +585,7 @@ export function CircuitEditor({
             )}
           </div>
 
-          <div className="px-4 pb-6 text-[10px] text-[#6b7c8d] leading-relaxed">
+          <div className="px-4 pb-6 text-[10px] text-[#566573] leading-relaxed">
             Drag from any pin to another to wire them. Click a wire to delete it. The firmware keeps
             running while you rewire — the MCU is not reset.
           </div>

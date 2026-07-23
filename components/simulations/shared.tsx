@@ -9,7 +9,7 @@
  * the circuit editor uses:
  *
  *   surface #ffffff   panel bg #f4f5f6   tile bg #f1f1f3
- *   border  #dfe3e8   body #34495e       muted #6b7c8d
+ *   border  #dfe3e8   body #34495e       muted #566573
  *   accent  #1477d1   radius 5px         no drop shadows
  */
 
@@ -44,7 +44,7 @@ export function useSimLog(max = 40) {
 export function SimLog({ lines, label = 'Serial monitor' }: { lines: LogLine[]; label?: string }) {
   return (
     <div className="mt-3">
-      <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#6b7c8d]">
+      <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
         {label}
       </div>
       <div
@@ -53,11 +53,11 @@ export function SimLog({ lines, label = 'Serial monitor' }: { lines: LogLine[]; 
         aria-live="polite"
       >
         {lines.length === 0 ? (
-          <span className="text-[#6b7c8d]">Waiting for data…</span>
+          <span className="text-[#566573]">Waiting for data…</span>
         ) : (
           lines.map((l) => (
             <div key={l.id} className="break-words">
-              <span className="text-[#6b7c8d]">[{l.ts}]</span> {l.msg}
+              <span className="text-[#566573]">[{l.ts}]</span> {l.msg}
             </div>
           ))
         )}
@@ -113,7 +113,7 @@ export function SliderRow({
       <div className="mb-1 flex items-baseline justify-between gap-3">
         <label
           htmlFor={inputId}
-          className="min-w-0 font-mono text-[11px] leading-tight text-[#6b7c8d] sm:text-[12px]"
+          className="min-w-0 font-mono text-[11px] leading-tight text-[#566573] sm:text-[12px]"
         >
           {label}
         </label>
@@ -177,16 +177,26 @@ export function Led({
   color,
   size = 20,
   glow = on,
+  label,
 }: {
   on: boolean
   color: string
   size?: number
   /** Halo, independent of the fill — the reference lights some LEDs without one. */
   glow?: boolean
+  /**
+   * What this LED stands for when it is a real output (a traffic light, an
+   * alarm, a relay). Given a label the LED exposes its on/off state to
+   * assistive tech as an image, so the state is perceivable without colour
+   * vision. Left undefined the LED is treated as decorative (`aria-hidden`).
+   */
+  label?: string
 }) {
   return (
     <span
-      aria-hidden="true"
+      role={label ? 'img' : undefined}
+      aria-label={label ? `${label}: ${on ? 'on' : 'off'}` : undefined}
+      aria-hidden={label ? undefined : true}
       className="inline-block shrink-0 rounded-full border-2 transition-colors"
       style={{
         width: size,
@@ -215,8 +225,11 @@ export function LedStack({
 }) {
   return (
     <div className="flex min-w-0 flex-col items-center gap-1.5">
-      <Led on={on} color={color} size={size} glow={glow} />
-      <span className="font-mono text-[10px] uppercase tracking-wide text-[#6b7c8d]">
+      <Led on={on} color={color} size={size} glow={glow} label={caption} />
+      <span
+        aria-hidden="true"
+        className="font-mono text-[10px] uppercase tracking-wide text-[#566573]"
+      >
         {caption}
       </span>
     </div>
@@ -227,8 +240,10 @@ export function LedStack({
 export function LedRow({ on, color, label }: { on: boolean; color: string; label: string }) {
   return (
     <div className="my-3 flex items-center gap-3">
-      <Led on={on} color={color} />
-      <span className="font-mono text-[12px] text-[#34495e]">{label}</span>
+      <Led on={on} color={color} label={label} />
+      <span aria-hidden="true" className="font-mono text-[12px] text-[#34495e]">
+        {label}
+      </span>
     </div>
   )
 }

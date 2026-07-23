@@ -276,7 +276,7 @@ export function CircuitCanvas({
     <div className="relative w-full h-full bg-[#f4f5f6] overflow-hidden">
       {/* Zoom readout. The parts palette now lives in the right rail — floating
           it over the artwork hid the very circuit it was there to build. */}
-      <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#6b7c8d] font-mono">
+      <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#566573] font-mono">
         {Math.round(view.z * 100)}% · scroll to zoom · drag background to pan
       </div>
 

@@ -99,7 +99,7 @@ function BuiltinSimulation({
           <span className="h-2 w-2 shrink-0 rounded-full bg-green-600" />
           <span className="truncate text-sm font-semibold text-[#34495e]">{title}</span>
         </div>
-        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[#6b7c8d]">
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
           Interactive simulation
         </span>
       </div>
@@ -152,10 +152,10 @@ function SimNotice({ heading, body }: { heading: string; body: string }) {
   return (
     <div className="w-full max-w-full rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] px-4 py-8 text-center sm:py-10">
       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#dfe3e8] bg-white">
-        <AlertTriangle className="h-5 w-5 text-[#6b7c8d]" />
+        <AlertTriangle className="h-5 w-5 text-[#566573]" />
       </div>
       <p className="text-sm font-semibold text-[#34495e]">{heading}</p>
-      <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-[#6b7c8d]">{body}</p>
+      <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-[#566573]">{body}</p>
     </div>
   )
 }
@@ -248,7 +248,7 @@ function TinkercadSimulation({
             {previewLoading ? (
               <div className="flex flex-col items-center gap-3 py-16">
                 <Loader2 className="w-8 h-8 text-[#c1c1c1] animate-spin" />
-                <p className="text-xs text-[#c1c1c1]">Loading preview…</p>
+                <p className="text-xs text-[#6a6a6a]">Loading preview…</p>
               </div>
             ) : previewUrl ? (
               <img
@@ -261,7 +261,7 @@ function TinkercadSimulation({
             ) : (
               <div className="flex flex-col items-center gap-3 py-16">
                 <MonitorPlay className="w-10 h-10 text-[#c1c1c1]" />
-                <p className="text-xs text-[#c1c1c1]">No preview available</p>
+                <p className="text-xs text-[#6a6a6a]">No preview available</p>
               </div>
             )}
 

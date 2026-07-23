@@ -60,12 +60,12 @@ export default function LandingPage() {
         <div className="container mx-auto px-4 sm:px-6 py-8">
           <div className="grid grid-cols-3 gap-6 max-w-2xl mx-auto text-center">
             <div>
-              <p className="text-3xl font-bold text-[#222222]">20+</p>
+              <p className="text-3xl font-bold text-[#222222]">12</p>
               <p className="text-sm text-[#6a6a6a] mt-1">Experiments</p>
             </div>
             <div>
-              <p className="text-3xl font-bold text-[#222222]">5+</p>
-              <p className="text-sm text-[#6a6a6a] mt-1">Lab Topics</p>
+              <p className="text-3xl font-bold text-[#222222]">1</p>
+              <p className="text-sm text-[#6a6a6a] mt-1">Lab</p>
             </div>
             <div>
               <p className="text-3xl font-bold text-[#222222]">100%</p>

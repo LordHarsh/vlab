@@ -32,18 +32,23 @@ type FormData = {
 function StarRating({
   value,
   onChange,
+  labelledBy,
 }: {
   value: number
   onChange: (v: number) => void
+  labelledBy: string
 }) {
   const [hovered, setHovered] = useState(0)
 
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1" role="radiogroup" aria-labelledby={labelledBy}>
       {[1, 2, 3, 4, 5].map((star) => (
         <button
           key={star}
           type="button"
+          role="radio"
+          aria-checked={value === star}
+          aria-label={`${star} star${star > 1 ? 's' : ''}`}
           onClick={() => onChange(star)}
           onMouseEnter={() => setHovered(star)}
           onMouseLeave={() => setHovered(0)}
@@ -67,11 +72,13 @@ function ScaleSlider({
   onChange,
   min = 1,
   max = 10,
+  labelledBy,
 }: {
   value: number
   onChange: (v: number) => void
   min?: number
   max?: number
+  labelledBy: string
 }) {
   return (
     <div className="space-y-2">
@@ -81,6 +88,7 @@ function ScaleSlider({
         max={max}
         value={value || min}
         onChange={(e) => onChange(Number(e.target.value))}
+        aria-labelledby={labelledBy}
         className="w-full accent-[#ff385c]"
       />
       <div className="flex justify-between text-xs text-[#6a6a6a]">
@@ -263,7 +271,7 @@ export function FeedbackSection({
                 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px',
             }}
           >
-            <p className="text-sm font-semibold text-[#222222] mb-3">
+            <p id={`fq-label-${q.id}`} className="text-sm font-semibold text-[#222222] mb-3">
               <span className="text-[#ff385c] mr-1">{idx + 1}.</span>
               {q.question_text}
               {q.is_required && <span className="text-red-500 ml-0.5">*</span>}
@@ -273,6 +281,7 @@ export function FeedbackSection({
               <StarRating
                 value={Number(answers[q.id] ?? 0)}
                 onChange={(v) => setAnswer(q.id, v)}
+                labelledBy={`fq-label-${q.id}`}
               />
             )}
 
@@ -282,6 +291,7 @@ export function FeedbackSection({
                 onChange={(v) => setAnswer(q.id, v)}
                 min={(q.config?.min as number) ?? 1}
                 max={(q.config?.max as number) ?? 10}
+                labelledBy={`fq-label-${q.id}`}
               />
             )}
 
@@ -291,6 +301,7 @@ export function FeedbackSection({
                 value={(answers[q.id] as string) ?? ''}
                 onChange={(e) => setAnswer(q.id, e.target.value)}
                 placeholder="Type your answer here..."
+                aria-labelledby={`fq-label-${q.id}`}
                 className="w-full px-3 py-2.5 border border-[#c1c1c1] rounded-xl text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-2 focus:ring-[#ff385c]/20 resize-none transition-colors"
               />
             )}
