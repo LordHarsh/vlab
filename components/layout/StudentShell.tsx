@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useClerk } from '@clerk/nextjs'
-import { LayoutDashboard, Menu, X, LogOut, User, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, Menu, X, LogOut, User, FlaskConical, CircuitBoard } from 'lucide-react'
 
 type Profile = {
   id: string
@@ -37,6 +37,11 @@ export function StudentShell({
       href: '/dashboard',
       label: 'My Classes',
       icon: <LayoutDashboard className="w-5 h-5" />,
+    },
+    {
+      href: '/dashboard/workspace',
+      label: 'Workspace',
+      icon: <CircuitBoard className="w-5 h-5" />,
     },
   ]
 

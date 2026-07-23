@@ -527,17 +527,32 @@ export function CircuitEditor({
             )}
             {snapshot.faults.length > 0 && (
               <ul className="space-y-2 mb-3" data-testid="faults">
-                {snapshot.faults.map((f, i) => (
-                  <li
-                    key={i}
-                    className="text-xs text-red-800 leading-snug border border-red-200 bg-red-50 px-2.5 py-2"
-                  >
-                    <span className="font-bold uppercase text-[9px] tracking-wider text-red-600 block mb-0.5">
-                      {f.kind.replace('_', ' ')}
-                    </span>
-                    {f.message}
-                  </li>
-                ))}
+                {snapshot.faults.map((f, i) => {
+                  // A 'caution' part is stressed but alive; a 'destructive' one is
+                  // gone. Amber vs the existing red so the two read apart at a
+                  // glance — the wording already differs, this is colour only.
+                  const caution = f.severity === 'caution'
+                  return (
+                    <li
+                      key={i}
+                      data-severity={f.severity}
+                      className={`text-xs leading-snug border px-2.5 py-2 ${
+                        caution
+                          ? 'text-[#b45309] border-[#fde68a] bg-[#fffbeb]'
+                          : 'text-red-800 border-red-200 bg-red-50'
+                      }`}
+                    >
+                      <span
+                        className={`font-bold uppercase text-[9px] tracking-wider block mb-0.5 ${
+                          caution ? 'text-[#b45309]' : 'text-red-600'
+                        }`}
+                      >
+                        {f.kind.replace('_', ' ')}
+                      </span>
+                      {f.message}
+                    </li>
+                  )
+                })}
               </ul>
             )}
             {snapshot.problems.length === 0 &&

@@ -78,9 +78,13 @@ export default async function SectionPage({
   // whose type we do not recognise, still gets the permanent Tinkercad fallback.
   let simKind = 'tinkercad'
   let simType: string | null = null
+  // The native editor autosaves against this simulation id; threaded through so
+  // SimulationSection can build its RemoteTarget. Null for every non-native kind.
+  let simSimulationId: string | null = null
   if (section.type === 'simulation') {
     const simId: string | undefined = content?.simulation_id
     if (simId) {
+      simSimulationId = simId
       const { data: sim } = await supabase
         .from('simulations')
         .select('title, type, config')
@@ -123,6 +127,8 @@ export default async function SectionPage({
             height={simHeight}
             title={simTitle}
             platform={simPlatform}
+            simulationId={simSimulationId}
+            classId={classId}
           />
         )
       case 'quiz': {

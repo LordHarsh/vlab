@@ -1,10 +1,28 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay, AlertTriangle } from 'lucide-react'
 import { SIM_REGISTRY } from '@/components/simulations'
 
 export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | (string & {})
+
+/**
+ * The native circuit editor is lazy-loaded with `ssr: false` so the heavy
+ * avr8js + Web Worker bundle is fetched only when a section is actually
+ * `native`. Every text / quiz / builtin-widget section stays free of it, and it
+ * never enters the section route's server bundle. `ssr: false` is legal here
+ * because this whole module is a client component (`'use client'` above).
+ */
+const NativeCircuitEditor = dynamic(
+  () => import('@/components/simulator/CircuitEditor').then((m) => m.CircuitEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <SimNotice heading="Loading circuit editor…" body="Preparing the interactive editor." />
+    ),
+  },
+)
 
 /**
  * Dispatches a simulation section to the right renderer.
@@ -22,6 +40,8 @@ export function SimulationSection({
   height = 500,
   title = 'Interactive Simulation',
   platform = null,
+  simulationId = null,
+  classId = null,
 }: {
   type?: SimulationKind
   simType?: string | null
@@ -30,13 +50,17 @@ export function SimulationSection({
   height?: number
   title?: string
   platform?: string | null
+  /** Native only — the target for autosave into sim_attempts. */
+  simulationId?: string | null
+  /** Native only — the enrolled class the attempt belongs to. */
+  classId?: string | null
 }) {
   if (type === 'builtin') {
     return <BuiltinSimulation simType={simType} title={title} platform={platform} />
   }
 
   if (type === 'native') {
-    return <NativePlaceholder title={title} />
+    return <NativeSimulation simulationId={simulationId} classId={classId} title={title} />
   }
 
   return <TinkercadSimulation designId={designId} height={height} title={title} />
@@ -86,14 +110,41 @@ function BuiltinSimulation({
   )
 }
 
-/* ── Native circuit editor (not wired into sections yet) ──────────────── */
+/* ── Native circuit editor ────────────────────────────────────────────── */
 
-function NativePlaceholder({ title }: { title: string }) {
+/**
+ * The in-app circuit editor, wired for a lesson section. It autosaves the
+ * student's work to sim_attempts through the server actions, which re-derive the
+ * student from the Clerk session and check enrollment — so both a simulationId
+ * and the classId are required to have somewhere to save. A section marked
+ * `native` without them is a configuration error, surfaced rather than silently
+ * dropped.
+ */
+function NativeSimulation({
+  simulationId,
+  classId,
+  title,
+}: {
+  simulationId: string | null
+  classId: string | null
+  title: string
+}) {
+  if (!simulationId || !classId) {
+    return (
+      <SimNotice
+        heading={title}
+        body="This experiment uses the native circuit editor, but it isn’t fully configured for this section yet. Please let your instructor know."
+      />
+    )
+  }
+
   return (
-    <SimNotice
-      heading={title}
-      body="This experiment uses the native circuit editor, which isn’t available in the lesson view yet."
-    />
+    <div
+      data-testid="native-simulation"
+      className="w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]"
+    >
+      <NativeCircuitEditor remote={{ simulationId, classId }} />
+    </div>
   )
 }
 

@@ -57,11 +57,21 @@ export function SimsHarness() {
             <SimulationSection type="builtin" simType="does_not_exist" designId={null} />
           </section>
 
+          {/* Dev-only: exercises the `native` dispatch → real CircuitEditor.
+              The dummy ids give it a RemoteTarget so it mounts and autosaves;
+              the server round-trip fails without a Clerk session (expected) and
+              autosave degrades to 'offline' rather than throwing. */}
           <section data-sim="__native">
             <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#6b7c8d]">
               native
             </h2>
-            <SimulationSection type="native" designId={null} title="Native circuit" />
+            <SimulationSection
+              type="native"
+              designId={null}
+              title="Native circuit"
+              simulationId="dev-sim"
+              classId="dev-class"
+            />
           </section>
         </main>
       ) : (
