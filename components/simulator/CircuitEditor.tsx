@@ -486,7 +486,11 @@ export function CircuitEditor({
                 <div key={partId} className="flex justify-between items-baseline mb-1">
                   <span className="text-xs text-[#6b7c8d]">{partId}</span>
                   <span className="text-[#34495e] tabular-nums" data-testid={`reading-${partId}`}>
-                    {(current * 1000).toFixed(2)} mA
+                    {/* Magnitude, not signed: the sign is just which pin the student
+                        wired first, which is arbitrary and confusing — a beginner reads
+                        "current through r1" as a size. Math.abs also kills the -0.00 that
+                        a negative zero would otherwise print. */}
+                    {Math.abs(current * 1000).toFixed(2)} mA
                   </span>
                 </div>
               ))
