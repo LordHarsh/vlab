@@ -79,8 +79,18 @@ const REPRO_I_REL = 1e-6
  * Converged current vs exact theory: the solver's configured reltol. The Newton
  * loop is set up to reach reltol on node voltages; a diode current derived from
  * those voltages inherits it. Asking for better is asking for a different
- * reltol, not a bug fix. (Measured worst across the suite is ~1.2e-4, i.e. the
- * solver beats its own contract by ~8x — the margin is the regression signal.)
+ * reltol, not a bug fix.
+ *
+ * The error is NOT uniform across the operating range, and an earlier version of
+ * this comment overstated it. Within the sweeps below (series R >= ~220 Ω, the
+ * palette band) the worst relative current error is ~1.2e-4. But at low series
+ * resistance the diode is stiffer relative to the node voltage and the error
+ * grows: an independent sweep measured ~1.7e-3 at V=9 V / R=10 Ω — i.e. WORSE
+ * than reltol=1e-3, not 8x better. That is still governed by reltol (rerunning
+ * at reltol=1e-9 drops it to ~4e-12), it is invisible at the 2-dp mA readout,
+ * and no palette circuit reaches it — but the honest statement is "of order
+ * reltol, and degrading below ~60 Ω", not a fixed margin. The tests below assert
+ * against reltol over their own ranges; they do not probe R < 60 Ω.
  */
 const ACCURACY_I_REL = DEFAULT_OPTIONS.reltol
 
