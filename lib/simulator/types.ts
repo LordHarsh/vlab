@@ -110,6 +110,21 @@ export interface Device {
  */
 export interface SolveFault {
   kind: 'over_current' | 'over_power' | 'short_circuit'
+  /**
+   * How far past the line the circuit is:
+   *
+   *   'destructive' — real hardware is damaged now: a burnt resistor, a shorted
+   *                   rail, a destroyed pin. The board does not survive this.
+   *   'caution'     — inside the absolute-maximum ratings but past the
+   *                   RECOMMENDED one. It runs today, but hot, and its life is
+   *                   shortened. A newbie needs to hear this without being told
+   *                   the board is dead.
+   *
+   * The three `kind`s are unchanged; severity splits the over-limit ones so a
+   * 25 mA LED is not shouted at in the same words as a 200 mA one. Every device
+   * that raises a fault sets it — see the safety() methods in devices.ts.
+   */
+  severity: 'caution' | 'destructive'
   deviceId: string
   /** Amps or watts, depending on kind. */
   value: number

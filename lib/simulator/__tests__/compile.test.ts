@@ -25,7 +25,7 @@
 import { compile } from '../model/compile'
 import type { CircuitDoc, DocWire, PlacedPart } from '../model/document'
 import { EXPERIMENT_01 } from '../model/examples'
-import { PART_LIBRARY, getPart } from '../model/parts'
+import { getPart } from '../model/parts'
 import { LED_RED, LED_SERIES_R, MIN_RESISTANCE } from '../devices'
 import { DEFAULT_OPTIONS, VT } from '../types'
 
@@ -685,6 +685,154 @@ group('10. numerical constants stay mutually consistent')
   // 5·(10 kΩ + 0.5 mΩ)/(20 kΩ + 1 mΩ) = 2.5000000 V, minus the gmin leak.
   near('a 0 Ω bridge inside a 10k/10k divider still reads 2.5 V',
     res.voltages[c.netOf.get('sh 1')!], 2.5, 4 * GMIN * 1e4 + 1e-6)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('11. hardware-safety diagnostics — the four silent gaps')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * GAP 1 — LED over-current is GRADUATED. A red 5 mm LED is rated 20 mA
+   * (recommended) with a 30 mA absolute maximum. The independent bisection
+   * oracle gives the loop current for the 5 V rail through R + the 2 Ω bulk
+   * resistance; it is compared against the DATASHEET thresholds (20 / 30 mA),
+   * never against the solver. An LED junction's deviceId is `${part}.d`.
+   */
+  const ledDoc = (R: number): CircuitDoc => ({
+    parts: [place('uno', 'arduino_uno'), place('r1', 'resistor', { ohms: R }), place('led1', 'led')],
+    wires: [wire(['uno', '5V'], ['r1', '1']), wire(['r1', '2'], ['led1', 'A']),
+      wire(['led1', 'C'], ['uno', 'GND.1'])],
+  })
+  const ledFault = (R: number) => solveDoc(ledDoc(R)).res.faults.find((f) => f.deviceId === 'led1.d')
+
+  // 100 Ω → 29.6 mA: above the 20 mA rating, below the 30 mA absolute max.
+  const i100 = ledCurrent(VCC, 100 + LED_SERIES_R)
+  truth('LED at 100 Ω draws a caution-band current (20 < I ≤ 30 mA)',
+    i100 > 0.020 && i100 <= 0.030, '20 mA < I ≤ 30 mA', `${(i100 * 1000).toFixed(2)} mA`)
+  const f100 = ledFault(100)
+  truth('and the engine raises a NON-destructive caution',
+    f100?.kind === 'over_current' && f100?.severity === 'caution',
+    'over_current / caution', f100 ? `${f100.kind} / ${f100.severity}` : 'no fault')
+  truth('the caution says its life is shortened, not that it is destroyed',
+    !!f100 && /shortens its life/.test(f100.message) && !/destroyed/.test(f100.message),
+    'warns without alarming', f100?.message ?? '(none)')
+
+  // 50 Ω → 57 mA: past the 30 mA absolute max → destruction.
+  const i50 = ledCurrent(VCC, 50 + LED_SERIES_R)
+  truth('LED at 50 Ω draws past the 30 mA absolute max', i50 > 0.030, 'I > 30 mA',
+    `${(i50 * 1000).toFixed(2)} mA`)
+  const f50 = ledFault(50)
+  truth('and the engine raises the destructive over_current',
+    f50?.kind === 'over_current' && f50?.severity === 'destructive',
+    'over_current / destructive', f50 ? `${f50.kind} / ${f50.severity}` : 'no fault')
+
+  // 1 kΩ → 3.1 mA: below the rating → nothing at all.
+  const i1k = ledCurrent(VCC, 1000 + LED_SERIES_R)
+  truth('LED at 1 kΩ draws below the 20 mA rating', i1k < 0.020, 'I < 20 mA',
+    `${(i1k * 1000).toFixed(2)} mA`)
+  truth('and the LED raises no fault', ledFault(1000) === undefined, 'no LED fault',
+    String(ledFault(1000)?.kind))
+}
+
+{
+  /**
+   * GAP 2 — every MCU pin is rated-checked. The ATmega328P I/O pin is 20 mA
+   * recommended, 40 mA absolute max. A pin driven HIGH is a 5 V source behind
+   * 25 Ω, so a plain resistor load fixes the sourced current in closed form:
+   * I = 5 / (25 + R). Thresholds (20 / 40 mA) are the datasheet's.
+   */
+  const pinDoc = (R: number): CircuitDoc => ({
+    parts: [place('uno', 'arduino_uno'), place('r', 'resistor', { ohms: R })],
+    wires: [wire(['uno', 'D13'], ['r', '1']), wire(['r', '2'], ['uno', 'GND.1'])],
+  })
+  const pinFault = (R: number, drives: Record<string, Drive> = { D13: 'high' }) =>
+    solveDoc(pinDoc(R), drives).res.faults.find((f) => f.deviceId === 'uno.D13')
+
+  // R = 0 Ω (clamped to MIN_RESISTANCE): I ≈ 5/25 = 200 mA → destruction. The repro.
+  const i200 = VCC / (R_DRIVE + MIN_RESISTANCE)
+  truth('D13 driving into ~0 Ω sources ~200 mA', i200 > 0.040, 'I > 40 mA',
+    `${(i200 * 1000).toFixed(1)} mA`)
+  const f200 = pinFault(0)
+  truth('a pin at 200 mA is a destructive over_current',
+    f200?.kind === 'over_current' && f200?.severity === 'destructive',
+    'over_current / destructive', f200 ? `${f200.kind} / ${f200.severity}` : 'no fault')
+  truth('the pin message quantifies it against the 40 mA rating',
+    !!f200 && /40 mA/.test(f200.message) && /pin/.test(f200.message) && /On real hardware/.test(f200.message),
+    'names 40 mA + consequence', f200?.message ?? '(none)')
+
+  // R = 175 Ω: I = 5/200 = 25 mA → caution.
+  const i25 = VCC / (R_DRIVE + 175)
+  truth('D13 into 175 Ω sources 25 mA (caution band)', i25 > 0.020 && i25 <= 0.040,
+    '20 mA < I ≤ 40 mA', `${(i25 * 1000).toFixed(2)} mA`)
+  const f25 = pinFault(175)
+  truth('a pin at 25 mA is a NON-destructive caution',
+    f25?.kind === 'over_current' && f25?.severity === 'caution',
+    'over_current / caution', f25 ? `${f25.kind} / ${f25.severity}` : 'no fault')
+
+  // Experiment 01: D13 sources 12.4 mA → nothing.
+  truth('Experiment 01 sources 12.4 mA, below the 20 mA rating', I_EXP01 < 0.020, 'I < 20 mA',
+    `${(I_EXP01 * 1000).toFixed(2)} mA`)
+  const fExp = solveDoc(EXPERIMENT_01, { D13: 'high' }).res.faults.find((f) => f.deviceId === 'uno.D13')
+  truth('and D13 raises no fault in the authored circuit', fExp === undefined, 'no pin fault',
+    String(fExp?.kind))
+  // A pin only faults while SOURCING: the identical 0 Ω load with the pin left
+  // FLOATING (an input) must stay silent.
+  truth('the identical 0 Ω load with D13 FLOATING raises no pin fault',
+    pinFault(0, { D13: 'float' }) === undefined, 'no fault when not driving',
+    String(pinFault(0, { D13: 'float' })?.kind))
+}
+
+{
+  /**
+   * GAP 3 — a dangling lead is a connectivity problem. 5 V → 220 Ω → nothing:
+   * the resistor's second pin is the only terminal on its net, so no current can
+   * flow. Purely topological — it needs no solve, and it must be per-pin so a
+   * correctly-wired part stays silent.
+   */
+  const dangling: CircuitDoc = {
+    parts: [place('uno', 'arduino_uno'), place('r1', 'resistor', { ohms: 220 })],
+    wires: [wire(['uno', '5V'], ['r1', '1'])], // r1 pin 2 left open
+  }
+  const cd = compile(dangling)
+  truth('a dangling resistor lead is reported as a problem',
+    cd.problems.some((p) => /Resistor "r1" has a lead/.test(p) && /pin 2/.test(p)),
+    'names the open lead', JSON.stringify(cd.problems))
+  truth('the authored Experiment 01 reports no connectivity problem',
+    compile(EXPERIMENT_01).problems.length === 0, '[]', JSON.stringify(compile(EXPERIMENT_01).problems))
+}
+
+{
+  /**
+   * GAP 4 — a build wired across the centre channel is diagnosed, not silent.
+   * D13 → j5 while the resistor stays on b5: same column, opposite banks, so
+   * nothing connects and the LED is dark. This is the exact broken build group 2
+   * proves computes-but-does-not-light; here we prove it now SPEAKS, and does so
+   * once (not also as a plain dangling lead).
+   */
+  const broken: CircuitDoc = {
+    ...EXPERIMENT_01,
+    wires: EXPERIMENT_01.wires.map((x) =>
+      x.id === 'w1' ? { ...x, to: { partId: 'bb', pinId: 'j5' } } : x),
+  }
+  const cb = compile(broken)
+  truth('a channel-crossed build produces a clear hint',
+    cb.problems.some((p) => /centre channel/.test(p) && /jumper/.test(p)),
+    'names the channel + fix', JSON.stringify(cb.problems))
+  truth('the crossing is not ALSO double-reported as a plain dangling lead',
+    cb.problems.filter((p) => /channel/i.test(p)).length === 1 &&
+      !cb.problems.some((p) => /has a lead \(pin/.test(p)),
+    'one channel hint, no dangling dup', JSON.stringify(cb.problems))
+
+  // Correctly wired: silent. And a fully-wired but switched-OFF circuit is silent
+  // too — connectivity is topological, not about whether current happens to flow.
+  truth('the correctly-wired Experiment 01 stays silent',
+    compile(EXPERIMENT_01).problems.length === 0, '[]', JSON.stringify(compile(EXPERIMENT_01).problems))
+  const offButton: CircuitDoc = {
+    parts: [...EXPERIMENT_01.parts, place('btn', 'push_button', { pressed: 0 })],
+    wires: [...EXPERIMENT_01.wires, wire(['uno', 'D2'], ['btn', '1a']), wire(['btn', '2a'], ['uno', 'GND.1'])],
+  }
+  truth('an OPEN button (switched off) raises no connectivity problem',
+    compile(offButton).problems.length === 0, '[]', JSON.stringify(compile(offButton).problems))
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────

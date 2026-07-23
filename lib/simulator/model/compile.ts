@@ -90,6 +90,31 @@ export interface CompileResult {
   unknowns: number
 }
 
+/**
+ * A breadboard tie-point id → which half-column bank it is on, and its column.
+ *
+ * Rows a–e are the LOWER bank, f–j the UPPER bank, and the two are separated by
+ * the centre channel: a5 and j5 are the same COLUMN but are NOT the same net.
+ * Power rails (tp/tn/bp/bn…) span the whole board and belong to no column, so
+ * they return null — a lead on a rail is never a channel-crossing mistake.
+ */
+function bankCol(pinId: string): { bank: 'lower' | 'upper'; col: number } | null {
+  const m = /^([a-j])(\d+)$/.exec(pinId)
+  if (!m) return null
+  return { bank: 'abcde'.includes(m[1]) ? 'lower' : 'upper', col: Number(m[2]) }
+}
+
+/** A component/pin lead that is the only terminal on its net — see compile(). */
+interface DeadLead {
+  partId: string
+  pinId: string
+  /** A human name for the lead: the pin name for the MCU, else the part label. */
+  label: string
+  isMcu: boolean
+  /** Breadboard holes this lead reaches, for channel-crossing detection. */
+  coords: Array<{ bank: 'lower' | 'upper'; col: number; hole: string }>
+}
+
 class DSU {
   private parent = new Map<string, string>()
   find(a: string): string {
@@ -383,16 +408,133 @@ export function compile(doc: CircuitDoc): CompileResult {
   if (doc.parts.length > 0 && !hasGround) {
     problems.push('No ground in the circuit — add an Arduino or connect to GND.')
   }
+  // ─── Connectivity: dangling leads and channel-crossed orphans ───
+  //
+  // Current can only flow through a net with at least TWO component terminals
+  // on it (in one, out another). A net with exactly one is a dead end: its lone
+  // lead is electrically dangling no matter what pico-amp gmin leak the solver
+  // reports. The solver cannot see this — it solves the dead-ended circuit
+  // perfectly and stays silent — yet a dangling lead (a), and a pair of leads
+  // mis-wired across the breadboard's centre channel (b), are the two commonest
+  // beginner mistakes, and to a newbie a dark LED that should be lit is
+  // indistinguishable from a broken simulator.
+  //
+  // These are CONNECTIVITY problems, not destructive faults, so they go through
+  // `problems` (which the Checks panel renders), never SolveFault. They are
+  // purely topological, so a circuit that is merely switched OFF — a LOW pin, an
+  // open button, an unlit LED — is still fully connected and stays silent.
+  const wiredKeys = new Set<string>()
+  for (const w of doc.wires) {
+    if (!partById.has(w.from.partId) || !partById.has(w.to.partId)) continue
+    wiredKeys.add(pinKeyOf(w.from))
+    wiredKeys.add(pinKeyOf(w.to))
+  }
+  const isBreadboardPart = (partId: string): boolean => {
+    const p = partById.get(partId)
+    return p !== undefined && getPart(p.type).electrical.kind === 'breadboard'
+  }
+
+  const deadLeads: DeadLead[] = []
+  const liveCount = new Map<string, number>() // partId → pins that reach a real net
+
   for (const part of doc.parts) {
     const def = getPart(part.type)
-    if (def.electrical.kind === 'breadboard' || def.electrical.kind === 'mcu') continue
-    const unconnected = def.pins.filter((p) => {
-      const n = net({ partId: part.id, pinId: p.id })
-      return n === undefined
-    })
-    if (unconnected.length === def.pins.length) {
-      problems.push(`${def.label} "${part.id}" is not connected to anything.`)
+    const kind = def.electrical.kind
+    if (kind === 'breadboard') continue
+    const isMcu = kind === 'mcu'
+    for (const pin of def.pins) {
+      const root = dsu.find(pinKeyOf({ partId: part.id, pinId: pin.id }))
+      const cp = componentPins.get(root) ?? 0
+      if (cp >= 2) {
+        liveCount.set(part.id, (liveCount.get(part.id) ?? 0) + 1)
+        continue
+      }
+      if (cp !== 1) continue // cp === 0: an MCU pin with no wire at all — unused.
+
+      // A dead-end terminal: the only component pin on its net.
+      if (isMcu) {
+        // Only a pin the student actually WIRED and could DRIVE is worth a word.
+        // An unused header pin is normal; power/ground leads are the short-
+        // circuit path's job, not this one.
+        if (pin.type !== 'digital' && pin.type !== 'analog') continue
+        if (!wiredKeys.has(pinKeyOf({ partId: part.id, pinId: pin.id }))) continue
+      } else if (kind === 'potentiometer') {
+        // A pot is legitimately one-legged (a rheostat leaves one end open), so
+        // a dead-end leg is not reported per-pin. A pot wired to NOTHING still
+        // gets the whole-part message below via liveCount === 0.
+        continue
+      }
+
+      const coords: DeadLead['coords'] = []
+      for (const ref of byRoot.get(root) ?? []) {
+        if (!isBreadboardPart(ref.partId)) continue
+        const bc = bankCol(ref.pinId)
+        if (bc) coords.push({ ...bc, hole: ref.pinId })
+      }
+      deadLeads.push({
+        partId: part.id,
+        pinId: pin.id,
+        label: isMcu ? pin.id : `${def.label} "${part.id}"`,
+        isMcu,
+        coords,
+      })
     }
+  }
+
+  // (b) Channel crossings: two dead leads on the same COLUMN but opposite banks
+  // look joined and are not. Report each such column once, and mark both leads
+  // as explained so they don't also get the generic dangling message.
+  const explained = new Set<DeadLead>()
+  const hintedCols = new Set<number>()
+  for (let i = 0; i < deadLeads.length; i++) {
+    for (let j = i + 1; j < deadLeads.length; j++) {
+      const a = deadLeads[i]
+      const b = deadLeads[j]
+      let crossed: { ca: DeadLead['coords'][number]; cb: DeadLead['coords'][number] } | null = null
+      for (const ca of a.coords) {
+        const cb = b.coords.find((c) => c.col === ca.col && c.bank !== ca.bank)
+        if (cb) {
+          crossed = { ca, cb }
+          break
+        }
+      }
+      if (!crossed) continue
+      explained.add(a)
+      explained.add(b)
+      if (!hintedCols.has(crossed.ca.col)) {
+        hintedCols.add(crossed.ca.col)
+        problems.push(
+          `${a.label} (${crossed.ca.hole}) and ${b.label} (${crossed.cb.hole}) are on the ` +
+            `same breadboard column but opposite sides of the centre channel, so they are ` +
+            `not connected. Bridge the two banks with a jumper wire.`,
+        )
+      }
+    }
+  }
+
+  // (a) Everything the crossing hints didn't cover.
+  for (const part of doc.parts) {
+    const def = getPart(part.type)
+    const kind = def.electrical.kind
+    if (kind === 'breadboard' || kind === 'mcu') continue
+    const live = liveCount.get(part.id) ?? 0
+    if (live === 0) {
+      // No pin of this part reaches a real net. If a crossing already explained
+      // its leads, that hint said why — don't pile on.
+      const anyExplained = deadLeads.some((l) => l.partId === part.id && explained.has(l))
+      if (!anyExplained) problems.push(`${def.label} "${part.id}" is not connected to anything.`)
+    } else {
+      for (const l of deadLeads) {
+        if (l.partId !== part.id || explained.has(l)) continue
+        problems.push(`${def.label} "${part.id}" has a lead (pin ${l.pinId}) wired to nothing.`)
+      }
+    }
+  }
+  // A driven MCU pin wired to a dead end of its own (e.g. across the channel with
+  // nothing on the other side to pair with).
+  for (const l of deadLeads) {
+    if (!l.isMcu || explained.has(l)) continue
+    problems.push(`${l.pinId} is driven but its wire reaches nothing else — it is left dangling.`)
   }
 
   return {

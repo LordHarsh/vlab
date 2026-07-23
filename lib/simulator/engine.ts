@@ -505,6 +505,7 @@ export class SimulationEngine {
       if (s.role === 'supply') {
         out.push({
           kind: 'short_circuit',
+          severity: 'destructive',
           deviceId: s.deviceId,
           // The engine models a plain wire as MIN_RESISTANCE, the same figure
           // the 0 Ω resistor case reports, so the two agree on what a short is.
@@ -520,6 +521,7 @@ export class SimulationEngine {
         const amps = s.volts / R_DRIVE
         out.push({
           kind: 'short_circuit',
+          severity: 'destructive',
           deviceId: s.deviceId,
           value: amps,
           message:

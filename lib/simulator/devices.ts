@@ -94,6 +94,7 @@ export class Resistor implements Device {
     if (p <= this.rating) return null
     return {
       kind: 'over_power',
+      severity: 'destructive',
       deviceId: this.id,
       value: p,
       message: `Resistor is dissipating ${p.toFixed(2)} W — it is rated for ${this.rating} W and would burn out.`,
@@ -148,6 +149,7 @@ export class VoltageSource implements Device {
     if (i <= this.maxCurrent) return null
     return {
       kind: 'short_circuit',
+      severity: 'destructive',
       deviceId: this.id,
       value: i,
       message:
@@ -188,6 +190,65 @@ export class NortonPort implements Device {
     // arguments drives the node to −V instead of +V, which is silent: the
     // solver converges happily and the LED simply never lights.
     stampCurrent(ctx, this.a, this.b, this.i)
+  }
+
+  /**
+   * ATmega328P per-I/O-pin current limits, from the datasheet
+   * (§32.2 Absolute Maximum Ratings and §32 DC Characteristics):
+   *
+   *   maxCurrent  0.040 A — absolute maximum DC current per I/O pin. Past this
+   *                         the output driver is damaged: the pin is destroyed.
+   *   ratedCurrent 0.020 A — the current at which Atmel still guarantees valid
+   *                         output logic levels; the recommended continuous
+   *                         maximum. Between the two the pin works but is
+   *                         over-stressed — a caution, not a destruction.
+   */
+  ratedCurrent = 0.02
+  maxCurrent = 0.04
+
+  safety(ctx: StampContext): SolveFault | null {
+    // A port whose two terminals are the SAME net contributes nothing to the
+    // matrix, so there is no real current to judge and nothing to report here:
+    //   - a pin wired straight to GND has a === b === ground. That is a
+    //     topological dead short, already surfaced by ShortedPin in compile.ts
+    //     and gated on drive state by the engine, so reporting it again here
+    //     would double-count it.
+    //   - a degenerate self-loop (a === b on a floating net) is a no-op.
+    if (this.a === this.b) return null
+
+    // Current the pin drives OUT into its net is the branch current a → b of a
+    // Norton source: i − g·(V_b − V_a). Real MCU pins reference ground (a = 0),
+    // so this is (V_open − V_net)/R_drive, exactly the current sourced.
+    //
+    // Only a pin actively SOURCING can exceed a few mA. A floating or pull-up
+    // INPUT (i ≈ 0 with a tiny g) can source at most ~0.25 mA, and a pin
+    // sinking current gives a negative value — both fall under the rating and
+    // never fault, which is the "floating/input pins must not fault" rule.
+    const sourced = this.i - this.g * (ctx.voltage(this.b) - ctx.voltage(this.a))
+    if (sourced <= this.ratedCurrent) return null
+
+    const mA = (sourced * 1000).toFixed(0)
+    if (sourced <= this.maxCurrent) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: sourced,
+        message:
+          `${mA} mA out of an I/O pin, past the ${(this.ratedCurrent * 1000).toFixed(0)} mA ` +
+          `it is recommended to stay under. On real hardware, drawing this ` +
+          `continuously over-stresses the pin.`,
+      }
+    }
+    return {
+      kind: 'over_current',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: sourced,
+      message:
+        `${mA} mA through a pin rated for ${(this.maxCurrent * 1000).toFixed(0)} mA. ` +
+        `On real hardware this pin is destroyed.`,
+    }
   }
 }
 
@@ -294,19 +355,49 @@ export class Diode implements Device {
     this.current = this.params.is * (Math.exp(Math.min(vd / this.vte, 300)) - 1)
   }
 
-  /** Continuous forward current rating. A 5 mm LED is typically 20 mA. */
+  /** Recommended continuous forward current. A 5 mm LED is typically 20 mA. */
   rating = 0.02
+
+  /**
+   * Absolute-maximum continuous forward current. Standard 5 mm LED datasheets
+   * (e.g. Kingbright / Vishay red) rate the DC forward current at 20 mA
+   * recommended and 30 mA absolute maximum, above which the die overheats and
+   * fails. Between the two the LED is bright but running hot — a caution.
+   */
+  absMaxCurrent = 0.03
 
   safety(ctx: StampContext): SolveFault | null {
     this.readback(ctx)
-    if (this.current <= this.rating * 1.5) return null
+    // At or below the rating there is nothing to say.
+    if (this.current <= this.rating) return null
+
+    const mA = (this.current * 1000).toFixed(0)
+    const rated = (this.rating * 1000).toFixed(0)
+
+    // Above the rating but still within the absolute maximum: the part survives
+    // for now but ages fast. Non-destructive, so the wording warns rather than
+    // alarms.
+    if (this.current <= this.absMaxCurrent) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: this.current,
+        message:
+          `${mA} mA through a part running above its ${rated} mA rating. ` +
+          `On real hardware this shortens its life.`,
+      }
+    }
+
+    // Past the absolute maximum — the original destructive fault, unchanged.
     return {
       kind: 'over_current',
+      severity: 'destructive',
       deviceId: this.id,
       value: this.current,
       message:
-        `${(this.current * 1000).toFixed(0)} mA through a part rated for ` +
-        `${(this.rating * 1000).toFixed(0)} mA. On real hardware this part is destroyed.`,
+        `${mA} mA through a part rated for ${rated} mA. ` +
+        `On real hardware this part is destroyed.`,
     }
   }
 }
