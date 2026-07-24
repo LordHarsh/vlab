@@ -14,6 +14,7 @@
  */
 
 import type { CircuitDoc } from './model/document'
+import type { CodeBundle } from './model/code'
 
 const DB_NAME = 'vlab-simulator'
 const DB_VERSION = 1
@@ -22,6 +23,15 @@ const STORE = 'attempts'
 export interface StoredAttempt {
   key: string
   doc: CircuitDoc
+  /**
+   * The student's source, when the document has a board that runs one.
+   *
+   * OPTIONAL, and it must stay optional: every record written before the code
+   * panel existed has no `code` key, and a restore that treated its absence as
+   * "the student deleted their program" would wipe work on the first load after
+   * a deploy. Absent means "nothing was stored", never "stored as empty".
+   */
+  code?: CodeBundle
   updatedAt: number
   /** False until the server has acknowledged this version. */
   synced: boolean
@@ -68,8 +78,16 @@ function tx<T>(
   )
 }
 
-export async function saveLocal(key: string, doc: CircuitDoc, synced = false): Promise<void> {
+export async function saveLocal(
+  key: string,
+  doc: CircuitDoc,
+  synced = false,
+  code?: CodeBundle,
+): Promise<void> {
   const record: StoredAttempt = { key, doc, updatedAt: Date.now(), synced }
+  // Written only when there IS one, so a document with no board never plants an
+  // empty bundle over source the student typed on a previous visit.
+  if (code) record.code = code
   try {
     await tx('readwrite', (s) => s.put(record))
   } catch {
@@ -89,7 +107,9 @@ export async function loadLocal(key: string): Promise<StoredAttempt | null> {
 
 export async function markSynced(key: string): Promise<void> {
   const rec = await loadLocal(key)
-  if (rec) await saveLocal(key, rec.doc, true)
+  // rec.code is carried through: marking a record synced must not be the thing
+  // that drops the student's source out of it.
+  if (rec) await saveLocal(key, rec.doc, true, rec.code)
 }
 
 /** Every locally-stored attempt that has not reached the server yet. */

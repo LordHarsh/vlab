@@ -38,7 +38,7 @@ export interface BoardProfile {
    * author guessing — and if the constraint is ever widened, this is the one
    * line that changes.
    */
-  dbBoard: 'arduino_uno' | 'arduino_nano' | 'rp2040'
+  dbBoard: 'arduino_uno' | 'arduino_nano' | 'rp2040' | 'arduino_mega'
 }
 
 export const BOARDS: Record<BoardType, BoardProfile> = {
@@ -49,6 +49,26 @@ export const BOARDS: Record<BoardType, BoardProfile> = {
     track: 'avr',
     language: 'arduino_c',
     dbBoard: 'arduino_uno',
+  },
+  /**
+   * The Arduino Mega shares the Uno's TRACK and differs only in its chip.
+   *
+   * That is the whole reason this file did not have to become a plugin
+   * framework to take a third board: same emulator, same worker, same .hex
+   * toolchain, same 5 V logic. Which ATmega runs is chosen one level down, by
+   * chipForDoc() in lib/simulator/avr/chip.ts, off the same document.
+   *
+   * `dbBoard: 'arduino_mega'` is a value migration 015's check constraint did
+   * NOT originally allow — it permitted ('arduino_uno','arduino_nano','rp2040')
+   * only. Migration 025 widens it additively before inserting anything.
+   */
+  arduino_mega: {
+    type: 'arduino_mega',
+    label: 'Arduino Mega 2560',
+    logicVolts: 5,
+    track: 'avr',
+    language: 'arduino_c',
+    dbBoard: 'arduino_mega',
   },
   raspberry_pi_pico: {
     type: 'raspberry_pi_pico',
@@ -92,18 +112,33 @@ export function detectBoard(doc: CircuitDoc): BoardDetection {
 
   if (present.length === 1) return { board: BOARDS[present[0]], present, problem: null }
   if (present.length === 0) {
+    const names = (Object.keys(BOARDS) as BoardType[]).map((b) => BOARDS[b].label)
     return {
       board: null,
       present,
-      problem: 'No microcontroller in the circuit — add an Arduino Uno or a Raspberry Pi Pico.',
+      problem: `No microcontroller in the circuit — add ${listOf(names)}.`,
     }
   }
+  /**
+   * Two boards, listed by name rather than hardcoded.
+   *
+   * The reason holds even for two boards on the SAME track: an Uno and a Mega
+   * are both avr8js, but they are still two CPUs with two independent clocks,
+   * and one engine advances one of them. Naming the actual pair matters now
+   * that there are three boards and therefore three possible pairs.
+   */
   return {
     board: null,
     present,
     problem:
-      `This circuit has both an ${BOARDS.arduino_uno.label} and a ` +
-      `${BOARDS.raspberry_pi_pico.label}. Only one board can run at a time — ` +
-      `they are separate emulators with their own clocks. Remove one.`,
+      `This circuit has ${listOf(present.map((b) => `an ${BOARDS[b].label}`))}. ` +
+      `Only one board can run at a time — each is its own CPU with its own ` +
+      `clock, and the engine advances one. Remove all but one.`,
   }
+}
+
+/** "a, b and c" — for a problem sentence a student reads. */
+function listOf(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ''
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
 }

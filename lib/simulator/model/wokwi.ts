@@ -198,3 +198,14 @@ export function wokwiGeometry(
 export const UNO_RENAME: Record<string, string> = Object.fromEntries(
   Array.from({ length: 14 }, (_, i) => [String(i), `D${i}`]),
 )
+
+/**
+ * The same for a Mega, whose digital header runs 0–53.
+ *
+ * Not `UNO_RENAME` widened: a saved document names pins by id, so the two maps
+ * have to be able to diverge without one board silently renaming the other's
+ * pins. They agree on 0–13 because the boards do.
+ */
+export const MEGA_RENAME: Record<string, string> = Object.fromEntries(
+  Array.from({ length: 54 }, (_, i) => [String(i), `D${i}`]),
+)

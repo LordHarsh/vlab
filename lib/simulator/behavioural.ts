@@ -71,6 +71,17 @@ export interface BehaviouralContext {
   drive(signal: string, level: DriveLevel, volts?: number): void
   /** Voltage on one of this device's nets at the last solve. 0 if unwired. */
   voltage(signal: string): number
+  /**
+   * Whether `signal` reached a net at all.
+   *
+   * voltage() returns 0 for a signal the compiler never gave a net, which is
+   * indistinguishable from a net genuinely sitting at 0 V. Usually that does not
+   * matter — an unwired sensor pin reading 0 V is the right answer. It matters
+   * for a device with OPTIONAL internal nodes: a relay module's coil node exists
+   * only for the channels the compiler actually built, and 0 V on a coil node
+   * means "energised", so absent and energised must be distinguishable.
+   */
+  hasSignal(signal: string): boolean
   /** Live props from the document (sliders in the inspector). */
   props(): Record<string, number | string>
   /** Publish state for the engine snapshot. Reported only — never solved. */
@@ -1528,6 +1539,590 @@ export class StepperMonitor implements BehaviouralDevice {
       holding: this.energised.some(Boolean),
       /** Patterns the model refused: off the ring, or too big a jump. */
       sequenceErrors: this.tracker.sequenceErrors,
+    })
+  }
+}
+
+// ─── Opto-isolated relay module — what the armature is doing ──────────────────
+
+/**
+ * Reports which way each relay's contact has thrown, from the COIL VOLTAGE.
+ *
+ * A MONITOR, not a driver — it never touches a net, exactly like BuzzerMonitor
+ * and StepperMonitor.
+ *
+ * WHY IT READS THE COIL NODE AND NOT THE INPUT PIN. The obvious implementation
+ * is to re-derive the switching decision from the IN pin, which means copying
+ * the opto's diode curve, the series resistor, the pull-in threshold and both
+ * hysteresis bands out of RelayChannel — and two copies of a rule with
+ * independent hysteresis state WILL disagree near a threshold. The coil node is
+ * the electrical model's own OUTPUT: an energised channel pulls it down to the
+ * driver's VCE(sat), a released one leaves it at VCC through the coil. Reading
+ * it cannot drift from RelayChannel, because it IS RelayChannel's answer.
+ *
+ * `_coil<k>` is not a pin on the part. compile() hands the monitor the internal
+ * nodes it allocated for the coils under those keys, the same way it hands a
+ * sensor its VCC net — see the relay branch in model/compile.ts.
+ */
+export class RelayMonitor implements BehaviouralDevice {
+  private lastReport = ''
+
+  constructor(
+    readonly partId: string,
+    private ctx: BehaviouralContext,
+    private spec: { channels: number; coilOhms: number; coilVolts: number },
+  ) {}
+
+  poll(): void {
+    this.publish()
+  }
+
+  refresh(): void {
+    this.publish()
+  }
+
+  private publish(): void {
+    const vcc = this.ctx.voltage('VCC')
+    const gnd = this.ctx.voltage('GND')
+    const supply = vcc - gnd
+    // A supply the coil could never operate from is treated as no supply at
+    // all, which also keeps the midpoint test below away from 0/0.
+    const powered = supply > 1
+
+    let pattern = ''
+    let contacts = ''
+    let energisedCount = 0
+    let coilAmps = 0
+    for (let k = 1; k <= this.spec.channels; k++) {
+      const coil = this.ctx.voltage(`_coil${k}`)
+      // A channel compile() never built has no internal node, so voltage()
+      // returns 0 for it — indistinguishable from an energised coil. The
+      // presence flag says which, so an unbuilt channel reads as absent rather
+      // than as permanently on.
+      if (!this.ctx.hasSignal(`_coil${k}`)) {
+        pattern += '-'
+        contacts += k > 1 ? ' -' : '-'
+        continue
+      }
+      const across = vcc - coil
+      const on = powered && across > 0.5 * supply
+      if (on) {
+        energisedCount++
+        coilAmps += across / this.spec.coilOhms
+      }
+      pattern += on ? '1' : '0'
+      contacts += (k > 1 ? ' ' : '') + (on ? 'NO' : 'NC')
+    }
+
+    const activeLow = numProp(this.ctx.props(), 'activeLow', 1) >= 0.5
+    const sig = `${pattern}|${powered ? 1 : 0}|${supply.toFixed(3)}|${activeLow ? 1 : 0}`
+    if (sig === this.lastReport) return
+    this.lastReport = sig
+    this.ctx.report({
+      /** One character per channel: 1 energised, 0 released, - not wired. */
+      pattern,
+      /** Which contact each channel's COM is sitting on. */
+      contacts,
+      energised: energisedCount,
+      channels: this.spec.channels,
+      supplyVolts: supply,
+      coilAmps,
+      powered,
+      activeLow,
+      /** True when the supply is live but too low for this coil to pull in. */
+      underVolted: powered && supply < this.spec.coilVolts * 0.75,
+    })
+  }
+}
+
+// ─── SEN-11574 pulse sensor ───────────────────────────────────────────────────
+
+/**
+ * Pulse Sensor Amped / SEN-11574 figures.
+ *
+ * The part is an optical PPG front end: an IR LED, an ambient-light photo
+ * sensor and a two-stage op-amp filter/amplifier. What it puts on its one
+ * signal wire is an ANALOG voltage that rests at half the supply — the
+ * amplifier's own mid-rail reference — with the pulse riding on top of it.
+ * That resting point is the published behaviour every Pulse Sensor sketch is
+ * written against: "the signal hovers around 512" on a 10-bit ADC.
+ */
+export const PULSE_SENSOR = {
+  /** "Operating voltage: 3 V to 5 V". */
+  MIN_SUPPLY_VOLTS: 3.0,
+  MAX_SUPPLY_VOLTS: 5.5,
+  /** The amplifier's mid-rail reference: the signal rests at Vs/2. */
+  BASELINE_FRACTION: 0.5,
+  /**
+   * Default peak swing above that baseline, as a fraction of the supply.
+   *
+   * 8 % of the rail is what a good finger reading looks like on the published
+   * part: on a 5 V Arduino the signal sits at ~512 counts and a beat peaks
+   * around 590, i.e. 78/1024 = 7.6 % of full scale. Scaling it to the SUPPLY
+   * rather than fixing it in volts is what makes the same sensor behave the
+   * same way on a 3.3 V board, which is what a ratiometric ADC reading of a
+   * ratiometric sensor actually does.
+   */
+  DEFAULT_AMPLITUDE_PERCENT: 8,
+  /**
+   * Fraction of one beat interval occupied by the systolic peak.
+   *
+   * A resting adult's systolic ejection is roughly 200 ms of an 830 ms beat.
+   * 0.22 is that ratio, held constant as the rate changes — which is a
+   * simplification (a real systolic interval shortens far less than the beat
+   * does) and is recorded as one in the class note.
+   */
+  SYSTOLIC_FRACTION: 0.22,
+  /** How often the synthesised output is re-driven, microseconds. */
+  UPDATE_MICROS: 2000,
+  /**
+   * Quantum of the driven voltage, volts.
+   *
+   * NOT cosmetic. The engine's memoisation key contains every behavioural
+   * drive, so a continuously varying analog output would mint a new cache entry
+   * on every update and never hit. 2 mV is below one LSB of a 10-bit converter
+   * on a 3.3 V reference (3.22 mV), so the quantisation is invisible to
+   * anything downstream, and it bounds the key space to a few hundred values.
+   */
+  STEP_VOLTS: 0.002,
+  MIN_BPM: 30,
+  MAX_BPM: 220,
+} as const
+
+/**
+ * SEN-11574 pulse sensor.
+ *
+ * THE WAVEFORM IS SYNTHESISED, NOT SIMULATED. There is no optical model here:
+ * no LED, no tissue, no photodiode, no ambient-light rejection and no motion
+ * artefact. What this device does is put a periodic, ANALOG voltage on its
+ * signal wire whose rate is the `bpm` prop and whose shape is a raised cosine —
+ * one systolic bump per beat over a flat mid-rail baseline. It is a signal
+ * GENERATOR standing in for a transducer, and it is labelled as one so nobody
+ * reads a heart rate out of this and believes a body produced it.
+ *
+ * What IS real is everything downstream of the wire: the voltage is driven
+ * through a Norton port into the solver, so whatever the student wired it to
+ * loads it, an ADC reading it reads a genuine node voltage, and a peak-detecting
+ * program has to find the peaks itself. A real PPG also carries a dicrotic notch
+ * after the systolic peak — a second, smaller bump — which this does not
+ * synthesise, so a naive detector will not meet the double-counting problem it
+ * would meet on a bench.
+ */
+export class PulseSensor implements BehaviouralDevice {
+  private disposed = false
+  /** Simulated cycle at which the current beat started. */
+  private beatStartCycle: number | null = null
+  private beats = 0
+  private volts = 0
+  private lastReport = ''
+
+  constructor(
+    readonly partId: string,
+    private ctx: BehaviouralContext,
+  ) {
+    ctx.drive('SIG', 'release')
+    ctx.cpu.addClockEvent(this.tick, cyclesFor(PULSE_SENSOR.UPDATE_MICROS))
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.ctx.cpu.clearClockEvent(this.tick)
+  }
+
+  /** Supply the board is running from, volts. */
+  private supplyVolts(): number {
+    return this.ctx.voltage('VCC') - this.ctx.voltage('GND')
+  }
+
+  /** Beat rate the props ask for, clamped to what the part is sold to measure. */
+  private bpm(): number {
+    const raw = numProp(this.ctx.props(), 'bpm', 72)
+    return Math.min(PULSE_SENSOR.MAX_BPM, Math.max(PULSE_SENSOR.MIN_BPM, raw))
+  }
+
+  /**
+   * Output voltage at a phase through the beat, volts.
+   *
+   * Exposed and pure so the test can evaluate it independently of the clock:
+   *
+   *   v(p) = Vs/2                                             for p >= S
+   *   v(p) = Vs/2 + A * (1 - cos(2*pi*p/S)) / 2               for p <  S
+   *
+   * which is 0 at p = 0, peaks at exactly A at p = S/2, and returns to 0 at
+   * p = S with zero slope at both ends — a Hann window, so the trace has no
+   * corner a differentiating detector would see as an edge.
+   */
+  waveformVolts(phase: number, supply: number, amplitude: number): number {
+    const base = supply * PULSE_SENSOR.BASELINE_FRACTION
+    const s = PULSE_SENSOR.SYSTOLIC_FRACTION
+    const p = phase - Math.floor(phase)
+    if (p >= s) return base
+    return base + amplitude * 0.5 * (1 - Math.cos((2 * Math.PI * p) / s))
+  }
+
+  private tick = (): void => {
+    if (this.disposed) return
+    this.poll()
+    this.ctx.cpu.addClockEvent(this.tick, cyclesFor(PULSE_SENSOR.UPDATE_MICROS))
+  }
+
+  poll(): void {
+    const supply = this.supplyVolts()
+    const powered =
+      supply >= PULSE_SENSOR.MIN_SUPPLY_VOLTS && supply <= PULSE_SENSOR.MAX_SUPPLY_VOLTS
+    if (!powered) {
+      this.ctx.drive('SIG', 'release')
+      this.beatStartCycle = null
+      this.volts = 0
+      this.publish(powered, 0)
+      return
+    }
+
+    const now = this.ctx.cpu.cycles
+    if (this.beatStartCycle === null) this.beatStartCycle = now
+    const bpm = this.bpm()
+    const periodCycles = (60 / bpm) * CLOCK_HZ
+    let phase = (now - this.beatStartCycle) / periodCycles
+    while (phase >= 1) {
+      this.beatStartCycle += periodCycles
+      phase -= 1
+      this.beats++
+    }
+
+    const pct = Math.max(
+      0,
+      numProp(this.ctx.props(), 'amplitude', PULSE_SENSOR.DEFAULT_AMPLITUDE_PERCENT),
+    )
+    const amplitude = (pct / 100) * supply
+    const raw = this.waveformVolts(phase, supply, amplitude)
+    const v = Math.round(raw / PULSE_SENSOR.STEP_VOLTS) * PULSE_SENSOR.STEP_VOLTS
+    this.volts = v
+    this.ctx.drive('SIG', 'high', v)
+    this.publish(powered, bpm)
+  }
+
+  refresh(): void {
+    const s = this.supplyVolts()
+    const powered = s >= PULSE_SENSOR.MIN_SUPPLY_VOLTS && s <= PULSE_SENSOR.MAX_SUPPLY_VOLTS
+    this.publish(powered, powered ? this.bpm() : 0)
+  }
+
+  private publish(powered: boolean, bpm: number): void {
+    const sig = `${powered ? 1 : 0}|${bpm}|${this.volts.toFixed(3)}|${this.beats}`
+    if (sig === this.lastReport) return
+    this.lastReport = sig
+    this.ctx.report({
+      powered,
+      bpm: powered ? bpm : 0,
+      /** What the amplifier is putting on the wire right now, volts. */
+      driveVolts: this.volts,
+      /** What the wire actually sits at once the load is accounted for. */
+      signalVolts: this.ctx.voltage('SIG'),
+      beats: this.beats,
+      /** Stated plainly so the UI can too: this is a generator, not optics. */
+      synthesised: true,
+    })
+  }
+}
+
+// ─── MCP3008 8-channel 10-bit SPI ADC ─────────────────────────────────────────
+
+/**
+ * MCP3008 datasheet figures (Microchip DS21295).
+ *
+ * The transfer function is the datasheet's own equation 4-2, and it is worth
+ * writing out because a 1024 where a 1023 belongs is the classic off-by-one in
+ * every home-made ADC model:
+ *
+ *   Digital Output Code = 1024 * VIN / VREF
+ *
+ * so a full-scale input produces 1024, which does not fit in ten bits and is
+ * clipped to 1023. The floor is the quantiser.
+ */
+export const MCP3008 = {
+  /** Resolution and the largest code that fits. */
+  BITS: 10,
+  MAX_CODE: 1023,
+  /** Scale factor in the datasheet's transfer function. */
+  FULL_SCALE: 1024,
+  /** Single-ended input channels. */
+  CHANNELS: 8,
+  /** "VDD = 2.7 V to 5.5 V". */
+  MIN_SUPPLY_VOLTS: 2.7,
+  MAX_SUPPLY_VOLTS: 5.5,
+  /** Digital input levels: VIH = 0.7 VDD, VIL = 0.3 VDD. */
+  VIH_FRACTION: 0.7,
+  VIL_FRACTION: 0.3,
+  /**
+   * Rising edges of CLK, counted from the START bit, at which each thing
+   * happens. Derived once here so the model and its test cannot disagree about
+   * the frame:
+   *
+   *   n = 0            the START bit (the first CLK with CS low and DIN high)
+   *   n = 1 .. 4       SGL/DIFF, D2, D1, D0 sampled on DIN
+   *   n = 5            the sample-and-hold closes; the conversion is committed
+   *   n = 6            the master reads the NULL bit
+   *   n = 7 .. 16      the master reads B9 .. B0
+   *   n = 17 ..        the master reads B1, B2, ... — the datasheet's LSB-first
+   *                    repeat, for a master that keeps clocking
+   *
+   * The device changes DOUT on the FALLING edge, so the bit the master reads at
+   * rising edge n was placed on the falling edge after rising edge n-1.
+   */
+  CONFIG_BITS: 4,
+  NULL_AT: 6,
+  FIRST_DATA_AT: 7,
+} as const
+
+/** Single-ended (SGL) or pseudo-differential (DIFF) — the SGL/DIFF config bit. */
+export type Mcp3008Mode = 'single' | 'differential'
+
+/**
+ * Convert an input voltage to the MCP3008's 10-bit code.
+ *
+ * ROUND, NOT TRUNCATE, and the difference is visible at exactly the value this
+ * experiment sits at. The datasheet prints two things that have to be read
+ * together: equation 4-2 gives the NOMINAL relation
+ *
+ *   Digital Output Code = 1024 * VIN / VREF
+ *
+ * and the transfer-function figure shows where the code actually CHANGES — the
+ * first transition is at half an LSB, so code k covers (k − 0.5) to (k + 0.5)
+ * LSBs and equation 4-2 describes the centre of each code, not its lower edge.
+ * Quantising with floor() puts every boundary half an LSB low; a pulse sensor
+ * resting at exactly Vref/2 then reads 511 instead of 512, which is the one
+ * number every Pulse Sensor sketch is written around. (It is also the more
+ * robust of the two numerically: floor() at an exact code boundary is decided
+ * by the last bit of a solved voltage.)
+ *
+ * Exported so the test can call it with hand-computed voltages instead of
+ * inferring it from a bus transaction, and so the UI can label a reading.
+ */
+export function mcp3008Code(volts: number, vref: number): number {
+  if (!(vref > 0)) return 0
+  const raw = Math.round((MCP3008.FULL_SCALE * volts) / vref)
+  return Math.min(MCP3008.MAX_CODE, Math.max(0, raw))
+}
+
+/**
+ * MCP3008 8-channel 10-bit SPI analogue-to-digital converter.
+ *
+ * WHY THIS PART IS HERE AT ALL. A Raspberry Pi has no analog input, so the
+ * published circuit for experiment 12 reads its pulse sensor through one of
+ * these over SPI. A Pico has three native ADCs and does not need it — so the
+ * part is electrically unnecessary on this board and is kept anyway, because
+ * the printed circuit the student is asked to build has it in it and building
+ * the printed circuit has to be possible.
+ *
+ * PROTOCOL, not a reading. This implements the real bus: CS framing, the START
+ * bit, the SGL/DIFF + D2 D1 D0 configuration word, the sample instant, the NULL
+ * bit and ten data bits MSB-first, then the datasheet's LSB-first repeat if the
+ * master keeps clocking. Mode 0,0 — DIN is sampled on the RISING edge of CLK
+ * and DOUT changes on the FALLING edge — which is what a `SoftSPI(polarity=0,
+ * phase=0)` produces. DOUT is genuinely high-impedance until the null bit and
+ * again as soon as CS rises, so two devices can share the bus.
+ *
+ * The three-byte transaction every Raspberry Pi tutorial uses,
+ *
+ *   xfer2([1, (8 + ch) << 4, 0])  ->  ((r[1] & 3) << 8) | r[2]
+ *
+ * falls out of that frame rather than being special-cased; see MCP3008.NULL_AT
+ * for the clock arithmetic that makes the answer land in those bits.
+ *
+ * HONEST LIMITATIONS:
+ *
+ *   - There is no conversion-rate limit. A real MCP3008 manages 200 ksps at
+ *     5 V and 75 ksps at 2.7 V, and clocking it faster than that returns
+ *     garbage; this model converts at whatever rate the master asks for.
+ *   - The 100 nA leakage, the input sample capacitor's 1 kOhm switch resistance
+ *     and therefore the source-impedance limit on the analog input are not
+ *     modelled: the converter reads the solved node voltage without loading it.
+ *   - Offset, gain and INL/DNL error are all zero. The only quantisation is the
+ *     datasheet's own transfer function.
+ */
+export class MCP3008Device implements BehaviouralDevice {
+  /** Hysteretic bus levels, as the device's own comparators see them. */
+  private csLow = false
+  private clkHigh = false
+  /** Rising edges since the START bit; -1 before the start bit arrives. */
+  private n = -1
+  /** Config bits collected after the start bit, in arrival order. */
+  private cfg: number[] = []
+  /** The committed conversion for the transaction in flight. */
+  private code = 0
+  private lastCode = 0
+  private lastChannel = 0
+  private lastMode: Mcp3008Mode = 'single'
+  private transactions = 0
+  private driving: 'low' | 'high' | 'release' = 'release'
+  private lastReport = ''
+
+  constructor(
+    readonly partId: string,
+    private ctx: BehaviouralContext,
+  ) {
+    ctx.drive('DOUT', 'release')
+  }
+
+  private supply(): number {
+    return this.ctx.voltage('VDD') - this.ctx.voltage('DGND')
+  }
+
+  private powered(): boolean {
+    const v = this.supply()
+    return v >= MCP3008.MIN_SUPPLY_VOLTS && v <= MCP3008.MAX_SUPPLY_VOLTS
+  }
+
+  /** Reference the converter measures against, volts. */
+  private vref(): number {
+    return this.ctx.voltage('VREF') - this.ctx.voltage('AGND')
+  }
+
+  /** One channel's input, referred to AGND as the datasheet specifies. */
+  private channelVolts(ch: number): number {
+    return this.ctx.voltage(`CH${ch & 7}`) - this.ctx.voltage('AGND')
+  }
+
+  /** Hysteretic read of a digital input against 0.3/0.7 VDD. */
+  private level(signal: string, was: boolean): boolean {
+    const vdd = this.supply()
+    const v = this.ctx.voltage(signal) - this.ctx.voltage('DGND')
+    return was ? v > vdd * MCP3008.VIL_FRACTION : v >= vdd * MCP3008.VIH_FRACTION
+  }
+
+  private set(level: 'low' | 'high' | 'release'): void {
+    if (this.driving === level) return
+    this.driving = level
+    this.ctx.drive('DOUT', level, this.supply())
+  }
+
+  /**
+   * What the converter samples when the configuration word completes.
+   *
+   * Single-ended is channel-to-AGND. Pseudo-differential pairs the channels
+   * (0,1), (2,3), (4,5), (6,7) and the low config bit picks which of the pair
+   * is IN+ — so D2 D1 D0 = 001 is CH0 as IN- and CH1 as IN+, which is why the
+   * pair is read from the same three bits as a single-ended channel.
+   */
+  private convert(mode: Mcp3008Mode, sel: number): number {
+    const vref = this.vref()
+    if (mode === 'single') return mcp3008Code(this.channelVolts(sel), vref)
+    const pair = sel & 0b110
+    const plus = sel & 1 ? pair + 1 : pair
+    const minus = sel & 1 ? pair : pair + 1
+    return mcp3008Code(this.channelVolts(plus) - this.channelVolts(minus), vref)
+  }
+
+  /** The bit the device places on DOUT after rising edge `n`, or null for hi-Z. */
+  private outputBit(n: number): number | null {
+    if (n < MCP3008.NULL_AT - 1) return null
+    if (n === MCP3008.NULL_AT - 1) return 0 // the NULL bit
+    const k = n - (MCP3008.NULL_AT - 1) // 1 => B9, 10 => B0
+    if (k <= MCP3008.BITS) return (this.code >> (MCP3008.BITS - k)) & 1
+    // Past B0 the datasheet repeats the result LSB-first: B1, B2, ... B9.
+    const j = k - MCP3008.BITS // 1 => B1
+    if (j <= MCP3008.BITS - 1) return (this.code >> j) & 1
+    return 0
+  }
+
+  private startFrame(): void {
+    this.n = -1
+    this.cfg = []
+    this.set('release')
+  }
+
+  private onClockRising(): void {
+    const din = this.level('DIN', false)
+    if (this.n < 0) {
+      // Leading zeros are ignored: the datasheet says the first clock with CS
+      // low and DIN high IS the start bit, which is what lets a master send a
+      // whole byte of 0x01 and have the frame begin on its eighth clock.
+      if (!din) return
+      this.n = 0
+      return
+    }
+    this.n++
+    if (this.n <= MCP3008.CONFIG_BITS) this.cfg.push(din ? 1 : 0)
+  }
+
+  private onClockFalling(): void {
+    if (this.n < 0) return
+    if (this.n === MCP3008.CONFIG_BITS) {
+      // The sample-and-hold closes here, one and a half clocks after the last
+      // configuration bit, and the conversion is committed against the input as
+      // it is AT THIS INSTANT. A pulse waveform that moves later in the frame
+      // does not change the answer already latched — which is what a real
+      // sample-and-hold does and is why a peak can be missed rather than
+      // smeared.
+      const mode: Mcp3008Mode = this.cfg[0] === 1 ? 'single' : 'differential'
+      const sel = ((this.cfg[1] ?? 0) << 2) | ((this.cfg[2] ?? 0) << 1) | (this.cfg[3] ?? 0)
+      this.code = this.convert(mode, sel)
+      this.lastCode = this.code
+      this.lastChannel = sel
+      this.lastMode = mode
+      this.transactions++
+    }
+    const bit = this.outputBit(this.n)
+    this.set(bit === null ? 'release' : bit ? 'high' : 'low')
+  }
+
+  poll(): void {
+    if (!this.powered()) {
+      this.set('release')
+      this.csLow = false
+      this.clkHigh = false
+      this.n = -1
+      this.publish()
+      return
+    }
+
+    const csLow = !this.level('CS', !this.csLow)
+    if (csLow !== this.csLow) {
+      this.csLow = csLow
+      if (csLow) {
+        this.startFrame()
+        // CS falling defines the clock reference, so a CLK left high by the
+        // previous frame must not be mistaken for an edge inside this one.
+        this.clkHigh = this.level('CLK', false)
+      } else {
+        // CS high releases DOUT — the whole reason several devices can share
+        // one MISO line.
+        this.set('release')
+        this.n = -1
+      }
+    }
+
+    if (this.csLow) {
+      const clkHigh = this.level('CLK', this.clkHigh)
+      if (clkHigh !== this.clkHigh) {
+        this.clkHigh = clkHigh
+        if (clkHigh) this.onClockRising()
+        else this.onClockFalling()
+      }
+    }
+    this.publish()
+  }
+
+  refresh(): void {
+    this.publish()
+  }
+
+  private publish(): void {
+    const powered = this.powered()
+    const vref = this.vref()
+    const sig = `${powered ? 1 : 0}|${this.lastCode}|${this.lastChannel}|${this.lastMode}|${vref.toFixed(3)}|${this.transactions}`
+    if (sig === this.lastReport) return
+    this.lastReport = sig
+    this.ctx.report({
+      powered,
+      /** Last conversion, in counts. */
+      code: this.lastCode,
+      /** …and what that code means, in volts. */
+      volts: (this.lastCode * vref) / MCP3008.FULL_SCALE,
+      channel: this.lastChannel,
+      mode: this.lastMode,
+      vref,
+      conversions: this.transactions,
     })
   }
 }

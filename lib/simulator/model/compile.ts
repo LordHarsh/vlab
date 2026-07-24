@@ -13,6 +13,7 @@ import {
   DIODE_1N4148,
   Inductor,
   NortonPort,
+  RELAY_MODULE_4CH,
   Resistor,
   STEPPER_28BYJ48,
   ULN2003,
@@ -20,6 +21,7 @@ import {
   VoltageSource,
   createL298N,
   createLED,
+  createRelayModule,
   createULN2003,
   type Diode,
 } from '../devices'
@@ -446,6 +448,93 @@ export function compile(doc: CircuitDoc): CompileResult {
           'when a phase switches off — a real 28BYJ-48 starts losing steps long before this ' +
           'model would.',
       )
+    } else if (el.kind === 'relay_module') {
+      /**
+       * A relay board, built one channel at a time.
+       *
+       * Everything on it returns to its OWN GND pin, never net 0 — the opto
+       * LEDs' series resistors and the coil drivers' emitters alike — for the
+       * same reason the ULN2003's do. An unwired GND therefore leaves the whole
+       * board on a floating island doing nothing, which is what a bench does.
+       *
+       * A CHANNEL IS ONLY BUILT WHEN SOMETHING IS ATTACHED TO IT. Each one costs
+       * two internal nodes (the opto junction and the coil's low side) plus two
+       * diodes for Newton to chew on, and a board sitting in the component tray
+       * with nothing wired would otherwise spend eight unknowns proving that
+       * four unconnected relays are off. "Attached" is topological, not a wire
+       * count: a pin is attached when its net carries at least one OTHER
+       * component pin, so a jumper into a dead breadboard column still counts as
+       * unattached — which is also exactly what it is.
+       *
+       * The contact terminals count too, not just IN. A de-energised relay has
+       * COM sitting on NC, so a load wired through COM/NC is POWERED with no
+       * input signal at all; building the channel only when IN is wired would
+       * turn that real (and commonly surprising) behaviour into an open circuit.
+       */
+      const gnd = net({ partId: part.id, pinId: 'GND' })
+      const vcc = net({ partId: part.id, pinId: 'VCC' })
+      if (gnd === undefined || vcc === undefined) continue
+
+      const joined = (pinId: string): boolean =>
+        (componentPins.get(dsu.find(pinKeyOf({ partId: part.id, pinId }))) ?? 0) >= 2
+
+      const ins: Array<NetId | undefined> = []
+      const coms: Array<NetId | undefined> = []
+      const nos: Array<NetId | undefined> = []
+      const ncs: Array<NetId | undefined> = []
+      const internal: Array<[NetId, NetId] | undefined> = []
+      const relayNets: Record<string, NetId> = {}
+      for (const pin of def.pins) {
+        const n = net({ partId: part.id, pinId: pin.id })
+        if (n !== undefined) relayNets[pin.id] = n
+      }
+
+      for (let k = 1; k <= el.channels; k++) {
+        ins.push(net({ partId: part.id, pinId: `IN${k}` }))
+        coms.push(net({ partId: part.id, pinId: `COM${k}` }))
+        nos.push(net({ partId: part.id, pinId: `NO${k}` }))
+        ncs.push(net({ partId: part.id, pinId: `NC${k}` }))
+        const used =
+          joined(`IN${k}`) || joined(`COM${k}`) || joined(`NO${k}`) || joined(`NC${k}`)
+        if (!used) {
+          internal.push(undefined)
+          continue
+        }
+        const optoJunction = circuit.allocNet()
+        const coilNode = circuit.allocNet()
+        internal.push([optoJunction, coilNode])
+        // The coil node is not a pin, so the behavioural monitor could never
+        // see it — and it is the one node that says unambiguously whether the
+        // armature has pulled in. Handing it over under a synthetic key is the
+        // same move compile() makes when it gives a sensor its VCC net.
+        relayNets[`_coil${k}`] = coilNode
+        relayNets[`_opto${k}`] = optoJunction
+      }
+
+      const activeLow = Number(part.props.activeLow ?? 1) >= 0.5
+      const { devices } = createRelayModule(
+        part.id,
+        { vcc, gnd, in: ins, com: coms, no: nos, nc: ncs, internal },
+        activeLow,
+        RELAY_MODULE_4CH,
+      )
+      if (devices.length > 0) {
+        circuit.add(...devices)
+        limitations.push(
+          'The relay is solved at a DC operating point: the contact is where the coil current ' +
+            'says it should be. Coil inductance is not modelled, so there is no 5–10 ms pull-in ' +
+            'delay, no contact bounce, and the flyback diode is never seen absorbing the ' +
+            'inductive kick it is there for — all of which need transient simulation.',
+        )
+      }
+      /**
+       * A MONITOR, with `ports: {}`. The board never drives one of its own
+       * nets; it watches its coil nodes and reports which way each contact has
+       * thrown, exactly as StepperMonitor watches coil voltages. Pushed even
+       * when no channel was built, so an unpowered or unwired board says so
+       * rather than vanishing from the readout.
+       */
+      behavioural.push({ partId: part.id, protocol: 'relay', nets: relayNets, ports: {} })
     } else if (el.kind === 'sensor') {
       // Every pin that reached a real net, so the model can read its own supply
       // as well as its signal lines.
@@ -645,14 +734,21 @@ export function compile(doc: CircuitDoc): CompileResult {
         // a dead-end leg is not reported per-pin. A pot wired to NOTHING still
         // gets the whole-part message below via liveCount === 0.
         continue
-      } else if (kind === 'darlington_array' || kind === 'h_bridge') {
+      } else if (
+        kind === 'darlington_array' ||
+        kind === 'h_bridge' ||
+        kind === 'relay_module' ||
+        (kind === 'sensor' && def.electrical.kind === 'sensor' && def.electrical.protocol === 'mcp3008')
+      ) {
         /**
          * A multi-channel driver IC legitimately leaves channels unused, and the
          * experiments that ship these do exactly that: a 28BYJ-48 needs four of a
-         * ULN2003's seven sinks, and one DC motor uses one of an L298N's two
-         * bridges. Reporting each spare pin as a dangling lead would put eleven
-         * "wired to nothing" notices on a CORRECTLY built exp 9 — noise that
-         * would train a student to ignore the Checks panel.
+         * ULN2003's seven sinks, one DC motor uses one of an L298N's two
+         * bridges, a four-channel relay board switching one lamp uses one
+         * contact set of four, and an MCP3008 reading one pulse sensor uses one
+         * of eight analog inputs. Reporting each spare pin as a dangling lead
+         * would put eleven "wired to nothing" notices on a CORRECTLY built exp 9
+         * — noise that would train a student to ignore the Checks panel.
          *
          * So the same rule the MCU header gets, for the same reason: a pin the
          * student never touched is unused, not broken. A pin they DID wire and

@@ -10,7 +10,7 @@
  * to that grid.
  */
 
-import { UNO_RENAME, wokwiGeometry } from './wokwi'
+import { MEGA_RENAME, UNO_RENAME, wokwiGeometry } from './wokwi'
 
 export const PITCH = 10
 
@@ -19,13 +19,20 @@ export type PinType = 'power' | 'gnd' | 'digital' | 'analog' | 'passive'
 /**
  * Every MCU board the simulator can run.
  *
- * Two entries, and deliberately a closed union rather than a plugin registry:
- * the two tracks run different emulators (`avr8js` vs `rp2040js`) and different
- * toolchains (a precompiled .hex vs MicroPython typed into a REPL), so a third
- * board is a real piece of work and not a data row. See model/boards.ts for the
- * per-board profile the engine selection reads.
+ * A closed union rather than a plugin registry, deliberately: the TRACKS run
+ * different emulators (`avr8js` vs `rp2040js`) and different toolchains (a
+ * precompiled .hex vs MicroPython typed into a REPL), so adding a track is a
+ * real piece of work and not a data row. See model/boards.ts for the per-board
+ * profile the engine selection reads.
+ *
+ * The Mega is the case that shows where the line actually falls. It shares the
+ * Uno's track — same emulator, same instruction decoder, same PinBridge — so it
+ * needed no new worker and no new firmware pipeline; what it needed was an
+ * ATmega2560 peripheral map, because every interrupt vector avr8js ships is an
+ * ATmega328P's. That map is data (lib/simulator/avr/atmega2560.ts), which is
+ * why this union grew by one entry instead of the engine growing a plugin API.
  */
-export type BoardType = 'arduino_uno' | 'raspberry_pi_pico'
+export type BoardType = 'arduino_uno' | 'arduino_mega' | 'raspberry_pi_pico'
 
 export interface PinGeometry {
   id: string
@@ -89,9 +96,17 @@ export interface PartDefinition {
      */
     | {
         kind: 'sensor'
-        protocol: 'dht11' | 'hc_sr04' | 'pir' | 'flow' | 'ds18b20'
+        protocol: 'dht11' | 'hc_sr04' | 'pir' | 'flow' | 'ds18b20' | 'pulse' | 'mcp3008'
         drives: string[]
       }
+    /**
+     * A bank of opto-isolated relay channels. Each one is an opto-coupler LED
+     * behind a series resistor, a coil with its flyback diode, and an SPDT
+     * contact — see RelayModuleParams in devices.ts, and note that these boards
+     * are ACTIVE LOW, which the `activeLow` prop can change because high-trigger
+     * variants exist.
+     */
+    | { kind: 'relay_module'; channels: number }
     /**
      * A bank of open-collector Darlington sinks (a ULN2003). Each channel is a
      * logic input and an output that either pulls DOWN or is not there at all —
@@ -131,9 +146,30 @@ export interface PartDefinition {
     min?: number
     max?: number
     step?: number
+    /**
+     * The value the part has when the document carries none for this key.
+     *
+     * NOT decoration, and not optional in practice — see checkPropDefaults() at
+     * the foot of this file. It has to equal whatever the ENGINE falls back to
+     * for the same missing prop, because the inspector reads this and the
+     * simulation reads that: `resistor.ohms` declared no default for months, so
+     * the inspector fell through to `options[0]` — 0 Ω, "none (wire)" — over a
+     * resistor compile.ts was solving at 220 Ω. The panel and the physics
+     * disagreed and nothing said so.
+     */
     default?: number
   }>
 }
+
+/**
+ * The resistance a resistor has when its document carries no `ohms`.
+ *
+ * ONE constant feeding BOTH readers — `electrical.defaultOhms`, which compile.ts
+ * resolves at `part.props.ohms ?? el.defaultOhms`, and the prop's `default`,
+ * which the inspector shows. They cannot drift apart because there is only one
+ * of them.
+ */
+export const RESISTOR_DEFAULT_OHMS = 220
 
 // ─── Breadboard ───────────────────────────────────────────────────────────────
 
@@ -195,6 +231,47 @@ function makeBreadboard(): PartDefinition {
       <rect x="0" y="76" width="${15 + BB_COLS * PITCH + 10}" height="8" fill="#e8e5e0"/>
       ${holes}
     `,
+  }
+}
+
+// ─── Arduino Mega 2560 ────────────────────────────────────────────────────────
+
+/**
+ * Arduino Mega 2560 Rev3.
+ *
+ * Same track as the Uno — avr8js running a compiled .hex — and the same 5 V
+ * logic rail, so nothing downstream of `logicVolts` moves. What moves is inside
+ * the chip: 54 digital pins across eleven ports instead of 20 across three, 16
+ * ADC channels instead of 6, and a completely different interrupt vector table.
+ * See lib/simulator/avr/atmega2560.ts.
+ *
+ * PINS OMITTED, and why: SCL and SDA on the top header are the same silicon as
+ * D21 and D20, exactly as the Uno's A5.2/A4.2 duplicate A5/A4. Exposing them
+ * would let a student wire to "another pin" that is electrically identical, and
+ * would give that wire a net the sketch's digitalWrite(21, …) also drives.
+ *
+ * PINS BUSSED: every GND pad is one piece of copper, and so are the three 5 V
+ * pads — `5V` on the bottom power header plus `5V.1`/`5V.2` at the top of the
+ * right-hand double row. Bussing the 5 V pads costs one node and one branch row
+ * even in a circuit that never touches the rail (compile() treats a net with two
+ * or more component pins as live), which is a real price; the alternative is a
+ * student wiring to 5V.1 and getting no supply at all, from a hole that is
+ * bolted to the same trace on the board in front of them.
+ */
+function makeMega(): PartDefinition {
+  return {
+    type: 'arduino_mega',
+    label: 'Arduino Mega 2560',
+    electrical: { kind: 'mcu', board: 'arduino_mega', logicVolts: 5 },
+    buses: [
+      ['GND.1', 'GND.2', 'GND.3', 'GND.4', 'GND.5'],
+      ['5V', '5V.1', '5V.2'],
+    ],
+    ...wokwiGeometry('arduino-mega', {
+      rename: MEGA_RENAME,
+      omit: ['SCL', 'SDA'],
+      subtle: ['AREF', 'IOREF', 'RESET', 'VIN'],
+    }),
   }
 }
 
@@ -350,7 +427,7 @@ function makePico(): PartDefinition {
 const resistor: PartDefinition = {
   type: 'resistor',
   label: 'Resistor',
-  electrical: { kind: 'resistor', defaultOhms: 220 },
+  electrical: { kind: 'resistor', defaultOhms: RESISTOR_DEFAULT_OHMS },
   props: [
     {
       key: 'ohms',
@@ -358,6 +435,7 @@ const resistor: PartDefinition = {
       type: 'select',
       unit: 'Ω',
       options: [0, 100, 220, 330, 470, 1000, 2200, 4700, 10000, 100000],
+      default: RESISTOR_DEFAULT_OHMS,
     },
   ],
   ...wokwiGeometry('resistor'),
@@ -891,6 +969,250 @@ function makeStepper28BYJ48(): PartDefinition {
   }
 }
 
+/**
+ * The common 4-channel opto-isolated relay board.
+ *
+ * HAND-DRAWN. wokwi-art.generated.json carries no relay of any kind (its parts
+ * are resistor, led, pushbutton, potentiometer, buzzer, photoresistor, ntc,
+ * hc-sr04, pir, dht22, servo, 7segment, rgb-led, slide-switch, stepper-motor,
+ * led-bar-graph, tilt-switch and arduino-uno), so there is nothing to reuse.
+ *
+ * PINOUT is the board's own. The six-way logic header carries VCC, IN1…IN4 and
+ * GND; each channel's screw terminal carries NO, COM and NC in that order, which
+ * is the order silkscreened on the block. Getting NO and NC the right way round
+ * matters more here than on most parts: a load on NC is powered when the relay
+ * is IDLE, and a student who wires the "off" terminal gets an appliance that is
+ * on until the program turns it off.
+ *
+ * GND is `passive`, not `gnd` — see GND_IS_A_REAL_WIRE. The opto LEDs' return,
+ * the coil driver's emitter and the module's whole supply reference are this
+ * pin, so an unwired ground gives a board that does nothing, which is what a
+ * bench does.
+ *
+ * VCC is where the coil's power comes from and it is 5 V. On a Pico that means
+ * the VBUS pad, not the 3.3 V logic rail — and the model will not pull the
+ * armature in below the relay's 3.75 V pick-up voltage, so wiring it to 3V3
+ * produces a board that clicks its opto and never its contact.
+ */
+const RELAY_CHANNELS = 4
+
+function makeRelayModule(): PartDefinition {
+  const W = 220
+  const H = 120
+  const pins: PinGeometry[] = []
+
+  // Screw terminals along the top: NO / COM / NC per channel.
+  for (let k = 1; k <= RELAY_CHANNELS; k++) {
+    const x0 = 20 + (k - 1) * 50
+    pins.push({ id: `NO${k}`, name: `NO${k}`, x: x0, y: 15, type: 'passive' })
+    pins.push({ id: `COM${k}`, name: `COM${k}`, x: x0 + 15, y: 15, type: 'passive' })
+    pins.push({ id: `NC${k}`, name: `NC${k}`, x: x0 + 30, y: 15, type: 'passive' })
+  }
+
+  // Six-way logic header along the bottom.
+  const header: Array<[string, string, PinType]> = [
+    ['VCC', 'VCC', 'power'],
+    ['IN1', 'IN1', 'digital'],
+    ['IN2', 'IN2', 'digital'],
+    ['IN3', 'IN3', 'digital'],
+    ['IN4', 'IN4', 'digital'],
+    ['GND', 'GND', 'passive'],
+  ]
+  header.forEach(([id, name, type], i) => {
+    pins.push({ id, name, x: 60 + i * PITCH, y: H - 10, type })
+  })
+
+  const terminals = pins
+    .filter((p) => p.y === 15)
+    .map(
+      (p) =>
+        `<rect x="${p.x - 6}" y="${p.y - 7}" width="12" height="14" rx="2" ` +
+        `fill="#1f4d8f" stroke="#12305c"/><circle cx="${p.x}" cy="${p.y}" r="3" fill="#d8d8d8"/>`,
+    )
+    .join('')
+  const headerPads = pins
+    .filter((p) => p.y === H - 10)
+    .map(
+      (p) =>
+        `<rect x="${p.x - 3}" y="${p.y - 4}" width="6" height="8" rx="1" ` +
+        `fill="#c9a227" stroke="#8a6d14" stroke-width="0.5"/>`,
+    )
+    .join('')
+  // The four relay cans, and the four channel LEDs beside them.
+  const cans = [0, 1, 2, 3]
+    .map(
+      (k) =>
+        `<rect x="${22 + k * 50}" y="${34}" width="40" height="34" rx="2" fill="#1f4d8f" stroke="#12305c"/>` +
+        `<text x="${42 + k * 50}" y="${55}" font-size="7" text-anchor="middle" fill="#dbe7f7" font-family="monospace">SRD</text>` +
+        `<circle cx="${42 + k * 50}" cy="${80}" r="4" fill="#7f1d1d" stroke="#4a1010"/>`,
+    )
+    .join('')
+
+  return {
+    type: 'relay_4ch',
+    label: '4-channel relay module',
+    width: W,
+    height: H,
+    pins,
+    electrical: { kind: 'relay_module', channels: RELAY_CHANNELS },
+    props: [
+      // 0/1 rather than a text dropdown, matching the buzzer's `passive` and the
+      // push button's `pressed`. 1 (active low) is the common board.
+      {
+        key: 'activeLow',
+        label: 'Active-low trigger',
+        type: 'range',
+        min: 0,
+        max: 1,
+        step: 1,
+        default: 1,
+      },
+    ],
+    svg: `
+      <rect x="0" y="0" width="${W}" height="${H}" rx="4" fill="#1d4ed8" stroke="#14357f"/>
+      <rect x="6" y="6" width="${W - 12}" height="${H - 12}" rx="3" fill="#1e40af" stroke="none"/>
+      ${cans}
+      <text x="${W / 2}" y="${H - 22}" font-size="7" text-anchor="middle" fill="#cbd5e1" font-family="monospace">4-CH RELAY (opto)</text>
+      ${terminals}
+      ${headerPads}
+    `,
+  }
+}
+
+/**
+ * SEN-11574 pulse sensor — the small round PPG board with three flying leads.
+ *
+ * HAND-DRAWN; there is no wokwi element for it.
+ *
+ * The three leads are colour-coded on the real part and the names carry the
+ * colours, because that is all a student can see: red is VCC (3–5 V), purple is
+ * the analog signal, black is ground. The signal is genuinely ANALOG — it rests
+ * at half the supply and the pulse rides on it — which is why the published
+ * circuit needs an MCP3008 in front of a Raspberry Pi at all.
+ */
+const pulseSensor: PartDefinition = {
+  type: 'pulse_sensor',
+  label: 'Pulse sensor (SEN-11574)',
+  width: 40,
+  height: 52,
+  pins: [
+    { id: 'VCC', name: 'VCC (red)', x: 10, y: 52, type: 'power' },
+    { id: 'SIG', name: 'S (purple)', x: 20, y: 52, type: 'analog' },
+    { id: 'GND', name: 'GND (black)', x: 30, y: 52, type: 'passive' },
+  ],
+  electrical: { kind: 'sensor', protocol: 'pulse', drives: ['SIG'] },
+  props: [
+    {
+      key: 'bpm',
+      label: 'Heart rate',
+      type: 'range',
+      // The band the experiment's own thresholds sit inside (60–100 normal),
+      // with bradycardia and tachycardia both reachable so the alert logic can
+      // be exercised.
+      min: 30,
+      max: 200,
+      step: 1,
+      unit: ' BPM',
+      default: 72,
+    },
+    {
+      key: 'amplitude',
+      label: 'Signal strength',
+      type: 'range',
+      // Percent of the supply. A poorly placed finger really does drop the
+      // swing to a couple of percent, at which point a fixed threshold stops
+      // detecting beats — which is a lesson, not a bug.
+      min: 0,
+      max: 20,
+      step: 1,
+      unit: '%',
+      default: 8,
+    },
+  ],
+  svg: `
+    <circle cx="20" cy="20" r="18" fill="#1b1b1b" stroke="#000"/>
+    <circle cx="20" cy="20" r="12" fill="#0f172a"/>
+    <circle cx="15" cy="20" r="4" fill="#166534"/>
+    <rect x="23" y="16" width="6" height="8" rx="1" fill="#334155"/>
+    <path d="M6 30 l4 0 l2 -6 l3 12 l3 -8 l2 2 l4 0" fill="none" stroke="#e879f9" stroke-width="1.2"/>
+    <line x1="10" y1="52" x2="10" y2="38" stroke="#e04a4a" stroke-width="2"/>
+    <line x1="20" y1="52" x2="20" y2="38" stroke="#a855f7" stroke-width="2"/>
+    <line x1="30" y1="52" x2="30" y2="38" stroke="#111827" stroke-width="2"/>
+  `,
+}
+
+/**
+ * MCP3008, as the 16-pin PDIP.
+ *
+ * HAND-DRAWN, and the pin NUMBERING is the real part's, walked the way a DIP is
+ * walked: pin 1 at the top left, down the left side to pin 8, then across to
+ * pin 9 at the bottom right and back UP to pin 16. So CH0…CH7 are the left
+ * column, DGND is pin 9 at the bottom right, and CS/DIN/DOUT/CLK/AGND/VREF/VDD
+ * run bottom to top on the right — which is why VDD sits opposite CH0.
+ *
+ * The two grounds are separate pins on the real part and are kept separate
+ * here: AGND (pin 14) is the reference the conversion is measured against and
+ * DGND (pin 9) is the logic return. A real board ties them together; leaving
+ * that to the student is the same choice every other part makes about ground.
+ */
+function makeMCP3008(): PartDefinition {
+  const W = 100
+  const H = 100
+  const leftX = 10
+  const rightX = 90
+  const topY = 15
+  const pins: PinGeometry[] = []
+
+  for (let k = 0; k < 8; k++) {
+    pins.push({ id: `CH${k}`, name: `CH${k}`, x: leftX, y: topY + k * PITCH, type: 'analog' })
+  }
+  // Pins 9 → 16, bottom to top on the right edge.
+  const right: Array<[string, string, PinType]> = [
+    ['DGND', 'DGND', 'passive'],
+    ['CS', 'CS/SHDN', 'digital'],
+    ['DIN', 'DIN', 'digital'],
+    ['DOUT', 'DOUT', 'digital'],
+    ['CLK', 'CLK', 'digital'],
+    ['AGND', 'AGND', 'passive'],
+    ['VREF', 'VREF', 'power'],
+    ['VDD', 'VDD', 'power'],
+  ]
+  right.forEach(([id, name, type], i) => {
+    pins.push({ id, name, x: rightX, y: topY + (7 - i) * PITCH, type })
+  })
+
+  const pads = pins
+    .map(
+      (p) =>
+        `<rect x="${p.x - 3}" y="${p.y - 3}" width="6" height="6" rx="1" ` +
+        `fill="#c9c9c9" stroke="#8a8a8a" stroke-width="0.5"/>`,
+    )
+    .join('')
+
+  return {
+    type: 'mcp3008',
+    label: 'MCP3008 SPI ADC',
+    width: W,
+    height: H,
+    pins,
+    electrical: {
+      kind: 'sensor',
+      protocol: 'mcp3008',
+      // DOUT is the only pin the part ever drives, and it is high-impedance
+      // whenever CS is high — which is what lets it share a MISO line.
+      drives: ['DOUT'],
+    },
+    svg: `
+      <rect x="18" y="6" width="64" height="88" rx="3" fill="#1f1f1f" stroke="#000"/>
+      <path d="M42 6 a8 8 0 0 0 16 0" fill="#111"/>
+      <circle cx="27" cy="17" r="3" fill="#3a3a3a"/>
+      <text x="50" y="46" font-size="8" text-anchor="middle" fill="#c9c9c9" font-family="monospace">MCP</text>
+      <text x="50" y="58" font-size="8" text-anchor="middle" fill="#c9c9c9" font-family="monospace">3008</text>
+      ${pads}
+    `,
+  }
+}
+
 // ─── Reactive parts — present, but honest about what they do ──────────────────
 
 const capacitor: PartDefinition = {
@@ -904,8 +1226,13 @@ const capacitor: PartDefinition = {
   ],
   electrical: { kind: 'reactive', element: 'capacitor' },
   props: [
+    // 1 µF because that is what compile.ts falls back to for a capacitor with
+    // no `microfarads` (`Number(part.props.microfarads ?? 1)`). Same trap as the
+    // resistor's, one line earlier in the same file — the inspector used to show
+    // options[0], which happens to be 1 here, so it was right by accident.
+    // Declared now so it is right on purpose.
     { key: 'microfarads', label: 'Capacitance', type: 'select', unit: 'uF',
-      options: [1, 10, 47, 100, 220, 470] },
+      options: [1, 10, 47, 100, 220, 470], default: 1 },
   ],
   svg: `
     <line x1="0" y1="15" x2="16" y2="15" stroke="#9a9a9a" stroke-width="2"/>
@@ -919,6 +1246,7 @@ const capacitor: PartDefinition = {
 
 export const PART_LIBRARY: Record<string, PartDefinition> = {
   arduino_uno: makeUno(),
+  arduino_mega: makeMega(),
   raspberry_pi_pico: makePico(),
   breadboard: makeBreadboard(),
   resistor,
@@ -937,12 +1265,16 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   l298n: makeL298N(),
   uln2003: makeULN2003(),
   stepper_28byj48: makeStepper28BYJ48(),
+  relay_4ch: makeRelayModule(),
+  pulse_sensor: pulseSensor,
+  mcp3008: makeMCP3008(),
   capacitor,
 }
 
 /** Palette order. Breadboard and board first — students place those first too. */
 export const PALETTE: string[] = [
   'arduino_uno',
+  'arduino_mega',
   'raspberry_pi_pico',
   'breadboard',
   'resistor',
@@ -959,11 +1291,18 @@ export const PALETTE: string[] = [
   'l298n',
   'uln2003',
   'stepper_28byj48',
+  // A relay board is the other way a small board switches something bigger, so
+  // it sits with the driver stages rather than with the sensors.
+  'relay_4ch',
   'dht11',
   'ds18b20',
   'hc_sr04',
   'pir_motion',
   'flow_sensor',
+  // The pulse sensor is analog-out, so it travels with the converter that a
+  // board without an ADC needs in order to read it.
+  'pulse_sensor',
+  'mcp3008',
   'capacitor',
 ]
 
@@ -971,4 +1310,56 @@ export function getPart(type: string): PartDefinition {
   const def = PART_LIBRARY[type]
   if (!def) throw new Error(`Unknown part type: ${type}`)
   return def
+}
+
+// ─── Declaration self-check ───────────────────────────────────────────────────
+
+/**
+ * Every declared prop that cannot be rendered honestly, as human-readable lines.
+ *
+ * Two failures, both of which have actually happened:
+ *
+ *  1. NO `default`. The inspector then has nothing to show for a part whose
+ *     document carries no value for the key — an authored starter, a restored
+ *     attempt, a `loadInto`. It used to fall through to `options[0]`, which for
+ *     a resistor is 0 Ω, "none (wire)", while compile.ts solved the same part at
+ *     220 Ω. A panel that disagrees with the physics is worse than no panel.
+ *  2. A `select` whose `default` is not one of its `options`. A <select> handed
+ *     a value with no matching <option> renders BLANK — so the control would
+ *     show nothing at all while the simulation used the declared value.
+ *
+ * Exported so it can be asserted in a test, and also run once at module load
+ * below, because a part declared wrongly should not have to wait for someone to
+ * write a test before it says so.
+ */
+export function propDeclarationProblems(): string[] {
+  const out: string[] = []
+  for (const [type, def] of Object.entries(PART_LIBRARY)) {
+    for (const prop of def.props ?? []) {
+      if (prop.default === undefined) {
+        out.push(
+          `${type}.${prop.key} declares no \`default\`, so the inspector cannot show ` +
+            `what the engine will use for a part that carries no value for it.`,
+        )
+        continue
+      }
+      if (prop.type === 'select' && !(prop.options ?? []).includes(prop.default)) {
+        out.push(
+          `${type}.${prop.key} has default ${prop.default}, which is not in its options ` +
+            `[${(prop.options ?? []).join(', ')}] — the <select> would render blank.`,
+        )
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Non-throwing on purpose. This is a wiring bug in a part declaration, not a
+ * reason to take a student's editor down mid-lab — but it is loud, named and
+ * unmissable in the console the moment the module loads.
+ */
+const PROP_PROBLEMS = propDeclarationProblems()
+if (PROP_PROBLEMS.length > 0) {
+  console.error('[parts] prop declaration problems:\n  ' + PROP_PROBLEMS.join('\n  '))
 }

@@ -1,9 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Minimize2 } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
+import { Code2, Minimize2 } from 'lucide-react'
 import { CircuitCanvas } from './CircuitCanvas'
+import { CodePanel, CodePanelResizer } from './CodePanel'
 import { useFullscreenGate } from './FullscreenGate'
+import { detectBoard } from '@/lib/simulator/model/boards'
+import { EMPTY_CODE, readCodeFile, writeCodeFile } from '@/lib/simulator/model/code'
 import { compile } from '@/lib/simulator/model/compile'
 import { PALETTE, PART_LIBRARY, getPart, type PartDefinition } from '@/lib/simulator/model/parts'
 import type { DeviceState } from '@/lib/simulator/behavioural'
@@ -429,6 +440,73 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
         (s.converting === true ? ' · converting…' : '')
       return { headline: `${num('celsius').toFixed(4)} °C`, detail }
     }
+
+    if (el.protocol === 'pulse') {
+      if (s.powered !== true) {
+        return { headline: 'no power', detail: 'VCC is not on a 3–5 V rail — the amplifier is dead' }
+      }
+      // "synthesised" is said out loud on every reading, not buried in a
+      // docstring. This part generates a waveform; it does not model optics,
+      // and a heart rate read off it came from a slider.
+      return {
+        headline: `${Math.round(num('bpm'))} BPM`,
+        detail:
+          `${num('signalVolts').toFixed(3)} V on the wire · ${Math.round(num('beats'))} beats · ` +
+          `synthesised waveform, not a real PPG`,
+      }
+    }
+
+    if (el.protocol === 'mcp3008') {
+      if (s.powered !== true) {
+        return { headline: 'no power', detail: 'VDD is not on a 2.7–5.5 V rail — the converter cannot answer' }
+      }
+      const vref = num('vref')
+      if (!(vref > 0)) {
+        return {
+          headline: 'no reference',
+          detail: 'VREF is not on a rail — every conversion reads 0 without one',
+        }
+      }
+      const conversions = Math.round(num('conversions'))
+      if (conversions === 0) {
+        return { headline: 'idle', detail: `VREF ${vref.toFixed(2)} V · nothing has clocked the bus yet` }
+      }
+      return {
+        headline: `CH${Math.round(num('channel'))} = ${Math.round(num('code'))}`,
+        detail:
+          `${num('volts').toFixed(3)} V of ${vref.toFixed(2)} V VREF · ${String(s.mode ?? 'single')}-ended · ` +
+          `${conversions} conversion${conversions === 1 ? '' : 's'}`,
+      }
+    }
+  }
+
+  if (el.kind === 'relay_module') {
+    if (s.powered !== true) {
+      return {
+        headline: 'no power',
+        detail: 'VCC is not on a live rail — the coils cannot be energised',
+      }
+    }
+    const supply = num('supplyVolts')
+    const trigger = s.activeLow === true ? 'active-low' : 'active-high'
+    const detail =
+      `${supply.toFixed(2)} V supply · ${trigger} · contacts ${String(s.contacts ?? '')} · ` +
+      `${(num('coilAmps') * 1000).toFixed(0)} mA in the coils`
+    // The trap this part exists to expose: a 5 V board on a 3.3 V rail lights
+    // its opto-couplers and never moves an armature.
+    if (s.underVolted === true) {
+      return {
+        headline: 'coils under-volted',
+        detail:
+          `${supply.toFixed(2)} V is below the 3.75 V an SRD-05VDC coil is guaranteed to pull in at — ` +
+          `the opto switches but the contact does not. Feed VCC from 5 V.`,
+      }
+    }
+    const on = Math.round(num('energised'))
+    return {
+      headline: on === 0 ? 'all released' : `${on} of ${Math.round(num('channels'))} energised`,
+      detail: `${String(s.pattern ?? '')} · ${detail}`,
+    }
   }
 
   if (el.kind === 'stepper') {
@@ -453,7 +531,7 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
 }
 
 /** Part kinds that publish reported state into the snapshot. */
-const REPORTS_STATE = new Set(['buzzer', 'motor', 'sensor', 'stepper'])
+const REPORTS_STATE = new Set(['buzzer', 'motor', 'sensor', 'stepper', 'relay_module'])
 
 /**
  * How far the Pico has got with the student's script, in words.
@@ -487,9 +565,13 @@ export function CircuitEditor({
    * where that shows up in the UI. The AVR track has a compile step, so the
    * editor picks a prebuilt .hex; the Pico track has none — one MicroPython image
    * serves every experiment and the student's .py is typed into the emulated USB
-   * REPL at runtime. There is no in-browser Python editor yet, so the script is
-   * looked up from the same slug the starter is keyed by, and a slug with no
-   * Pico script simply lands at a bare REPL rather than guessing at one.
+   * REPL at runtime.
+   *
+   * The slug is now only the STARTING point and the reset target: the student
+   * edits their own copy in the code panel and it is autosaved into
+   * sim_attempts.code, so a returning student gets their program back, not the
+   * authored one. A slug with no Pico script lands at an empty editor and a bare
+   * REPL rather than guessing at one.
    */
   experimentSlug?: string
 }) {
@@ -520,9 +602,87 @@ export function CircuitEditor({
 
   const doc = state.doc
 
+  /**
+   * The experiment's AUTHORED MicroPython — the thing "Reset to starter" goes
+   * back to, and what a student who has never opened this experiment starts on.
+   *
+   * Empty string, not undefined, for everything else: the worker reads an empty
+   * script as "no program — sit at the REPL", which is the honest state for a
+   * Pico circuit nobody has written code for yet.
+   */
+  const starterScript = (experimentSlug && PICO_EXPERIMENTS[experimentSlug]?.script) || ''
+
+  /**
+   * TWO copies of the source, and the distinction is the whole run model.
+   *
+   *  - `draft`  is what is in the editor. It changes on every keystroke, and it
+   *    is what gets AUTOSAVED, so a student who types a line and reloads gets
+   *    that line back whether or not they ever ran it.
+   *  - `script` is what the board was actually given. The simulator hook reboots
+   *    MicroPython whenever this changes (usePicoSimulator, and pico.worker's
+   *    `setScript` case), so it must change only when the student asks.
+   *
+   * Feeding `draft` straight into the hook would reboot the interpreter on every
+   * keystroke — the emulated board would spend its life in the ~1.8 s boot it
+   * takes MicroPython to reach a prompt and never run anything. Committing on
+   * Run is not a compromise; it is the only workable shape, and the UI says so
+   * out loud rather than letting the board silently disagree with the screen.
+   */
+  const [draft, setDraft] = useState(starterScript)
+  const [script, setScript] = useState(starterScript)
+  const [codeOpen, setCodeOpen] = useState(true)
+  const [codeWidth, setCodeWidth] = useState(420)
+
+  /**
+   * Whether this document has a board whose program the student can edit.
+   *
+   * The Pico track interprets MicroPython, so its source is editable and worth
+   * storing. The AVR track does NOT: there is no avr-gcc in the browser, only
+   * three prebuilt .hex fixtures, so an editable C++ box would be a lie and
+   * there is nothing to persist. That asymmetry is why this is a track check
+   * and not a generic "has a board" check.
+   */
+  const isPico = useMemo(() => detectBoard(doc).board?.track === 'rp2040', [doc])
+
+  /**
+   * The placed board's own id, which is what the code is bound TO.
+   *
+   * Tinkercad's code panel carries a selector reading `1 (Arduino Uno R3)` —
+   * the board's Name property — because a program there belongs to one MCU
+   * instance, not to the document. Ours can only ever be one board (detectBoard
+   * refuses two), so this is shown rather than chosen; it is the same idea with
+   * the choice removed, and it makes the binding visible instead of implied.
+   */
+  const mcuPartId = useMemo(
+    () => doc.parts.find((p) => PART_LIBRARY[p.type]?.electrical.kind === 'mcu')?.id ?? '',
+    [doc],
+  )
+
+  /**
+   * The draft, in the shape the `code` jsonb column has held since migration
+   * 015. Memoised on the text so autosave sees one changed value per keystroke
+   * rather than a new object on every render.
+   *
+   * `undefined` — not an empty bundle — for a document with no Pico, so that
+   * saving an Arduino circuit cannot blank the MicroPython stored against the
+   * same attempt row. See saveAttempt(): an absent key is left alone by the
+   * upsert; a present empty one would overwrite.
+   */
+  const codeBundle = useMemo(
+    () => (isPico ? writeCodeFile(EMPTY_CODE, draft) : undefined),
+    [isPico, draft],
+  )
+
   // Local-first autosave. Restores previous work before the student notices
-  // they lost anything.
-  const { state: saveState, restored, restoreSource, restoreChecked } = useAutosave(doc, remote)
+  // they lost anything — the wiring AND the program, through one write, so the
+  // two can never come back from a reload out of step with each other.
+  const {
+    state: saveState,
+    restored,
+    restoredCode,
+    restoreSource,
+    restoreChecked,
+  } = useAutosave(doc, remote, codeBundle)
   const appliedRestore = useRef(false)
   useEffect(() => {
     if (!restoreChecked || appliedRestore.current) return
@@ -530,16 +690,21 @@ export function CircuitEditor({
     if (restored && (restored.parts?.length ?? 0) > 0) {
       dispatch({ type: 'load', doc: restored })
     }
-  }, [restoreChecked, restored])
-
-  /**
-   * The MicroPython this experiment runs, if it is a Pico one.
-   *
-   * Empty string, not undefined, for everything else: the worker reads an empty
-   * script as "no program — sit at the REPL", which is the honest state for a
-   * Pico circuit nobody has written code for yet.
-   */
-  const script = (experimentSlug && PICO_EXPERIMENTS[experimentSlug]?.script) || ''
+    /**
+     * A saved program replaces BOTH copies, so the editor opens on the
+     * student's own code and the board is given that same code — not the
+     * starter, and with no spurious "you have unsaved edits" on arrival.
+     *
+     * `null` means no file was stored, which is different from a stored empty
+     * string: a student who deliberately cleared their program and reloaded
+     * must get an empty editor back, not the starter script they deleted.
+     */
+    const saved = readCodeFile(restoredCode)
+    if (saved !== null) {
+      setDraft(saved)
+      setScript(saved)
+    }
+  }, [restoreChecked, restored, restoredCode])
 
   /**
    * Whichever board the document contains, running its own emulator.
@@ -550,9 +715,81 @@ export function CircuitEditor({
    * why. Only the selected hook creates a worker, so exactly one emulator is
    * ever resident.
    */
-  const sim = useBoardSimulator(doc, { hexUrl, script })
+  /**
+   * An Arduino Mega gets NO firmware, deliberately, and therefore never starts.
+   *
+   * The emulated ATmega2560 is complete — vectors, timers, USART0, the 16-channel
+   * ADC and all eleven ports, all pinned against the datasheet in
+   * lib/simulator/__tests__/mega.test.ts. What does not exist is a Mega .hex:
+   * every image in public/sim/ was compiled for an ATmega328P, and there is no
+   * avr-gcc here to build another. Handing one of those to a Mega would not
+   * error — it would run, move whichever pads the 328P's register addresses
+   * happen to name on this part, and present the result as the student's sketch.
+   * Passing an empty url is what stops the worker fetching one at all, so the
+   * circuit still compiles, solves and reports, and nothing pretends to execute.
+   */
+  const noFirmwareFor = useMemo(() => {
+    const board = detectBoard(doc).board
+    return board?.track === 'avr' && board.type === 'arduino_mega' ? board.label : null
+  }, [doc])
+
+  const sim = useBoardSimulator(doc, { hexUrl: noFirmwareFor ? '' : hexUrl, script })
   const { ready, running, error, speedRatio, start, stop, reset } = sim
   const snapshot: SharedSnapshot = sim.snapshot ?? NO_SNAPSHOT
+
+  /* ── Running the student's code ──────────────────────────────────────── */
+
+  /**
+   * Whether the board is running something older than what is on screen.
+   *
+   * Shown in two places (the toolbar and the panel) because a student who has
+   * edited and not run must not be left wondering why the output has not
+   * changed. It is never true on the AVR track — there is no editable source
+   * there for a draft to diverge from.
+   */
+  const codeDirty = isPico && draft !== script
+
+  /**
+   * "Start it once the new script has actually gone out."
+   *
+   * Committing a new script and calling start() in the same handler does NOT
+   * work: `start` is memoised on the script it will tag the run with, so the one
+   * in hand at that moment still carries the OLD source, and usePicoSimulator
+   * would immediately derive `running: false` again. Deferring to an effect
+   * means the call happens on the render that already has the new script, after
+   * the hook's own `setScript` effect has posted the reboot — worker message
+   * order is FIFO, so the interpreter reboots and is then started, in that
+   * order.
+   */
+  const [autoStart, setAutoStart] = useState(false)
+  useEffect(() => {
+    if (!autoStart || !ready) return
+    setAutoStart(false)
+    start()
+  }, [autoStart, ready, start])
+
+  /**
+   * The ONE run control, shared by the toolbar and the code panel — Tinkercad
+   * has a single `Start Simulation` for the circuit and the code, and splitting
+   * it would give a student two buttons that disagree.
+   *
+   * Editing never touches the running board; pressing this does. When the draft
+   * has moved on, this loads it, which REBOOTS MicroPython and starts the
+   * program from the top — there is no way to hot-patch a running interpreter
+   * (see pico/engine.ts). Everything the old program had in memory is gone, and
+   * the panel says so above the editor rather than letting it be a surprise.
+   */
+  const runCode = useCallback(() => {
+    if (isPico && draft !== script) {
+      setScript(draft)
+      setAutoStart(true)
+      return
+    }
+    start()
+  }, [draft, isPico, script, start])
+
+  /** Back to the authored script. Loads the editor only — Run still has to be pressed. */
+  const resetToStarter = useCallback(() => setDraft(starterScript), [starterScript])
 
   /**
    * Pause while the editor is gated out of fullscreen, resume on the way back.
@@ -744,7 +981,29 @@ export function CircuitEditor({
             Pico track does not, so there is nothing to pick — the board and the
             language are stated instead, and the script itself is in the rail. A
             firmware selector over a MicroPython board would be a lie. */}
-        {sim.track === 'avr' && (
+        {/*
+          THE MEGA HAS NO FIRMWARE YET, and says so rather than offering an
+          Uno's.
+
+          Every .hex in public/sim/ was compiled for an ATmega328P. Loaded into
+          an ATmega2560 it does not fail — the image parses, the CPU runs it,
+          and the pins it moves are whatever the 328P's register addresses
+          happen to be on this part. That is the silent-wrong-answer failure
+          SIMULATOR_ARCHITECTURE.md §2.3 forbids, so the picker is replaced by a
+          statement of fact. The emulated chip itself is complete and tested
+          (lib/simulator/__tests__/mega.test.ts); what is missing is a
+          toolchain, which is its own piece of work.
+        */}
+        {sim.track === 'avr' && sim.board.type === 'arduino_mega' && (
+          <div className="flex items-center gap-2 shrink-0" data-testid="mega-firmware">
+            <span className="text-[11px] text-[#566573]">{sim.board.label}</span>
+            <span className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-amber-300 bg-amber-50 text-amber-900">
+              No Mega firmware yet — the circuit solves, but nothing runs
+            </span>
+          </div>
+        )}
+
+        {sim.track === 'avr' && sim.board.type !== 'arduino_mega' && (
           <>
             <span className="text-[11px] text-[#566573] shrink-0">Firmware</span>
             <div className="flex shrink-0" role="group" aria-label="Firmware">
@@ -776,9 +1035,36 @@ export function CircuitEditor({
             <span className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-[#dfe3e8] bg-white text-[#34495e]">
               MicroPython
             </span>
+            {/* Opens the docked editor, exactly as Tinkercad's `Code` does. Only
+                on this track: there is no in-browser avr-gcc, so an equivalent
+                button over an Arduino would open an editor whose contents could
+                never be compiled or run. */}
+            <button
+              type="button"
+              data-testid="code-toggle"
+              onClick={() => setCodeOpen((v) => !v)}
+              aria-expanded={codeOpen}
+              aria-controls="code-panel-region"
+              className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors ${
+                codeOpen
+                  ? 'border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
+                  : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#1477d1]'
+              }`}
+            >
+              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Code
+            </button>
             <span className="text-[11px] text-[#566573]" data-testid="repl-phase">
               {REPL_LABEL[sim.snapshot.repl]}
             </span>
+            {codeDirty && (
+              <span
+                data-testid="code-dirty"
+                className="h-8 flex items-center px-2 rounded-[3px] text-[11px] border border-[#fde68a] bg-[#fffbeb] text-[#b45309]"
+              >
+                Board is running your previous code
+              </span>
+            )}
           </div>
         )}
 
@@ -795,21 +1081,31 @@ export function CircuitEditor({
           </p>
         ) : (
           <>
+            {/* ONE run control for the circuit and the code, which is what
+                Tinkercad ships and what a student expects. `runCode` is
+                `start` on the AVR track and whenever the draft already matches
+                the board; when it does not, it loads the draft first — and
+                loading reboots MicroPython, which is why it is an explicit
+                press and not a keystroke side-effect. */}
             <button
-              onClick={running ? stop : start}
+              onClick={running && !codeDirty ? stop : runCode}
               disabled={!ready}
               data-testid="run-toggle"
               className={`h-8 shrink-0 px-4 rounded-[3px] text-xs font-semibold text-white transition-colors disabled:opacity-40 ${
-                running ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
+                running && !codeDirty ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
               }`}
             >
               {ready
-                ? running
-                  ? 'Stop'
-                  : 'Start Simulation'
-                : sim.track === 'rp2040'
-                  ? 'Loading MicroPython…'
-                  : 'Loading firmware…'}
+                ? codeDirty
+                  ? 'Run new code'
+                  : running
+                    ? 'Stop'
+                    : 'Start Simulation'
+                : noFirmwareFor
+                  ? `No ${noFirmwareFor} firmware yet`
+                  : sim.track === 'rp2040'
+                    ? 'Loading MicroPython…'
+                    : 'Loading firmware…'}
             </button>
             <button onClick={reset} data-testid="reset" className={BTN}>
               Reset MCU
@@ -826,8 +1122,8 @@ export function CircuitEditor({
         </div>
       </div>
 
-      {/* Canvas + rail. Stacked on phones, side by side from md up — a
-          side-by-side rail at 390px left the canvas 70px wide. */}
+      {/* Canvas + code panel + rail. Stacked on phones, side by side from md up
+          — a side-by-side rail at 390px left the canvas 70px wide. */}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
         <div className="flex-1 relative min-w-0 min-h-0">
           <CircuitCanvas
@@ -839,6 +1135,44 @@ export function CircuitEditor({
             onSelect={setSelected}
           />
         </div>
+
+        {/* The code panel DOCKS beside the circuit rather than covering it: the
+            student has to be able to see the wire that `Pin(17)` refers to
+            while they are writing `Pin(17)`. Width is theirs to set — a long
+            line of Python and a wide breadboard both need room and only they
+            know which they are working on right now.
+
+            Below md it stacks under the canvas at a fixed height, because a
+            three-column layout on a phone gives every column nothing. */}
+        {sim.track === 'rp2040' && codeOpen && (
+          <>
+            <CodePanelResizer width={codeWidth} onWidth={setCodeWidth} />
+            <div
+              id="code-panel-region"
+              /* The width lives in a custom property so it can apply from md up
+                 and be ignored below it, which an inline `width` could not do —
+                 on a phone the panel is full-width and stacked. */
+              style={{ '--code-w': `${codeWidth}px` } as CSSProperties}
+              className="flex h-[55dvh] min-h-0 w-full shrink-0 md:h-auto md:w-[var(--code-w)]"
+            >
+              <CodePanel
+                boardLabel={sim.board.label}
+                boardId={mcuPartId}
+                source={draft}
+                onSourceChange={setDraft}
+                dirty={codeDirty}
+                status={!ready ? 'loading' : running ? 'running' : 'stopped'}
+                replLabel={REPL_LABEL[sim.snapshot.repl] ?? ''}
+                serial={snapshot.serial}
+                canReset={starterScript.length > 0}
+                onReset={resetToStarter}
+                onRun={runCode}
+                onStop={stop}
+                onClose={() => setCodeOpen(false)}
+              />
+            </div>
+          </>
+        )}
 
         <aside className="w-full h-[45dvh] shrink-0 border-t border-[#dfe3e8] md:h-auto md:w-80 md:border-t-0 md:border-l bg-white overflow-y-auto text-sm">
           {/* A native experiment whose circuits.role='starter' row is missing
@@ -870,13 +1204,25 @@ export function CircuitEditor({
                 <PropControl
                   key={prop.key}
                   prop={prop}
-                  // The engine falls back to the declared default when a part
-                  // carries no value for a prop, so the control has to show that
-                  // same default — otherwise the slider and the simulation
-                  // disagree before the student has touched anything.
-                  value={Number(
-                    selectedPart.props[prop.key] ?? prop.default ?? prop.options?.[0] ?? 0,
-                  )}
+                  /**
+                   * The engine falls back to the declared default when a part
+                   * carries no value for a prop, so the control shows that same
+                   * default — otherwise the panel and the simulation disagree
+                   * before the student has touched anything.
+                   *
+                   * `?? prop.options?.[0]` USED TO BE THE NEXT LINK IN THIS
+                   * CHAIN and it was the bug. A resistor's options start at 0 Ω
+                   * — "none (wire)" — so a resistor arriving from a saved
+                   * document, an authored starter or `loadInto` without an
+                   * explicit `ohms` displayed "none (wire)" while compile.ts
+                   * solved it at its 220 Ω default. Inventing a value from the
+                   * options list is what let the two drift; the declaration is
+                   * now the only source, and parts.ts's
+                   * propDeclarationProblems() shouts if a prop omits one. The
+                   * trailing `?? 0` only satisfies Number() and is unreachable
+                   * while that check is clean.
+                   */
+                  value={Number(selectedPart.props[prop.key] ?? prop.default ?? 0)}
                   onChange={(value) =>
                     dispatch({ type: 'setProp', id: selectedPart.id, key: prop.key, value })
                   }
@@ -984,16 +1330,22 @@ export function CircuitEditor({
                   {sim.snapshot.onboardLed ? 'on' : 'off'}
                 </span>
               </div>
-              {script ? (
-                <pre
-                  data-testid="pico-script"
-                  className="text-[10px] font-mono text-[#34495e] bg-[#f1f1f3] border border-[#dfe3e8] p-2 max-h-40 overflow-auto whitespace-pre"
-                >
-                  {script}
-                </pre>
+              {/* The source itself lives in the code panel now, where it can be
+                  edited. What stays here is the ONE fact the panel cannot tell
+                  you: whether the board is running the code you can see. */}
+              {codeDirty ? (
+                <p className="text-xs text-[#b45309] leading-snug" data-testid="pico-script-state">
+                  You have edited your program. The board is still running the previous version —
+                  press <span className="font-semibold">Run new code</span> to load it.
+                </p>
+              ) : script ? (
+                <p className="text-xs text-[#566573] leading-snug" data-testid="pico-script-state">
+                  {script.split('\n').length} lines loaded on the board.{' '}
+                  {codeOpen ? 'Edit it in the code panel.' : 'Press Code to edit it.'}
+                </p>
               ) : (
-                <p className="text-xs text-[#566573]" data-testid="pico-no-script">
-                  No script for this experiment — the board boots to a bare REPL.
+                <p className="text-xs text-[#566573] leading-snug" data-testid="pico-no-script">
+                  No program on the board — it boots to a bare REPL. Write one in the code panel.
                 </p>
               )}
             </div>

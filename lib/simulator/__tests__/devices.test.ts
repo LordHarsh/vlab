@@ -193,13 +193,23 @@ class Harness implements BehaviouralContext {
   states: DeviceState[] = []
   private held = new Map<string, DriveLevel>()
 
+  private heldVolts = new Map<string, number>()
+
   drive(signal: string, level: DriveLevel, v = VCC): void {
-    if (this.held.get(signal) === level) return
+    // Level AND voltage, exactly as both engines de-duplicate. An analog part
+    // re-drives 'high' at a new value every update, and dropping those would
+    // make a pulse sensor look like a single step.
+    if (this.held.get(signal) === level && this.heldVolts.get(signal) === v) return
     this.held.set(signal, level)
+    this.heldVolts.set(signal, v)
     this.drives.push({ cycle: this.clock.cycles, signal, level, volts: v })
   }
   voltage(signal: string): number {
     return this.volts[signal] ?? 0
+  }
+  /** A signal is "present" here when the harness has given it a voltage. */
+  hasSignal(signal: string): boolean {
+    return signal in this.volts
   }
   props(): Record<string, number | string> {
     return this.propValues

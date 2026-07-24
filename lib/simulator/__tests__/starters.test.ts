@@ -165,13 +165,16 @@ function solveDoc(
 
 console.log('\n1. Structure')
 
-eq('1.1 exactly nine experiments have authored starters', Object.keys(EXPERIMENT_STARTERS).sort(), [
+eq('1.1 every experiment with an authored starter is listed here', Object.keys(EXPERIMENT_STARTERS).sort(), [
   'dht11-rpi',
   'ds18b20-rpi',
+  'health-monitoring-rpi',
+  'home-automation-rpi',
   'led-button-rpi',
   'led-dht11-arduino',
   'motor-control-rpi',
   'pir-alarm-arduino',
+  'smart-traffic-controller',
   'traffic-light-arduino',
   'ultrasonic-pir-arduino',
   'water-flow-arduino',
@@ -1025,6 +1028,33 @@ console.log('\n6. Migrations 020, 021 and 022 agree with the TypeScript')
       file: '023_native_experiments_8_9.sql',
       slugs: ['ds18b20-rpi', 'motor-control-rpi'],
       board: BOARDS.raspberry_pi_pico.dbBoard,
+    },
+    /**
+     * The two experiments that were once thought impossible because their
+     * published programs call Flask and ThingSpeak. They are here because the
+     * networking is PRINTED rather than simulated — which is what the canonical
+     * content does too — while the relay board, the pulse sensor and the MCP3008
+     * are modelled properly. This file also carries eleven text corrections, so
+     * it has more `do $mig$` blocks than starters.
+     */
+    {
+      file: '024_native_experiments_10_12.sql',
+      slugs: ['health-monitoring-rpi', 'home-automation-rpi'],
+      board: BOARDS.raspberry_pi_pico.dbBoard,
+    },
+    /**
+     * The only ARDUINO MEGA starter, and the only migration that widens the
+     * board vocabulary. `dbBoard` is read off BOARDS as everywhere else, but
+     * here it names a value migration 015's check constraint did NOT accept —
+     * 025 drops and re-adds the constraint additively before inserting. If that
+     * ALTER is ever dropped from the file, this row's insert fails in
+     * production and nowhere else; pico.test.ts group J is the check that
+     * catches it, by reading the migration directory in order.
+     */
+    {
+      file: '025_native_experiment_11.sql',
+      slugs: ['smart-traffic-controller'],
+      board: BOARDS.arduino_mega.dbBoard,
     },
   ]
 

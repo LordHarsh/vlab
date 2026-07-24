@@ -8,6 +8,7 @@
  * thread samples on its own schedule.
  */
 
+import { chipForDoc } from '../avr/chip'
 import { SimulationEngine, parseIntelHex, CLOCK_HZ } from '../engine'
 import type { CircuitDoc } from '../model/document'
 import { SNAPSHOT_HZ, type FromWorker, type ToWorker } from './protocol'
@@ -87,7 +88,17 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   try {
     switch (msg.type) {
       case 'init': {
-        program = parseIntelHex(msg.hex)
+        /**
+         * The DOCUMENT decides the flash size, before any engine exists.
+         *
+         * An ATmega328P's program memory is 32 KB and an ATmega2560's is 256 KB,
+         * and the size is not merely an allocation: avr8js reads `pc22Bits` off
+         * the program memory's byte length, and that flag decides whether an
+         * interrupt pushes a two- or three-byte return address. Parsing a Mega
+         * hex into a 32 KB buffer would both truncate the program and give the
+         * CPU the wrong stack discipline.
+         */
+        program = parseIntelHex(msg.hex, chipForDoc(msg.doc).flashBytes)
         lastDoc = msg.doc
         engine = new SimulationEngine(program, msg.doc)
         wallAccum = 0

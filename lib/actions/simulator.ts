@@ -17,6 +17,18 @@ export interface CircuitGraph {
   wires: unknown[]
 }
 
+/**
+ * The `code` jsonb on both `circuits` and `sim_attempts` (migration 015).
+ *
+ * Kept structurally loose here on purpose — this module's job is to move the
+ * value between the client and the row, not to know what a MicroPython file is.
+ * lib/simulator/model/code.ts owns the shape and parses it defensively on the
+ * way back in.
+ */
+export interface CircuitCode {
+  files: { name: string; language: string; source: string }[]
+}
+
 async function studentContext(classId: string) {
   const { userId } = await auth()
   if (!userId) return { error: 'Not authenticated' as const }
@@ -51,6 +63,16 @@ export async function saveAttempt(
   simulationId: string,
   classId: string,
   graph: CircuitGraph,
+  /**
+   * The student's source, when the board in this document runs one.
+   *
+   * OMITTED, never null, for a document with nothing to program. PostgREST
+   * builds its ON CONFLICT DO UPDATE SET list from the keys actually present in
+   * the payload, so leaving the key out leaves the stored column alone — which
+   * is what has to happen when a student temporarily deletes the Pico from a
+   * circuit whose program is still on the server.
+   */
+  code?: CircuitCode,
 ): Promise<{ success: boolean; error?: string }> {
   const ctx = await studentContext(classId)
   if ('error' in ctx) return { success: false, error: ctx.error }
@@ -61,6 +83,7 @@ export async function saveAttempt(
       simulation_id: simulationId,
       class_id: classId,
       graph: graph as never,
+      ...(code ? { code: code as never } : {}),
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'student_id,simulation_id,class_id' },
@@ -80,25 +103,38 @@ export async function saveAttempt(
 export async function loadAttempt(
   simulationId: string,
   classId: string,
-): Promise<{ graph: CircuitGraph | null; source: 'attempt' | 'starter' | 'none'; error?: string }> {
+): Promise<{
+  graph: CircuitGraph | null
+  /**
+   * The row's `code` column, verbatim. Untyped because it is jsonb and may have
+   * been written by a seed or an older build; the client parses it.
+   */
+  code: unknown
+  source: 'attempt' | 'starter' | 'none'
+  error?: string
+}> {
   const ctx = await studentContext(classId)
-  if ('error' in ctx) return { graph: null, source: 'none', error: ctx.error }
+  if ('error' in ctx) return { graph: null, code: null, source: 'none', error: ctx.error }
 
   const { data: attempt } = await ctx.supabase
     .from('sim_attempts')
-    .select('graph')
+    .select('graph, code')
     .eq('student_id', ctx.profileId)
     .eq('simulation_id', simulationId)
     .eq('class_id', classId)
     .single()
 
   if (attempt?.graph) {
-    return { graph: attempt.graph as unknown as CircuitGraph, source: 'attempt' }
+    return {
+      graph: attempt.graph as unknown as CircuitGraph,
+      code: attempt.code ?? null,
+      source: 'attempt',
+    }
   }
 
   const { data: starter } = await ctx.supabase
     .from('circuits')
-    .select('graph')
+    .select('graph, code')
     .eq('simulation_id', simulationId)
     .eq('role', 'starter')
     .order('version', { ascending: false })
@@ -106,8 +142,17 @@ export async function loadAttempt(
     .single()
 
   if (starter?.graph) {
-    return { graph: starter.graph as unknown as CircuitGraph, source: 'starter' }
+    // An authored starter MAY ship code. None does today — every starter row's
+    // `code` is still the column default `{"files":[]}` — so this resolves to an
+    // empty bundle and the editor falls back to the script in
+    // lib/simulator/pico/experiments.ts. Reading it anyway costs one column and
+    // means an authored starter script would work the day someone writes one.
+    return {
+      graph: starter.graph as unknown as CircuitGraph,
+      code: starter.code ?? null,
+      source: 'starter',
+    }
   }
 
-  return { graph: null, source: 'none' }
+  return { graph: null, code: null, source: 'none' }
 }

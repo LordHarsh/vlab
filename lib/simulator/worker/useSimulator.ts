@@ -68,6 +68,16 @@ export function useSimulator(hexUrl: string, doc: CircuitDoc, enabled = true) {
      * that is not in the circuit.
      */
     if (!enabled) return
+    /**
+     * An empty url means the caller has no firmware for this board, which is
+     * not the same as "not loaded yet". Returning here leaves `ready` false —
+     * so the Run button stays disabled and says why — and, crucially, spawns no
+     * worker: a fetch('') resolves against the page and would feed the parser a
+     * document of HTML, which yields a flash image of zeros that the CPU
+     * happily executes as NOPs forever. A board that cannot run should look
+     * stopped, not idle.
+     */
+    if (!hexUrl) return
     let disposed = false
     const url = hexUrl
     const worker = new Worker(new URL('./engine.worker.ts', import.meta.url), {

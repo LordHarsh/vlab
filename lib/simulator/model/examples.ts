@@ -112,7 +112,7 @@ export const EXPERIMENT_01_DHT: CircuitDoc = {
  */
 
 /**
- * The Uno's supply brought out to the breadboard rails.
+ * An AVR board's supply brought out to the breadboard rails.
  *
  * Column 2 for the feed and column 29 for the bridge purely so the jumpers sit
  * clear of the middle of the board, where the student is about to work.
@@ -120,13 +120,20 @@ export const EXPERIMENT_01_DHT: CircuitDoc = {
  * A factory rather than a shared constant: these objects become editor state
  * (docReducer assigns the document straight through), and two documents must
  * never end up sharing wire objects.
+ *
+ * `board` defaults to 'uno' so every existing starter is untouched. An Arduino
+ * Mega genuinely can share this function — unlike the Pico, which needed its
+ * own (see picoPowerRails) — because the two AVR boards agree on everything
+ * that matters here: the same 5 V logic rail, a pin literally called `5V`, and
+ * a `GND.2` sitting next to it on the same power header. Nothing about the
+ * plumbing changes; only which part it leaves from.
  */
-function powerRails(): DocWire[] {
+function powerRails(board = 'uno'): DocWire[] {
   return [
-    // Uno → top rails. GND.2 is on the power header, next to 5V, so the pair
+    // Board → top rails. GND.2 is on the power header, next to 5V, so the pair
     // leaves the board the way it does on a real bench.
-    { id: 'pw_5v', from: { partId: 'uno', pinId: '5V' }, to: { partId: 'bb', pinId: 'tp2' }, color: '#e04a4a' },
-    { id: 'pw_gnd', from: { partId: 'uno', pinId: 'GND.2' }, to: { partId: 'bb', pinId: 'tn2' }, color: '#111827' },
+    { id: 'pw_5v', from: { partId: board, pinId: '5V' }, to: { partId: 'bb', pinId: 'tp2' }, color: '#e04a4a' },
+    { id: 'pw_gnd', from: { partId: board, pinId: 'GND.2' }, to: { partId: 'bb', pinId: 'tn2' }, color: '#111827' },
     // Top rails → bottom rails. The four rails on a half-size board are four
     // SEPARATE strips; without these two jumpers the lower half of the board
     // has no supply at all.
@@ -452,6 +459,168 @@ export const STARTER_MOTOR_CONTROL_PICO: CircuitDoc = {
 }
 
 /**
+ * Experiment 10 — "Home Automation with Raspberry Pi"
+ * (slug `home-automation-rpi`). A PICO circuit.
+ *
+ * Bill of materials from the experiment's own Components section: board,
+ * 4-channel relay module, LEDs to stand in for the appliances, and a phone or
+ * PC browser. The Circuit section asks for relay IN1–IN4 on GPIO17, 27, 22 and
+ * 23, relay VCC to 5 V and relay GND to GND.
+ *
+ * TWO THINGS IN THE PUBLISHED CIRCUIT DO NOT PORT VERBATIM, and both are
+ * recorded rather than quietly fudged:
+ *
+ *   GPIO23 IS NOT ON A PICO'S HEADER. GP23/GP24/GP25 exist on the die but are
+ *   wired to on-board functions and are not brought out (see makePico() in
+ *   parts.ts — the header stops at GP22 and resumes at GP26). 17, 27 and 22 all
+ *   exist and are kept verbatim; the fourth channel moves to GP16, the header
+ *   pad immediately before GP17. The MicroPython in pico/experiments.ts uses the
+ *   same four numbers. Experiment 09 had to make exactly this move for GPIO23
+ *   and GPIO24.
+ *
+ *   THE RELAY BOARD IS A 5 V PART AND THE PRE-WIRED RAILS ARE 3.3 V. That is
+ *   deliberate and it is the exercise: an SRD-05VDC coil is only guaranteed to
+ *   pull in above 3.75 V, so a board fed from 3V3 switches its opto-coupler and
+ *   never its contact — which is precisely what happens on a bench. The Pico's
+ *   `5V` pad is VBUS, USB power passed straight through, and getting it to the
+ *   module's VCC is the student's to do. Experiment 09 leaves the L298N's motor
+ *   rail open for the same reason.
+ *
+ * ONE LED AND ONE 220 Ω, matching the bill of materials, wired through channel
+ * 1's contacts as the "Light". The other three channels switch nothing but are
+ * still real: the readout reports which way each armature has thrown, and a
+ * student who wires their load to NC rather than NO gets a lamp that is on
+ * until the program turns it off.
+ */
+export const STARTER_HOME_AUTOMATION_PICO: CircuitDoc = {
+  parts: [
+    { id: 'pico', type: 'raspberry_pi_pico', x: 40, y: 20, rotation: 0, props: {} },
+    { id: 'bb', type: 'breadboard', x: 40, y: 260, rotation: 0, props: {} },
+    // Component tray, below the board. The relay board is wide (220 units), so
+    // it takes the left half of the tray on its own.
+    { id: 'relay', type: 'relay_4ch', x: 55, y: 450, rotation: 0, props: { activeLow: 1 } },
+    { id: 'r220', type: 'resistor', x: 300, y: 470, rotation: 0, props: { ohms: 220 } },
+    { id: 'led', type: 'led', x: 400, y: 450, rotation: 0, props: {} },
+  ],
+  wires: picoPowerRails(),
+}
+
+/**
+ * Experiment 12 — "Smart Health Monitoring System"
+ * (slug `health-monitoring-rpi`). A PICO circuit.
+ *
+ * Bill of materials from the experiment's own Components section: board,
+ * DS18B20, pulse sensor (SEN-11574), MCP3008 ADC, 4.7 kΩ resistor, and an
+ * optional OLED. The Circuit section asks for DS18B20 Data → GPIO4 with its
+ * 4.7 kΩ pull-up, MCP3008 CLK/MOSI/MISO/CS → GPIO11, 10, 9 and 8, and the pulse
+ * sensor's output into MCP3008 CH0.
+ *
+ * EVERY PUBLISHED PIN NUMBER SURVIVES THIS PORT. 4, 8, 9, 10 and 11 all exist
+ * on a Pico's header, so unlike experiments 09 and 10 nothing has to move.
+ *
+ * WHY THE MCP3008 IS STILL HERE, on a board that does not need it. A Raspberry
+ * Pi has no analog input at all, which is the entire reason the published
+ * circuit puts an external SPI converter in front of the pulse sensor. A Pico
+ * has three native ADCs on GP26/27/28 and could read the sensor directly. The
+ * part is kept because the circuit the student is asked to build is the printed
+ * one, and because the SPI transaction — a start bit, a configuration word, a
+ * null bit and ten data bits — is a real thing worth meeting. The MicroPython in
+ * pico/experiments.ts talks to it over a bit-banged SoftSPI on those four pins.
+ *
+ * The OLED is listed as optional in the bill of materials and there is no
+ * display part in the library yet, so it is not shipped. The code prints instead.
+ */
+export const STARTER_HEALTH_MONITOR_PICO: CircuitDoc = {
+  parts: [
+    { id: 'pico', type: 'raspberry_pi_pico', x: 40, y: 20, rotation: 0, props: {} },
+    { id: 'bb', type: 'breadboard', x: 40, y: 260, rotation: 0, props: {} },
+    { id: 'ds', type: 'ds18b20', x: 55, y: 460, rotation: 0, props: { temperature: 36.5, resolution: 12 } },
+    { id: 'r4k7', type: 'resistor', x: 110, y: 480, rotation: 0, props: { ohms: 4700 } },
+    { id: 'adc', type: 'mcp3008', x: 200, y: 450, rotation: 0, props: {} },
+    { id: 'pulse', type: 'pulse_sensor', x: 330, y: 460, rotation: 0, props: { bpm: 72, amplitude: 8 } },
+  ],
+  wires: picoPowerRails(),
+}
+
+/**
+ * Experiment 11 — "Smart Traffic Light Controller"
+ * (slug `smart-traffic-controller`). An ARDUINO MEGA circuit, and the only one
+ * in the lab: see lib/simulator/avr/atmega2560.ts for why that took a chip.
+ *
+ * Bill of materials from the experiment's own Components section: Arduino Mega,
+ * 12 LEDs (three sets of red/yellow/green — the sheet writes "RGYG"), four
+ * potentiometers, four optional IR sensors, a 16x2 LCD and connecting wires.
+ * The Circuit section asks for lane 1 R/Y/G on pins 22/23/24, lane 2 on 25/26/
+ * 27, lane 3 on 28/29/30 and lane 4 on 31/32/33, with the density pots on
+ * A0-A3.
+ *
+ * WHY IT NEEDS A MEGA AND NOT AN UNO, which is the pedagogical point of the
+ * experiment: twelve digital outputs plus four analog inputs is sixteen signals.
+ * An Uno has fourteen digital pins, two of which are the serial port the sketch
+ * prints through. The board is the answer to a real constraint, not decoration.
+ *
+ * TWO ITEMS IN THE BILL OF MATERIALS ARE NOT SHIPPED, and both are recorded
+ * rather than faked:
+ *
+ *   THE LCD. There is no display part in the library. The published sketch does
+ *   not use one either — every status line in it goes to Serial.print, which the
+ *   editor shows — so nothing in the procedure is unreachable without it.
+ *
+ *   THE IR SENSORS. The sheet marks them optional and the sketch never reads
+ *   them; the four potentiometers ARE the density input in the code
+ *   (`analogRead(densityPin[i])`). A part that the program cannot observe would
+ *   be furniture.
+ *
+ * The twelve series resistors are 220 Ω, matching experiment 3's traffic light
+ * and the same 5 V rail. The LEDs are electrically and visually identical (one
+ * red LED model, no colour property), so the colour lives in the part id, which
+ * is what the Measurements readout is keyed by — the convention experiments 3
+ * and 6 already use.
+ *
+ * Pre-wired: the supply only, exactly as everywhere else. Twelve LED chains and
+ * four pots is a lot of wiring, and that IS the exercise — it is the experiment
+ * where a student first meets a board with more pins than they can hold in their
+ * head, and the discipline of doing one lane at a time.
+ */
+export const STARTER_SMART_TRAFFIC: CircuitDoc = {
+  parts: [
+    { id: 'mega', type: 'arduino_mega', x: 40, y: 20, rotation: 0, props: {} },
+    { id: 'bb', type: 'breadboard', x: 40, y: 260, rotation: 0, props: {} },
+    // Component tray, below the board: twelve LEDs in lane order, then their
+    // twelve resistors in two rows, then the four density pots.
+    { id: 'led1_red', type: 'led', x: 40, y: 445, rotation: 0, props: {} },
+    { id: 'led1_yellow', type: 'led', x: 88, y: 445, rotation: 0, props: {} },
+    { id: 'led1_green', type: 'led', x: 136, y: 445, rotation: 0, props: {} },
+    { id: 'led2_red', type: 'led', x: 184, y: 445, rotation: 0, props: {} },
+    { id: 'led2_yellow', type: 'led', x: 232, y: 445, rotation: 0, props: {} },
+    { id: 'led2_green', type: 'led', x: 280, y: 445, rotation: 0, props: {} },
+    { id: 'led3_red', type: 'led', x: 328, y: 445, rotation: 0, props: {} },
+    { id: 'led3_yellow', type: 'led', x: 376, y: 445, rotation: 0, props: {} },
+    { id: 'led3_green', type: 'led', x: 424, y: 445, rotation: 0, props: {} },
+    { id: 'led4_red', type: 'led', x: 472, y: 445, rotation: 0, props: {} },
+    { id: 'led4_yellow', type: 'led', x: 520, y: 445, rotation: 0, props: {} },
+    { id: 'led4_green', type: 'led', x: 568, y: 445, rotation: 0, props: {} },
+    { id: 'r1_red', type: 'resistor', x: 40, y: 512, rotation: 0, props: { ohms: 220 } },
+    { id: 'r1_yellow', type: 'resistor', x: 108, y: 512, rotation: 0, props: { ohms: 220 } },
+    { id: 'r1_green', type: 'resistor', x: 176, y: 512, rotation: 0, props: { ohms: 220 } },
+    { id: 'r2_red', type: 'resistor', x: 244, y: 512, rotation: 0, props: { ohms: 220 } },
+    { id: 'r2_yellow', type: 'resistor', x: 312, y: 512, rotation: 0, props: { ohms: 220 } },
+    { id: 'r2_green', type: 'resistor', x: 380, y: 512, rotation: 0, props: { ohms: 220 } },
+    { id: 'r3_red', type: 'resistor', x: 40, y: 545, rotation: 0, props: { ohms: 220 } },
+    { id: 'r3_yellow', type: 'resistor', x: 108, y: 545, rotation: 0, props: { ohms: 220 } },
+    { id: 'r3_green', type: 'resistor', x: 176, y: 545, rotation: 0, props: { ohms: 220 } },
+    { id: 'r4_red', type: 'resistor', x: 244, y: 545, rotation: 0, props: { ohms: 220 } },
+    { id: 'r4_yellow', type: 'resistor', x: 312, y: 545, rotation: 0, props: { ohms: 220 } },
+    { id: 'r4_green', type: 'resistor', x: 380, y: 545, rotation: 0, props: { ohms: 220 } },
+    { id: 'pot1', type: 'potentiometer', x: 560, y: 505, rotation: 0, props: { position: 50 } },
+    { id: 'pot2', type: 'potentiometer', x: 645, y: 505, rotation: 0, props: { position: 50 } },
+    { id: 'pot3', type: 'potentiometer', x: 730, y: 505, rotation: 0, props: { position: 50 } },
+    { id: 'pot4', type: 'potentiometer', x: 815, y: 505, rotation: 0, props: { position: 50 } },
+  ],
+  wires: powerRails('mega'),
+}
+
+/**
  * Every authored starter, keyed by EXPERIMENT SLUG.
  *
  * The slug is the key because that is what migrations 020, 021 and 022 look the
@@ -473,6 +642,9 @@ export const EXPERIMENT_STARTERS: Record<string, CircuitDoc> = {
   'dht11-rpi': STARTER_DHT11_PICO,
   'ds18b20-rpi': STARTER_DS18B20_PICO,
   'motor-control-rpi': STARTER_MOTOR_CONTROL_PICO,
+  'home-automation-rpi': STARTER_HOME_AUTOMATION_PICO,
+  'smart-traffic-controller': STARTER_SMART_TRAFFIC,
+  'health-monitoring-rpi': STARTER_HEALTH_MONITOR_PICO,
 }
 
 export const EXAMPLES: Record<string, { label: string; short: string; doc: CircuitDoc }> = {
@@ -488,5 +660,8 @@ export const EXAMPLES: Record<string, { label: string; short: string; doc: Circu
   starterPicoDht: { label: 'Lab starter — Pico DHT11', short: 'Starter 7', doc: STARTER_DHT11_PICO },
   starterPicoDs18b20: { label: 'Lab starter — Pico DS18B20', short: 'Starter 8', doc: STARTER_DS18B20_PICO },
   starterPicoMotors: { label: 'Lab starter — Pico motors', short: 'Starter 9', doc: STARTER_MOTOR_CONTROL_PICO },
+  starterPicoHomeAuto: { label: 'Lab starter — Pico home automation', short: 'Starter 10', doc: STARTER_HOME_AUTOMATION_PICO },
+  starterMegaTraffic: { label: 'Lab starter — Mega smart traffic', short: 'Starter 11', doc: STARTER_SMART_TRAFFIC },
+  starterPicoHealth: { label: 'Lab starter — Pico health monitor', short: 'Starter 12', doc: STARTER_HEALTH_MONITOR_PICO },
   blank: { label: 'Blank board', short: 'Blank', doc: BLANK },
 }

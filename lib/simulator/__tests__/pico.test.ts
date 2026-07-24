@@ -775,11 +775,24 @@ group('H. The Pico is a first-class part, not a runtime splice')
     'Raspberry Pi Pico',
     getPart('raspberry_pi_pico').label,
   )
+  /**
+   * The boards lead the palette, in one contiguous run.
+   *
+   * This used to assert `pico === uno + 1`, which was the same statement while
+   * there were exactly two boards. The Arduino Mega now sits between them, so
+   * the check is written as what it always meant: every MCU part, and no other
+   * part, occupies the head of the list — that is what makes "reach for a board
+   * first" true for a student scanning the palette.
+   */
+  const boardIdx = PALETTE.map((t, i) => [t, i] as const).filter(
+    ([t]) => PART_LIBRARY[t]?.electrical.kind === 'mcu',
+  )
+  const contiguousHead = boardIdx.every(([, i], k) => i === k)
   truth(
-    'and it is in the palette, next to the other board',
-    PALETTE.indexOf('raspberry_pi_pico') === PALETTE.indexOf('arduino_uno') + 1,
-    'immediately after arduino_uno',
-    `index ${PALETTE.indexOf('raspberry_pi_pico')} (uno at ${PALETTE.indexOf('arduino_uno')})`,
+    'and the boards lead the palette as one contiguous group',
+    contiguousHead && boardIdx.some(([t]) => t === 'raspberry_pi_pico'),
+    'every MCU part first, Pico among them',
+    boardIdx.map(([t, i]) => `${t}@${i}`).join(', ') || 'no boards in palette',
   )
 
   const picoEl = PART_LIBRARY.raspberry_pi_pico.electrical
@@ -956,21 +969,34 @@ group('J. Board-aware engine selection')
 
   /**
    * `circuits.board` is a CHECK-constrained column created in migration 015,
-   * long before this part existed, and it does not accept the string
-   * 'raspberry_pi_pico'. Whoever authors the Pico starter migration has to
-   * write 'rp2040'. Asserting the mapping against the real SQL is what stops
+   * long before either of the newer parts existed, and it does not accept the
+   * string 'raspberry_pi_pico'. Whoever authors the Pico starter migration has
+   * to write 'rp2040'. Asserting the mapping against the real SQL is what stops
    * that being discovered by a failing insert in production.
+   *
+   * READ IN MIGRATION ORDER, not from 015 alone. A constraint is not a fact
+   * about one file: migration 025 drops and re-adds it to admit 'arduino_mega'
+   * for the Arduino Mega, so the set the DATABASE will accept is whatever the
+   * LAST `check (board in (…))` in the sequence says. Pinning this to 015 would
+   * mean a correctly widened constraint reads as a failure, which trains
+   * whoever sees it to widen the test instead of the database.
    */
-  const sql = fs.readFileSync(
-    path.join(process.cwd(), 'supabase', 'migrations', '015_native_simulator.sql'),
-    'utf8',
-  )
-  const allowed = /check \(board in \(([^)]*)\)\)/.exec(sql)?.[1] ?? ''
+  const migDir = path.join(process.cwd(), 'supabase', 'migrations')
+  let allowed = ''
+  let allowedFrom = '(constraint not found)'
+  for (const file of fs.readdirSync(migDir).sort()) {
+    if (!file.endsWith('.sql')) continue
+    const sql = fs.readFileSync(path.join(migDir, file), 'utf8')
+    for (const m of sql.matchAll(/check \(board in \(([^)]*)\)\)/g)) {
+      allowed = m[1]
+      allowedFrom = file
+    }
+  }
   for (const profile of Object.values(BOARDS)) {
     truth(
-      `${profile.type} maps to a board value migration 015 accepts ('${profile.dbBoard}')`,
+      `${profile.type} maps to a board value the check constraint accepts ('${profile.dbBoard}')`,
       allowed.includes(`'${profile.dbBoard}'`),
-      `'${profile.dbBoard}' in ${allowed.trim() || '(constraint not found)'}`,
+      `'${profile.dbBoard}' in ${allowed.trim() || allowedFrom} (from ${allowedFrom})`,
       allowed.includes(`'${profile.dbBoard}'`) ? 'accepted' : 'REJECTED by the check constraint',
     )
   }

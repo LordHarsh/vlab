@@ -28,15 +28,18 @@ import {
   FlowSensor,
   G_RELEASED,
   HCSR04,
+  MCP3008Device,
   PIRSensor,
+  PulseSensor,
   R_PULLDOWN,
+  RelayMonitor,
   StepperMonitor,
   type BehaviouralContext,
   type BehaviouralDevice,
   type DeviceState,
   type DriveLevel,
 } from '../behavioural'
-import { BUZZER_5V, MIN_RESISTANCE, STEPPER_28BYJ48 } from '../devices'
+import { BUZZER_5V, MIN_RESISTANCE, RELAY_MODULE_4CH, STEPPER_28BYJ48 } from '../devices'
 import { PICO_ADC_PINS, PICO_ONBOARD_LED_GPIO, adcChannelOf, gpioIndexOf } from './board'
 import { PicoBehaviouralClock } from './clock-shim'
 import type { PicoFirmware } from './firmware'
@@ -103,6 +106,22 @@ const PIN_MAX_CURRENT = 0.016
 
 /** ADC: 12 bits against a 3.3 V reference, versus the AVR's 10 bits. */
 export const PICO_ADC_MAX = 4095
+
+/**
+ * Hard cap on the memoisation cache, in entries.
+ *
+ * The key space used to be finite and small: a handful of pins, each in one of
+ * five drive states. An ANALOG behavioural part breaks that — a pulse sensor
+ * puts a different voltage on its wire every couple of milliseconds, so the key
+ * space is now effectively continuous and an unbounded Map would grow for as
+ * long as the tab is open. 4096 entries is far more than any digital circuit
+ * ever produces (a 10-pin circuit has at most a few hundred reachable states),
+ * so a digital experiment never reaches this and behaves exactly as before;
+ * an analog one drops its history wholesale rather than leaking, and pays one
+ * re-solve for each state it meets again. Clearing is always SAFE — a miss
+ * costs a solve, never a wrong answer.
+ */
+const MAX_CACHE_ENTRIES = 4096
 
 const SILENT_LOGGER: Logger = {
   debug: () => {},
@@ -259,6 +278,17 @@ export class PicoSimulationEngine {
   private devices: BehaviouralDevice[] = []
   /** Behavioural drive state, keyed "partId:signal". Part of the memo key. */
   private deviceDrives = new Map<string, DriveLevel>()
+  /**
+   * The `volts` that went with each of those, and it is part of the memo key too.
+   *
+   * A digital sensor only ever drives its own logic high, so the LEVEL alone
+   * used to be a complete description of what it was doing. An ANALOG part is
+   * not: a pulse sensor drives 'high' at a different voltage every few
+   * milliseconds, and keying the cache on the level alone would return the first
+   * of those solutions for every one of them — the same class of stale-cache bug
+   * as the DHT11's, and just as silent.
+   */
+  private deviceVolts = new Map<string, number>()
   private deviceStates: Record<string, DeviceState> = {}
 
   private inputLevels = new Map<string, boolean>()
@@ -364,6 +394,7 @@ export class PicoSimulationEngine {
     this.clockShim.cancelAll()
     this.devices = []
     this.deviceDrives.clear()
+    this.deviceVolts.clear()
     this.deviceStates = {}
 
     for (const b of this.compiled.behavioural) {
@@ -383,12 +414,17 @@ export class PicoSimulationEngine {
           const n = b.nets[signal]
           return n !== undefined && n < this.voltages.length ? this.voltages[n] : 0
         },
+        hasSignal: (signal) => b.nets[signal] !== undefined,
         drive: (signal, level, volts = PICO_VDD) => {
           const port = b.ports[signal]
           if (!port) return
           const key = `${b.partId}:${signal}`
-          if (this.deviceDrives.get(key) === level) return
+          // The VOLTAGE is part of the state, not just the level — an analog
+          // part re-drives 'high' at a new value every few milliseconds and this
+          // early-out used to swallow every one of them after the first.
+          if (this.deviceDrives.get(key) === level && this.deviceVolts.get(key) === volts) return
           this.deviceDrives.set(key, level)
+          this.deviceVolts.set(key, volts)
           port.set(
             level === 'release' ? G_RELEASED : 1 / R_PULLDOWN,
             level === 'high' ? volts / R_PULLDOWN : 0,
@@ -456,7 +492,12 @@ export class PicoSimulationEngine {
     // operating point. Omitting it makes every DHT11 transition a cache HIT on
     // the previous solution — the sensor pulls its line low and the solver goes
     // on reporting it high, which is exactly the bug the AVR engine hit.
-    for (const [id, level] of this.deviceDrives) k += '|' + id + level[0]
+    //
+    // The DRIVEN VOLTAGE goes in too, for an analog part; see `deviceVolts`.
+    for (const [id, level] of this.deviceDrives) {
+      k += '|' + id + level[0]
+      if (level === 'high') k += this.deviceVolts.get(id)
+    }
     return k
   }
 
@@ -542,6 +583,7 @@ export class PicoSimulationEngine {
       this.latest = EMPTY_SOLUTION
     }
 
+    if (this.cache.size >= MAX_CACHE_ENTRIES) this.cache.clear()
     this.cache.set(key, this.latest)
     this.dirtyFlag[0] = 0
     this.driveInputs()
@@ -813,6 +855,12 @@ function makeBehavioural(
       return new BuzzerMonitor(partId, ctx, BUZZER_5V)
     case 'stepper':
       return new StepperMonitor(partId, ctx, STEPPER_28BYJ48)
+    case 'pulse':
+      return new PulseSensor(partId, ctx)
+    case 'mcp3008':
+      return new MCP3008Device(partId, ctx)
+    case 'relay':
+      return new RelayMonitor(partId, ctx, RELAY_MODULE_4CH)
     default:
       return null
   }

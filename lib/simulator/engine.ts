@@ -10,22 +10,8 @@
  * Superseded the demo-specific ArduinoSimulation, which hardcoded one circuit.
  */
 
-import {
-  CPU,
-  avrInstruction,
-  AVRTimer,
-  AVRIOPort,
-  AVRUSART,
-  AVRADC,
-  adcConfig,
-  timer0Config,
-  timer1Config,
-  timer2Config,
-  portBConfig,
-  portCConfig,
-  portDConfig,
-  usart0Config,
-} from 'avr8js'
+import { CPU, avrInstruction, AVRTimer, AVRIOPort, AVRUSART, AVRADC } from 'avr8js'
+import { chipForDoc, type AvrChip } from './avr/chip'
 import { compile, type CompileResult } from './model/compile'
 import {
   BuzzerMonitor,
@@ -34,19 +20,44 @@ import {
   FlowSensor,
   G_RELEASED,
   HCSR04,
+  MCP3008Device,
   PIRSensor,
+  PulseSensor,
   R_PULLDOWN,
+  RelayMonitor,
   StepperMonitor,
   type BehaviouralContext,
   type BehaviouralDevice,
   type DeviceState,
   type DriveLevel,
 } from './behavioural'
-import { BUZZER_5V, MIN_RESISTANCE, STEPPER_28BYJ48, type NortonPort } from './devices'
+import {
+  BUZZER_5V,
+  MIN_RESISTANCE,
+  RELAY_MODULE_4CH,
+  STEPPER_28BYJ48,
+  type NortonPort,
+} from './devices'
 import type { CircuitDoc, PlacedPart } from './model/document'
 import type { SolveFault } from './types'
 
 export const CLOCK_HZ = 16_000_000
+
+/**
+ * Hard cap on the memoisation cache, in entries.
+ *
+ * The key space used to be finite and small: a handful of pins, each in one of
+ * four drive states. An ANALOG behavioural part breaks that — a pulse sensor
+ * puts a different voltage on its wire every couple of milliseconds, so the key
+ * space is now effectively continuous and an unbounded Map would grow for as
+ * long as the tab is open. 4096 entries is far more than any digital circuit
+ * ever produces (a 10-pin circuit has at most a few hundred reachable states),
+ * so a digital experiment never reaches this and behaves exactly as before; an
+ * analog one drops its history wholesale rather than leaking, and pays one
+ * re-solve for each state it meets again. Clearing is always SAFE — a miss
+ * costs a solve, never a wrong answer.
+ */
+const MAX_CACHE_ENTRIES = 4096
 
 /** AVR output impedance, and the pull-up value, from §2.6. */
 const R_DRIVE = 25
@@ -83,34 +94,65 @@ function nortonFor(drive: PinDrive): { g: number; i: number } {
   }
 }
 
-/** Intel HEX → program words. */
+/**
+ * Intel HEX → program words.
+ *
+ * RECORD TYPES 02 AND 04 ARE THE WHOLE REASON THIS IS NOT THREE LINES. The
+ * `addr` field of a data record is sixteen bits, so a file that reaches past
+ * 64 KB has to carry a segment or a linear-address record and let every data
+ * record after it be relative to that base. avr-gcc emits type 04 for anything
+ * over 64 KB, which is to say for most of an ATmega2560's 256 KB flash.
+ *
+ * Ignoring them — which this used to do, silently, along with every other
+ * non-data record — does not produce a load error. It produces a program whose
+ * upper banks are all overlaid on top of the first 64 KB, so the reset vector
+ * is whatever the last bank happened to write there. That is §2.3's forbidden
+ * failure: a plausible-looking machine executing the wrong bytes.
+ *
+ * `flashBytes` must match the chip. avr8js derives `pc22Bits` from the program
+ * memory's byte length, and pc22Bits decides whether a return address is two
+ * bytes or three — see AvrChip.flashBytes.
+ */
 export function parseIntelHex(text: string, flashBytes = 0x8000): Uint16Array {
   const bytes = new Uint8Array(flashBytes)
+  /** Set by type 02/04 records; added to every subsequent data record's addr. */
+  let base = 0
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line.startsWith(':')) continue
     const len = parseInt(line.substring(1, 3), 16)
     const addr = parseInt(line.substring(3, 7), 16)
     const type = parseInt(line.substring(7, 9), 16)
-    if (type === 1) break
-    if (type !== 0) continue
-    for (let i = 0; i < len; i++) {
-      bytes[addr + i] = parseInt(line.substring(9 + i * 2, 11 + i * 2), 16)
+    const data = (i: number): number => parseInt(line.substring(9 + i * 2, 11 + i * 2), 16)
+
+    if (type === 1) break // end of file
+    if (type === 2) {
+      // Extended SEGMENT address: the 16-bit value is shifted left by 4.
+      base = ((data(0) << 8) | data(1)) << 4
+      continue
     }
+    if (type === 4) {
+      // Extended LINEAR address: the 16-bit value is the upper half of a
+      // 32-bit address, i.e. shifted left by 16.
+      base = ((data(0) << 8) | data(1)) * 0x10000
+      continue
+    }
+    if (type !== 0) continue // 03/05 are start-address records; nothing to load.
+    const at = base + addr
+    // A record past the end of flash is a hex built for a bigger part. Dropping
+    // the bytes quietly would be the same silent-wrong-program failure as
+    // ignoring the type 04 above, so it is refused out loud.
+    if (at + len > flashBytes) {
+      throw new Error(
+        `firmware writes to 0x${(at + len - 1).toString(16)}, past the end of this ` +
+          `board's ${flashBytes / 1024} KB of flash — it was built for a different chip`,
+      )
+    }
+    for (let i = 0; i < len; i++) bytes[at + i] = data(i)
   }
   const words = new Uint16Array(flashBytes / 2)
   for (let i = 0; i < words.length; i++) words[i] = bytes[i * 2] | (bytes[i * 2 + 1] << 8)
   return words
-}
-
-/** Arduino Uno silkscreen name → (port, bit). */
-const PIN_MAP: Record<string, ['B' | 'C' | 'D', number]> = {
-  D0: ['D', 0], D1: ['D', 1], D2: ['D', 2], D3: ['D', 3],
-  D4: ['D', 4], D5: ['D', 5], D6: ['D', 6], D7: ['D', 7],
-  D8: ['B', 0], D9: ['B', 1], D10: ['B', 2], D11: ['B', 3],
-  D12: ['B', 4], D13: ['B', 5],
-  A0: ['C', 0], A1: ['C', 1], A2: ['C', 2],
-  A3: ['C', 3], A4: ['C', 4], A5: ['C', 5],
 }
 
 export interface EngineSnapshot {
@@ -144,9 +186,13 @@ export interface EngineSnapshot {
 
 export class SimulationEngine {
   readonly cpu: CPU
-  private portB: AVRIOPort
-  private portC: AVRIOPort
-  private portD: AVRIOPort
+  /**
+   * Which AVR this is, and therefore every register address, interrupt vector
+   * and pin mapping below. See lib/simulator/avr/chip.ts.
+   */
+  readonly chip: AvrChip
+  /** Port letter → the live AVRIOPort. Three entries on an Uno, eleven on a Mega. */
+  private ports = new Map<string, AVRIOPort>()
 
   private compiled: CompileResult
   private drives = new Map<string, PinDrive>()
@@ -223,21 +269,35 @@ export class SimulationEngine {
   private voltages: Float64Array = new Float64Array(0)
   serial = ''
 
-  constructor(program: Uint16Array, doc: CircuitDoc) {
-    this.cpu = new CPU(program)
-    new AVRTimer(this.cpu, timer0Config)
-    new AVRTimer(this.cpu, timer1Config)
-    new AVRTimer(this.cpu, timer2Config)
-    this.portB = new AVRIOPort(this.cpu, portBConfig)
-    this.portC = new AVRIOPort(this.cpu, portCConfig)
-    this.portD = new AVRIOPort(this.cpu, portDConfig)
-    const usart = new AVRUSART(this.cpu, usart0Config, CLOCK_HZ)
+  /**
+   * @param chip Which AVR to build. Defaults to whatever board `doc` contains,
+   *   which is what the worker wants; passed explicitly only by tests that
+   *   construct an engine for a chip without drawing a board first.
+   */
+  constructor(program: Uint16Array, doc: CircuitDoc, chip: AvrChip = chipForDoc(doc)) {
+    this.chip = chip
+    this.cpu = new CPU(program, chip.cpuSramBytes)
+    for (const timer of chip.timers) new AVRTimer(this.cpu, timer)
+    for (const [letter, config] of Object.entries(chip.ports)) {
+      this.ports.set(letter, new AVRIOPort(this.cpu, config))
+    }
+    /**
+     * USART0 only, on every chip.
+     *
+     * A Mega has four, and `Serial1`…`Serial3` would therefore transmit into
+     * nothing. That is deliberate rather than an oversight: those three are
+     * separate physical ports on pins 14–19, and folding them into the editor's
+     * single Serial pane would present bytes that never shared a wire as one
+     * stream. Their register addresses are recorded in avr/atmega2560.ts so
+     * that giving them their own panes later is wiring, not research.
+     */
+    const usart = new AVRUSART(this.cpu, chip.usart0, CLOCK_HZ)
     usart.onByteTransmit = (b) => {
       this.serial += String.fromCharCode(b)
       if (this.serial.length > 4000) this.serial = this.serial.slice(-4000)
     }
 
-    for (const name of Object.keys(PIN_MAP)) this.drives.set(name, 'float')
+    for (const name of Object.keys(chip.pinMap)) this.drives.set(name, 'float')
 
     /**
      * Only WIRED pins are examined, and only on the port that changed.
@@ -248,8 +308,8 @@ export class SimulationEngine {
      * P0-1). A typical circuit wires one to three pins, so the watch list is
      * usually a single entry.
      */
-    const makeListener = (port: 'B' | 'C' | 'D', p: AVRIOPort) => () => {
-      const watch = this.watched[port]
+    const makeListener = (port: string, p: AVRIOPort) => () => {
+      const watch = this.watched.get(port) ?? EMPTY_WATCH
       let changed = false
       for (let i = 0; i < watch.length; i++) {
         const [name, bit] = watch[i]
@@ -267,9 +327,7 @@ export class SimulationEngine {
         this.dirtyFlag[0] = 1
       }
     }
-    this.portB.addListener(makeListener('B', this.portB))
-    this.portC.addListener(makeListener('C', this.portC))
-    this.portD.addListener(makeListener('D', this.portD))
+    for (const [letter, p] of this.ports) p.addListener(makeListener(letter, p))
 
     /**
      * The ADC reads REAL node voltages from the solved circuit.
@@ -281,7 +339,7 @@ export class SimulationEngine {
      * would make every analogRead() instant rather than taking the ~104 us a
      * real ATmega328P takes. Feeding channelValues keeps that behaviour exact.
      */
-    this.adc = new AVRADC(this.cpu, adcConfig)
+    this.adc = new AVRADC(this.cpu, chip.adc)
 
     this.doc = doc
     this.compiled = compile(doc)
@@ -309,8 +367,13 @@ export class SimulationEngine {
   /** Pins that are electrically connected. Unconnected pins are not in the key. */
   private wiredPins = new Set<string>()
 
-  /** Wired pins grouped by AVR port, so a port write only checks its own pins. */
-  private watched: Record<'B' | 'C' | 'D', Array<[string, number]>> = { B: [], C: [], D: [] }
+  /**
+   * Wired pins grouped by AVR port, so a port write only checks its own pins.
+   *
+   * A Map keyed by port letter rather than a fixed B/C/D record: a Mega has
+   * eleven ports, and experiment 11 alone spans A, C and F.
+   */
+  private watched = new Map<string, Array<[string, number]>>()
 
   /** Stamp one behavioural drive onto its port. The one place that maths lives. */
   private stampDrive(port: NortonPort, level: DriveLevel, volts: number): void {
@@ -331,13 +394,17 @@ export class SimulationEngine {
         const n = this.bindings.get(partId)?.nets[signal]
         return n !== undefined && n < this.voltages.length ? this.voltages[n] : 0
       },
+      hasSignal: (signal) => this.bindings.get(partId)?.nets[signal] !== undefined,
       // The engine owns both the port and the cache key, so a device's drive
       // can never diverge from what the cache thinks it is.
       drive: (signal, level, volts = VCC) => {
         const port = this.bindings.get(partId)?.ports[signal]
         if (!port) return
         const key = `${partId}:${signal}`
-        if (this.deviceDrives.get(key) === level) return
+        // The VOLTAGE is part of the state, not just the level — an analog part
+        // re-drives 'high' at a new value every few milliseconds and this
+        // early-out used to swallow every one of them after the first.
+        if (this.deviceDrives.get(key) === level && this.deviceVolts.get(key) === volts) return
         this.deviceDrives.set(key, level)
         this.deviceVolts.set(key, volts)
         this.stampDrive(port, level, volts)
@@ -466,7 +533,7 @@ export class SimulationEngine {
    */
   private driveInputs(): void {
     for (const name of this.wiredPins) {
-      const entry = PIN_MAP[name]
+      const entry = this.chip.pinMap[name]
       if (!entry) continue
       const drive = this.drives.get(name)
       // Only pins the sketch is not actively driving take an external level.
@@ -482,8 +549,7 @@ export class SimulationEngine {
       this.inputLevels.set(name, next)
 
       const [port, bit] = entry
-      const p = port === 'B' ? this.portB : port === 'C' ? this.portC : this.portD
-      p.setPin(bit, next)
+      this.ports.get(port)?.setPin(bit, next)
     }
   }
 
@@ -494,10 +560,13 @@ export class SimulationEngine {
 
   private rebuildWatchList(): void {
     this.wiredPins = new Set(this.compiled.mcuPorts.keys())
-    this.watched = { B: [], C: [], D: [] }
+    this.watched = new Map()
     for (const name of this.wiredPins) {
-      const entry = PIN_MAP[name]
-      if (entry) this.watched[entry[0]].push([name, entry[1]])
+      const entry = this.chip.pinMap[name]
+      if (!entry) continue
+      const list = this.watched.get(entry[0])
+      if (list) list.push([name, entry[1]])
+      else this.watched.set(entry[0], [[name, entry[1]]])
     }
   }
 
@@ -508,7 +577,14 @@ export class SimulationEngine {
     // operating point. Omitting it made every DHT11 transition a cache HIT on
     // the previous solution — the sensor pulled its line low and the solver
     // went on reporting it high.
-    for (const [id, level] of this.deviceDrives) k += '|' + id + level[0]
+    //
+    // The DRIVEN VOLTAGE goes in too, for an analog part: a pulse sensor drives
+    // 'high' at a different value every couple of milliseconds, and a key that
+    // only carried the level would return the first of those solutions forever.
+    for (const [id, level] of this.deviceDrives) {
+      k += '|' + id + level[0]
+      if (level === 'high') k += this.deviceVolts.get(id)
+    }
     return k
   }
 
@@ -581,8 +657,8 @@ export class SimulationEngine {
       // Publish solved node voltages to the ADC. Unconnected analog pins read
       // 0 V: a real floating input picks up noise, but a deterministic 0 is the
       // honest choice for a teaching tool.
-      for (let ch = 0; ch < 6; ch++) {
-        const netId = this.compiled.analogNets.get('A' + ch)
+      for (const [pin, ch] of this.chip.adcPins) {
+        const netId = this.compiled.analogNets.get(pin)
         this.adc.channelValues[ch] =
           netId !== undefined && netId < res.voltages.length ? res.voltages[netId] : 0
       }
@@ -606,6 +682,7 @@ export class SimulationEngine {
       this.latest = EMPTY_SOLUTION
     }
 
+    if (this.cache.size >= MAX_CACHE_ENTRIES) this.cache.clear()
     this.cache.set(key, this.latest)
     this.dirtyFlag[0] = 0
     this.driveInputs()
@@ -734,7 +811,7 @@ export class SimulationEngine {
       ledBrightness: this.averagedBrightness(),
       currents,
       deviceStates: this.states(currents),
-      adc: adcCounts(this.adc),
+      adc: adcCounts(this.adc, this.chip.adcPins),
       faults: this.faults(),
       problems: this.compiled.problems,
       serial: this.serial.slice(-1500),
@@ -776,6 +853,12 @@ function makeBehavioural(
       return new BuzzerMonitor(partId, ctx, BUZZER_5V)
     case 'stepper':
       return new StepperMonitor(partId, ctx, STEPPER_28BYJ48)
+    case 'pulse':
+      return new PulseSensor(partId, ctx)
+    case 'mcp3008':
+      return new MCP3008Device(partId, ctx)
+    case 'relay':
+      return new RelayMonitor(partId, ctx, RELAY_MODULE_4CH)
     default:
       return null
   }
@@ -806,11 +889,14 @@ const EMPTY_SOLUTION: CachedSolution = {
 }
 
 /** What analogRead() would return right now, for display. */
-function adcCounts(adc: AVRADC): Record<string, number> {
+function adcCounts(adc: AVRADC, pins: AvrChip['adcPins']): Record<string, number> {
   const out: Record<string, number> = {}
-  for (let ch = 0; ch < 6; ch++) {
+  for (const [pin, ch] of pins) {
     const v = Number(adc.channelValues[ch] ?? 0)
-    out['A' + ch] = Math.max(0, Math.min(1023, Math.round((v / adc.avcc) * 1023)))
+    out[pin] = Math.max(0, Math.min(1023, Math.round((v / adc.avcc) * 1023)))
   }
   return out
 }
+
+/** Shared empty watch list, so a port with no wired pins allocates nothing. */
+const EMPTY_WATCH: Array<[string, number]> = []

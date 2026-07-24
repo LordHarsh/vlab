@@ -1721,3 +1721,419 @@ export class UnipolarStepper implements Device {
     }
   }
 }
+
+// ─── Opto-isolated relay module ───────────────────────────────────────────────
+
+/**
+ * The infra-red LED inside a PC817 opto-coupler.
+ *
+ * NOT `LED_RED`, and that difference is the whole reason this constant exists. A
+ * PC817's emitter is a GaAs infra-red die with a forward drop of 1.2 V typical
+ * at IF = 20 mA (Sharp PC817 datasheet, electro-optical characteristics);
+ * `LED_RED` would put 1.88 V there, which on a 5 V rail behind the board's own
+ * 1 kOhm series resistor is a 20 % error in the input current — i.e. in the exact
+ * number that decides whether the channel switches at all.
+ *
+ * `is` is DERIVED from that one datasheet point rather than fitted:
+ *
+ *   Vf = n*VT*ln(If/Is)  =>  Is = If*exp(-Vf/(n*VT))
+ *      = 0.020 * exp(-1.2 / (1.8 * 0.025852))
+ *      = 0.020 * exp(-25.7878)  =  1.2633e-13 A
+ *
+ * devices.test.ts recomputes that expression from the datasheet numbers and
+ * asserts the model reproduces 1.2 V at 20 mA, so the constant cannot drift
+ * away from its own derivation.
+ */
+export const OPTO_LED: DiodeParams = { is: 1.2633e-13, n: 1.8 }
+
+/**
+ * A four-channel opto-isolated relay board, as sold for Arduino/Pi kits.
+ *
+ * THE BOARD IS ACTIVE LOW, and that is the single most consequential fact about
+ * it. The input circuit is  VCC -> opto LED -> 1 kOhm -> IN, so current only
+ * flows — and the channel only switches — when the driving pin PULLS IN DOWN.
+ * Driving IN high turns the channel OFF. Every "my relay is on when my code says
+ * off" question about these boards is this. High-trigger variants do exist (some
+ * boards carry a jumper), so `activeLow` is a property of the placed part, and
+ * the two wirings are genuinely different circuits rather than a sign flip: on a
+ * high-trigger board the same LED and resistor run IN -> opto LED -> 1 kOhm -> GND.
+ *
+ * RELAY — Songle SRD-05VDC-SL-C, the part fitted to every one of these boards:
+ *
+ *   Nominal coil voltage      5 VDC
+ *   Coil resistance           70 Ohm +/- 10 %
+ *   Nominal coil current      71.4 mA        (and 5/70 = 71.4 mA — consistent)
+ *   Coil power                0.36 W
+ *   Pick-up voltage           <= 75 % of nominal = 3.75 V
+ *   Drop-out voltage          >= 10 % of nominal = 0.50 V
+ *   Max allowable voltage     110 % of nominal   = 5.50 V
+ *   Contact rating            10 A 250 VAC / 10 A 30 VDC
+ *   Contact resistance        100 mOhm max
+ *
+ * The pick-up figure is not a detail: a 5 V relay board fed from a 3.3 V rail
+ * gets about 3.0 V on the coil, BELOW the 3.75 V it is guaranteed to operate at,
+ * so the opto switches, the transistor saturates, and the relay still does not
+ * click. That is exactly what happens on a bench with a Pi or a Pico, and the
+ * model reproduces it rather than quietly closing the contact.
+ *
+ * OPTO-COUPLER — Sharp PC817:
+ *
+ *   Forward voltage    1.2 V typ at IF = 20 mA
+ *   Forward current    50 mA absolute maximum
+ *   CTR                50–600 % at IF = 5 mA
+ *
+ * TWO NUMBERS HERE ARE JUDGEMENT, NOT DATASHEET, and are marked as such:
+ *
+ *   `optoOnAmps` / `optoOffAmps` — the LED current at which the board's own
+ *      switching transistor is taken to be saturated, and the current at which
+ *      it releases. No datasheet prints this, because it depends on a
+ *      transistor the relay board chose. It is BOUNDED, though, and that is what
+ *      makes it defensible: the board's 1 kOhm from a 5 V rail delivers about
+ *      (5 - 1.12)/1000 = 3.9 mA, so the threshold has to sit below that or a
+ *      correctly built board would not work; and a PC817's CTR is only specified
+ *      down to 5 mA, so it has to sit well above the sub-milliamp region where
+ *      CTR collapses. 2.0 mA is a little over half the available current and
+ *      twice the 1.0 mA release point.
+ *
+ *   `driverOhms` — bulk resistance of the coil-driving transistor in
+ *      saturation. An S8050 datasheet gives VCE(sat) at one current only, and
+ *      one point cannot separate an offset from a resistance (the same problem
+ *      the L298N model has). Taking VCE(sat) as a constant 0.3 V offset plus
+ *      0.5 Ohm of bulk puts the drop at 0.34 V at the coil's ~70 mA, leaving
+ *      4.66 V of a 5 V rail on the coil — 66.6 mA, against the 71.4 mA an ideal
+ *      5 V would drive. Measured boards sit inside that band.
+ */
+export interface RelayModuleParams {
+  /** Nominal coil voltage, volts. */
+  coilVolts: number
+  /** Coil DC resistance, ohms. */
+  coilOhms: number
+  /** Must-operate coil voltage, volts. */
+  pullInVolts: number
+  /** Must-release coil voltage, volts. */
+  dropOutVolts: number
+  /** Maximum allowable coil voltage, volts. */
+  maxCoilVolts: number
+  /** Series resistor between the opto LED and the IN pin, ohms. */
+  inputOhms: number
+  /** Opto LED current at which the channel is taken to be on, amps. Judgement. */
+  optoOnAmps: number
+  /** Opto LED current at which it releases, amps. Judgement. */
+  optoOffAmps: number
+  /** Absolute maximum forward current of the opto LED, amps. */
+  optoMaxAmps: number
+  /** VCE(sat) of the coil-driving transistor at zero current, volts. */
+  driverSatVolts: number
+  /** Bulk resistance of that transistor in saturation, ohms. Judgement. */
+  driverOhms: number
+  /** Closed-contact resistance, ohms. */
+  contactOhms: number
+  /** Contact current rating, amps. */
+  contactAmps: number
+  /** Channels on the board. */
+  channels: number
+}
+
+/** The common 4-channel opto-isolated board. See RelayModuleParams for sources. */
+export const RELAY_MODULE_4CH: RelayModuleParams = {
+  coilVolts: 5,
+  coilOhms: 70,
+  pullInVolts: 2.5,
+  dropOutVolts: 0.5,
+  maxCoilVolts: 5.5,
+  inputOhms: 1000,
+  optoOnAmps: 2.0e-3,
+  optoOffAmps: 1.0e-3,
+  optoMaxAmps: 0.05,
+  driverSatVolts: 0.3,
+  driverOhms: 0.5,
+  contactOhms: 0.1,
+  contactAmps: 10,
+  channels: 4,
+}
+
+/**
+ * Open-contact resistance, ohms. The same 1e12 Ohm the push button uses for an
+ * open switch, and for the same reason: removing the device instead would change
+ * the matrix STRUCTURE every time a relay clicks, and the point of stamping
+ * switches permanently (§2.6) is that it never does.
+ */
+const CONTACT_OPEN_OHMS = 1e12
+
+/**
+ * One relay channel: the coil driver and the SPDT contact.
+ *
+ * `nonlinear = true` for exactly the reason DarlingtonSink and HBridgeChannel
+ * are — see the note above DarlingtonParams. The I/V curve of a closed contact
+ * is a straight line; what needs a second Newton iteration is the ON/OFF
+ * DECISION, and that decision is read off the input side and is never fed back
+ * from the output.
+ *
+ * The channel does NOT stamp the opto LED or its series resistor: those are an
+ * ordinary Diode and Resistor, created alongside it by createRelayModule(), so
+ * the input current is SOLVED rather than assumed. This device only measures the
+ * current the solver found across that resistor.
+ */
+export class RelayChannel implements Device {
+  readonly nonlinear = true
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** True while the coil is energised and COM is on NO. */
+  on = false
+  /** False on the iteration in which the contact moved. See Device.settled. */
+  settled = true
+  /** Coil current, amps. The Device.current convention. */
+  current = 0
+  /** Solved opto LED current, amps — what the driving pin has to sink or source. */
+  optoAmps = 0
+  /** Current through whichever contact is closed, COM -> NO or COM -> NC, amps. */
+  contactCurrent = 0
+
+  constructor(
+    readonly id: string,
+    private nets: {
+      /** The series resistor's two ends: the opto current is (vHi - vLo)/R. */
+      seriesHi: NetId
+      seriesLo: NetId
+      /** The coil's low side — the driver transistor's collector. */
+      coil: NetId
+      /** The module's OWN supply pins, never net 0. */
+      vcc: NetId
+      gnd: NetId
+      com?: NetId
+      no?: NetId
+      nc?: NetId
+    },
+    readonly params: RelayModuleParams = RELAY_MODULE_4CH,
+  ) {}
+
+  reset(): void {
+    this.on = false
+    this.settled = true
+  }
+
+  /** Coil current at its nominal voltage, amps: 5/70 = 71.4 mA on an SRD-05VDC. */
+  get nominalCoilAmps(): number {
+    return this.params.coilVolts / Math.max(this.params.coilOhms, MIN_RESISTANCE)
+  }
+
+  /**
+   * What the coil would see if the driver were switched on, volts.
+   *
+   * Read off the SUPPLY only — never off the coil node — so the decision stays
+   * one-directional and Newton cannot ping-pong across it. The driver's own
+   * saturation drop is subtracted because that is voltage the coil never gets.
+   */
+  availableCoilVolts(ctx: StampContext): number {
+    const supply = ctx.voltage(this.nets.vcc) - ctx.voltage(this.nets.gnd)
+    return supply - this.params.driverSatVolts
+  }
+
+  stamp(ctx: StampContext): void {
+    const p = this.params
+    const iOpto =
+      (ctx.voltage(this.nets.seriesHi) - ctx.voltage(this.nets.seriesLo)) /
+      Math.max(p.inputOhms, MIN_RESISTANCE)
+    this.optoAmps = iOpto
+
+    // Hysteresis on BOTH halves, across each datasheet's own undefined band: the
+    // opto's unspecified sub-5 mA CTR region, and the relay's pick-up/drop-out
+    // gap. Inside either, a real part may do anything, and holding the previous
+    // state is the only choice that cannot chatter.
+    const optoOn = this.on ? iOpto > p.optoOffAmps : iOpto >= p.optoOnAmps
+    const vAvail = this.availableCoilVolts(ctx)
+    const coilOk = this.on ? vAvail > p.dropOutVolts : vAvail >= p.pullInVolts
+    const on = optoOn && coilOk
+
+    this.settled = on === this.on
+    this.on = on
+
+    if (on) {
+      // The driver transistor, as a Thevenin source in Norton form — exactly the
+      // stamp DarlingtonSink uses. i(coil->gnd) = g*(V_coil - VCE(sat)).
+      const g = 1 / Math.max(p.driverOhms, MIN_RESISTANCE)
+      stampConductance(ctx, this.nets.coil, this.nets.gnd, g)
+      stampCurrent(ctx, this.nets.gnd, this.nets.coil, g * p.driverSatVolts)
+    }
+
+    // The SPDT contact. Both halves are stamped in BOTH states so the sparsity
+    // pattern is fixed; only the conductance changes when the armature moves.
+    const closed = 1 / Math.max(p.contactOhms, MIN_RESISTANCE)
+    const open = 1 / CONTACT_OPEN_OHMS
+    if (this.nets.com !== undefined) {
+      if (this.nets.no !== undefined) {
+        stampConductance(ctx, this.nets.com, this.nets.no, on ? closed : open)
+      }
+      if (this.nets.nc !== undefined) {
+        stampConductance(ctx, this.nets.com, this.nets.nc, on ? open : closed)
+      }
+    }
+  }
+
+  readback(ctx: StampContext): void {
+    const p = this.params
+    this.optoAmps =
+      (ctx.voltage(this.nets.seriesHi) - ctx.voltage(this.nets.seriesLo)) /
+      Math.max(p.inputOhms, MIN_RESISTANCE)
+    this.current = this.on
+      ? (ctx.voltage(this.nets.coil) - ctx.voltage(this.nets.gnd) - p.driverSatVolts) /
+        Math.max(p.driverOhms, MIN_RESISTANCE)
+      : 0
+
+    this.contactCurrent = 0
+    if (this.nets.com === undefined) return
+    const other = this.on ? this.nets.no : this.nets.nc
+    if (other === undefined) return
+    this.contactCurrent =
+      (ctx.voltage(this.nets.com) - ctx.voltage(other)) / Math.max(p.contactOhms, MIN_RESISTANCE)
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const p = this.params
+    const supply = ctx.voltage(this.nets.vcc) - ctx.voltage(this.nets.gnd)
+    if (supply > p.maxCoilVolts) {
+      return {
+        kind: 'over_power',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: supply,
+        message:
+          `${supply.toFixed(1)} V on the VCC of a ${p.coilVolts} V relay module, whose coil is ` +
+          `rated to ${p.maxCoilVolts} V absolute maximum. On real hardware the coil cooks.`,
+      }
+    }
+
+    this.readback(ctx)
+    if (this.optoAmps > p.optoMaxAmps) {
+      return {
+        kind: 'over_current',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: this.optoAmps,
+        message:
+          `${(this.optoAmps * 1000).toFixed(0)} mA through an opto-coupler LED rated for ` +
+          `${(p.optoMaxAmps * 1000).toFixed(0)} mA. On real hardware the isolator is destroyed.`,
+      }
+    }
+
+    const ic = Math.abs(this.contactCurrent)
+    if (ic > p.contactAmps) {
+      return {
+        kind: 'over_current',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: ic,
+        message:
+          `${ic.toFixed(1)} A through a contact rated for ${p.contactAmps} A. ` +
+          `On real hardware the contacts weld shut.`,
+      }
+    }
+    return null
+  }
+}
+
+/**
+ * A whole relay board: per channel an opto input, a coil, its flyback diode and
+ * an SPDT contact.
+ *
+ * `internal` supplies the two nodes each channel needs and that no pin exposes:
+ * the junction between the opto LED and its series resistor, and the coil's low
+ * side. They are real nodes on the real board, and the compiler allocates them
+ * exactly the way it allocates an LED's internal series node.
+ *
+ * THE FLYBACK DIODE IS STAMPED AND IS INERT AT DC, exactly as the ULN2003's are
+ * and for the same reason: an energised coil pulls its low side DOWN, so a diode
+ * from that node up to VCC is always reverse-biased at an operating point. Its
+ * job is to absorb the inductive kick when the coil switches OFF, and that is a
+ * transient the interactive engine does not run yet. It is modelled rather than
+ * omitted because it is real silicon on the board.
+ *
+ * A channel is built only where `internal` carries a slot for it — the compiler
+ * fills that in from the netlist, so channels nothing is attached to cost
+ * nothing at all.
+ */
+export function createRelayModule(
+  id: string,
+  nets: {
+    vcc: NetId
+    gnd: NetId
+    /** Per channel, undefined where the channel is not being built. */
+    in: Array<NetId | undefined>
+    com: Array<NetId | undefined>
+    no: Array<NetId | undefined>
+    nc: Array<NetId | undefined>
+    /** [optoJunction, coilLowSide] per channel, allocated by the caller. */
+    internal: Array<[NetId, NetId] | undefined>
+  },
+  activeLow: boolean,
+  params: RelayModuleParams = RELAY_MODULE_4CH,
+): { devices: Device[]; channels: RelayChannel[] } {
+  const devices: Device[] = []
+  const channels: RelayChannel[] = []
+
+  for (let k = 0; k < params.channels; k++) {
+    const slot = nets.internal[k]
+    if (slot === undefined) continue
+    const [optoJunction, coilNode] = slot
+    const inNet = nets.in[k]
+
+    /**
+     * The input branch. The two trigger polarities really are different
+     * circuits:
+     *
+     *   active LOW   VCC -> opto LED -> R -> IN   (current flows when IN is low)
+     *   active HIGH  IN  -> opto LED -> R -> GND  (current flows when IN is high)
+     *
+     * An IN that reached no net at all gets the module's own ground, the same
+     * substitution createL298N makes for an unwired logic pin: it solves to the
+     * same answer (no current, channel off) without spending a matrix unknown to
+     * prove it.
+     */
+    const inputEnd = inNet ?? nets.gnd
+    const optoAnode = activeLow ? nets.vcc : inputEnd
+    const seriesEnd = activeLow ? inputEnd : nets.gnd
+    const opto = new Diode(`${id}.opto${k + 1}`, optoAnode, optoJunction, OPTO_LED)
+    // The opto's OWN ratings, not an indicator LED's: 20 mA is the datasheet's
+    // test condition and 50 mA its absolute maximum forward current.
+    opto.rating = 0.02
+    opto.absMaxCurrent = params.optoMaxAmps
+    devices.push(opto)
+    devices.push(new Resistor(`${id}.rin${k + 1}`, optoJunction, seriesEnd, params.inputOhms))
+
+    /**
+     * The coil, from the module's own VCC down to the driver's collector.
+     *
+     * Its power rating is the COIL's, not a quarter-watt resistor's. An
+     * SRD-05VDC dissipates 0.36 W at its nominal 5 V and is rated to 110 % of
+     * that voltage, i.e. 5.5^2/70 = 0.43 W — so a coil doing its job would trip
+     * Resistor's 0.25 W default and report a burnt-out part on a correctly built
+     * circuit. Above this the coil really is over-volted, and RelayChannel's own
+     * safety() names that fault properly, so the two cannot double-report.
+     */
+    const coil = new Resistor(`${id}.coil${k + 1}`, nets.vcc, coilNode, params.coilOhms)
+    coil.rating = (params.maxCoilVolts * params.maxCoilVolts) / params.coilOhms
+    devices.push(coil)
+    // Flyback: anode on the collector, cathode on VCC. See the note above.
+    devices.push(new Diode(`${id}.dfly${k + 1}`, coilNode, nets.vcc, DIODE_1N4148))
+
+    const ch = new RelayChannel(
+      `${id}.ch${k + 1}`,
+      {
+        seriesHi: optoJunction,
+        seriesLo: seriesEnd,
+        coil: coilNode,
+        vcc: nets.vcc,
+        gnd: nets.gnd,
+        com: nets.com[k],
+        no: nets.no[k],
+        nc: nets.nc[k],
+      },
+      params,
+    )
+    devices.push(ch)
+    channels.push(ch)
+  }
+
+  return { devices, channels }
+}

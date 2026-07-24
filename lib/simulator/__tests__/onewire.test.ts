@@ -378,6 +378,9 @@ class OwNode implements BehaviouralContext {
     if (signal === 'VDD') return this.vdd
     return 0
   }
+  hasSignal(signal: string): boolean {
+    return signal === 'DQ' || signal === 'VDD'
+  }
   props(): Record<string, number | string> {
     return this.propValues
   }
@@ -1862,6 +1865,9 @@ class StepHarness implements BehaviouralContext {
   drive(): void {}
   voltage(signal: string): number {
     return this.volts[signal] ?? 0
+  }
+  hasSignal(signal: string): boolean {
+    return signal in this.volts
   }
   props(): Record<string, number | string> {
     return {}
