@@ -81,6 +81,31 @@ export default async function SectionPage({
   // The native editor autosaves against this simulation id; threaded through so
   // SimulationSection can build its RemoteTarget. Null for every non-native kind.
   let simSimulationId: string | null = null
+  /**
+   * This experiment's own published Arduino sketch, for the native editor to
+   * open on.
+   *
+   * WHY IT IS READ HERE. The `code` section of an experiment is the listing the
+   * student reads in the lab sheet, and it is the only place that listing
+   * exists — nothing in the repository duplicates it. Handing the SAME text to
+   * the editor is what makes "your experiment's sketch, editable" true rather
+   * than approximately true, and it means an instructor who corrects the
+   * listing corrects what the board runs, in one edit, with no deploy.
+   *
+   * It is one extra query, on `native` simulation sections only, against a row
+   * this student is already permitted to read and already reading a click away.
+   * The alternative — fetching it from the client after the editor mounts —
+   * would put a loading state in front of the code panel and a second round
+   * trip in front of the first compile.
+   *
+   * `language` is checked rather than assumed: six of the twelve experiments
+   * publish Python for a Raspberry Pi, and handing THAT to a C++ compiler would
+   * produce a screenful of syntax errors against code the student did not write
+   * for this board. Those six run on the Pico track, which sources its script
+   * from lib/simulator/pico/experiments.ts because it is a port rather than a
+   * transcription.
+   */
+  let simStarterSketch: string | null = null
   if (section.type === 'simulation') {
     const simId: string | undefined = content?.simulation_id
     if (simId) {
@@ -96,6 +121,22 @@ export default async function SectionPage({
       simTitle = sim?.title ?? 'Interactive Simulation'
       simKind = sim?.type ?? 'tinkercad'
       simType = (cfg?.sim_type as string) ?? null
+    }
+
+    if (simKind === 'native') {
+      const { data: codeSection } = await supabase
+        .from('experiment_sections')
+        .select('content')
+        .eq('experiment_id', section.experiment_id)
+        .eq('type', 'code')
+        .eq('status', 'active')
+        .order('order_index', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      const codeContent = codeSection?.content as Record<string, unknown> | null
+      if (codeContent?.language === 'arduino_c' && typeof codeContent.code === 'string') {
+        simStarterSketch = codeContent.code
+      }
     }
   }
 
@@ -130,6 +171,7 @@ export default async function SectionPage({
             simulationId={simSimulationId}
             classId={classId}
             experimentSlug={expSlug}
+            starterSketch={simStarterSketch}
           />
         )
       case 'quiz': {

@@ -20,14 +20,24 @@
  */
 
 /**
- * Only one language today, and deliberately not widened to 'cpp'.
+ * Two languages, because there are now two tracks a student can write for.
  *
- * There is no avr-gcc in the browser and only three prebuilt .hex fixtures, so
- * an Arduino sketch stored here could never be run — and a stored program that
- * cannot run is a lie told in a database column. When a compile path exists,
- * widening this union is the change that admits it.
+ * This union was `'micropython'` alone, with a note saying that storing an
+ * Arduino sketch would be "a lie told in a database column" while there was no
+ * way to compile one — only three prebuilt .hex fixtures existed, so a saved
+ * sketch could never have been run. `app/api/compile/route.ts` is the compile
+ * path that note was waiting for: it drives the WebAssembly avr-gcc toolchain
+ * SERVER-SIDE and hands back Intel HEX, so `arduino_c` now names something the
+ * board can actually execute.
+ *
+ * The string matches `BoardProfile.language` in model/boards.ts and the
+ * `language` field the published `code` sections already carry in the database,
+ * so the same value flows from the lab sheet to the editor to the attempt row
+ * without translation.
  */
-export type CodeLanguage = 'micropython'
+export type CodeLanguage = 'micropython' | 'arduino_c'
+
+const LANGUAGES: readonly CodeLanguage[] = ['micropython', 'arduino_c']
 
 export interface CodeFile {
   /** Path as the board would see it. One file today; see the header. */
@@ -42,6 +52,26 @@ export interface CodeBundle {
 
 /** The one file a Pico project has, named as MicroPython itself would. */
 export const MAIN_PY = 'main.py'
+
+/**
+ * The one file an Arduino project has, named as the Arduino IDE would.
+ *
+ * `.ino` and not `.cpp` on purpose: it is what the student is writing, and the
+ * distinction is real rather than cosmetic — a `.ino` is compiled only after
+ * `#include <Arduino.h>` and hoisted prototypes are inserted for it, which is
+ * what lib/simulator/avr/ino.ts does. Calling the stored file `.cpp` would
+ * claim the student had written a C++ translation unit, and then the errors
+ * they saw would be reported against a file that does not exist.
+ *
+ * It is also the name every diagnostic carries, so `sketch.ino:3:1: error: …`
+ * names the tab the student is looking at.
+ */
+export const MAIN_INO = 'sketch.ino'
+
+/** The file a given track's program is stored under. */
+export function fileNameFor(language: CodeLanguage): string {
+  return language === 'arduino_c' ? MAIN_INO : MAIN_PY
+}
 
 export const EMPTY_CODE: CodeBundle = { files: [] }
 
@@ -85,9 +115,21 @@ export function parseCodeBundle(value: unknown): CodeBundle | null {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
     const f = entry as { name?: unknown; language?: unknown; source?: unknown }
     if (typeof f.name !== 'string' || typeof f.source !== 'string') continue
-    // An unknown language is coerced rather than dropped: the source is the
-    // student's work and losing it to a label mismatch would be indefensible.
-    files.push({ name: f.name, language: 'micropython', source: f.source })
+    /**
+     * A known language is kept; an unknown one is INFERRED FROM THE FILE NAME
+     * rather than dropped, because the source is the student's work and losing
+     * it to a label mismatch would be indefensible.
+     *
+     * The inference matters for rows written before this union had two members:
+     * every one of them stored `language: 'micropython'`, and every one of them
+     * is a `main.py`, so the name and the label agree and nothing is
+     * misfiled. A future row whose label is missing or misspelled falls back to
+     * the extension, which is the more reliable of the two signals.
+     */
+    const declared = LANGUAGES.find((l) => l === f.language)
+    const language: CodeLanguage =
+      declared ?? (f.name.endsWith('.ino') || f.name.endsWith('.cpp') ? 'arduino_c' : 'micropython')
+    files.push({ name: f.name, language, source: f.source })
   }
   return { files }
 }

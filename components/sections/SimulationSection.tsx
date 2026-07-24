@@ -44,6 +44,7 @@ export function SimulationSection({
   simulationId = null,
   classId = null,
   experimentSlug = null,
+  starterSketch = null,
 }: {
   type?: SimulationKind
   simType?: string | null
@@ -58,11 +59,17 @@ export function SimulationSection({
   classId?: string | null
   /**
    * Native only — which experiment this is, so a Raspberry Pi Pico circuit can
-   * be given the MicroPython its lab sheet asks the student to run. There is no
-   * compile step on that track and no in-browser Python editor yet, so the
-   * script is looked up by slug. Ignored by every Arduino experiment.
+   * be given the MicroPython its lab sheet asks the student to run. The script
+   * is looked up by slug because it is a PORT of a lab sheet written for a
+   * Raspberry Pi SBC, and a port belongs in reviewable code.
    */
   experimentSlug?: string | null
+  /**
+   * Native only — this experiment's published Arduino sketch, read from its own
+   * `code` section by the page above. Null for the six Raspberry Pi experiments
+   * and for anything that publishes no listing.
+   */
+  starterSketch?: string | null
 }) {
   if (type === 'builtin') {
     return <BuiltinSimulation simType={simType} title={title} platform={platform} />
@@ -75,6 +82,7 @@ export function SimulationSection({
         classId={classId}
         title={title}
         experimentSlug={experimentSlug}
+        starterSketch={starterSketch}
       />
     )
   }
@@ -141,11 +149,13 @@ function NativeSimulation({
   classId,
   title,
   experimentSlug,
+  starterSketch,
 }: {
   simulationId: string | null
   classId: string | null
   title: string
   experimentSlug: string | null
+  starterSketch: string | null
 }) {
   if (!simulationId || !classId) {
     return (
@@ -170,6 +180,7 @@ function NativeSimulation({
         <NativeCircuitEditor
           remote={{ simulationId, classId }}
           experimentSlug={experimentSlug ?? undefined}
+          starterSketch={starterSketch ?? undefined}
         />
       </FullscreenGate>
     </div>

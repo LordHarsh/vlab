@@ -8,7 +8,8 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { ChevronDown, ChevronRight, Play, RotateCcw, Square, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Play, RotateCcw, Square, X } from 'lucide-react'
+import type { CodeLanguage } from '@/lib/simulator/model/code'
 
 /**
  * The student's MicroPython, docked beside the circuit.
@@ -42,33 +43,98 @@ import { ChevronDown, ChevronRight, Play, RotateCcw, Square, X } from 'lucide-re
  * that the board is running something older than what is on screen.
  */
 
-/** Same 4 spaces PEP 8 asks for, and the same the authored scripts use. */
-const INDENT = '    '
+/**
+ * TWO LANGUAGES, ONE PANEL.
+ *
+ * Arduino C++ was added here rather than in a second component, and the reason
+ * is not tidiness. Everything a student does in this panel — type, indent, run,
+ * read the error, reset to the starter, watch the serial monitor, resize the
+ * split — is identical on both tracks, and every one of those behaviours took a
+ * decision that is written down above. A parallel `SketchPanel` would have had
+ * to re-make all of them, and would have started drifting on the first one.
+ *
+ * What genuinely differs is narrow, and is exactly what `language` selects:
+ *
+ *   · MicroPython is INTERPRETED. "Run" reboots the interpreter and pastes the
+ *     script; failure arrives later, as a traceback in the serial stream, and
+ *     is dug out of it by lastTraceback().
+ *   · Arduino C++ is COMPILED, on the server. "Run" is a network round trip
+ *     that either produces firmware or produces a list of errors with line
+ *     numbers, and it takes seconds — so there is a third status, `compiling`,
+ *     which the Python track has no equivalent of.
+ *
+ * The failure display is shared: a Python traceback and a GCC diagnostic list
+ * are both "here is what went wrong, in the tool's own words", and a student
+ * who has learnt to look in one place on one track should look in the same
+ * place on the other.
+ */
+
+/** Python wants 4 spaces; C++ conventionally uses 2, and Arduino's own IDE does. */
+const INDENT_FOR: Record<CodeLanguage, string> = {
+  micropython: '    ',
+  arduino_c: '  ',
+}
 
 export type CodePanelStatus = 'loading' | 'stopped' | 'running'
+
+/**
+ * What the compiler is doing, for the tracks that have one.
+ *
+ * `idle` on the MicroPython track always — there is nothing to compile — which
+ * is why this is a separate axis from CodePanelStatus rather than two more
+ * members of it. The board can be running the previous binary WHILE a new one
+ * compiles, and one enum could not say both.
+ */
+export type CompilePhase = 'idle' | 'compiling' | 'ready' | 'error'
+
+/** One compiler message, as lib/simulator/avr/ino.ts parses it. */
+export interface CodeDiagnostic {
+  line: number | null
+  column: number | null
+  severity: 'error' | 'warning' | 'note'
+  message: string
+  raw: string
+}
 
 export interface CodePanelProps {
   /** Board this code is bound to, e.g. "Raspberry Pi Pico". */
   boardLabel: string
   /** The placed part's id — Tinkercad's selector keys on the board's name. */
   boardId: string
+  /** Which language the student is writing, and therefore how Run behaves. */
+  language: CodeLanguage
   /** The draft: what is in the editor, which is NOT necessarily what is running. */
   source: string
   onSourceChange: (next: string) => void
   /** True when the draft differs from the source the board was given. */
   dirty: boolean
   status: CodePanelStatus
-  /** How far the REPL hand-off has got, in the editor's own words. */
+  /** How far the REPL hand-off has got, in the editor's own words. MicroPython only. */
   replLabel: string
   /** Everything the emulated USB serial link has produced. */
   serial: string
-  /** False when this experiment ships no authored script to go back to. */
+  /** False when this experiment ships no authored program to go back to. */
   canReset: boolean
   onReset: () => void
-  /** Load the draft onto the board and run it. Reboots the interpreter. */
+  /** Load the draft onto the board and run it. Reboots the MCU. */
   onRun: () => void
   onStop: () => void
   onClose: () => void
+
+  /* ── compiled tracks only ─────────────────────────────────────────────── */
+  compile?: {
+    phase: CompilePhase
+    /** Errors when the compile failed; warnings when it succeeded. */
+    diagnostics: CodeDiagnostic[]
+    /** A transport/authorisation failure, which is NOT about the student's code. */
+    error: string | null
+    flashBytes: number
+    flashLimit: number
+    ms: number
+    cached: boolean
+    /** True once any firmware built from this editor is on the board. */
+    hasFirmware: boolean
+  }
 }
 
 /**
@@ -95,6 +161,7 @@ export function lastTraceback(serial: string): string | null {
 export function CodePanel({
   boardLabel,
   boardId,
+  language,
   source,
   onSourceChange,
   dirty,
@@ -106,7 +173,10 @@ export function CodePanel({
   onRun,
   onStop,
   onClose,
+  compile,
 }: CodePanelProps) {
+  const isCpp = language === 'arduino_c'
+  const INDENT = INDENT_FOR[language]
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
   const serialRef = useRef<HTMLPreElement>(null)
@@ -122,7 +192,17 @@ export function CodePanel({
   const [confirmingReset, setConfirmingReset] = useState(false)
 
   const lineCount = source.split('\n').length
-  const traceback = lastTraceback(serial)
+  /**
+   * A Python traceback is a RUNTIME failure found by reading the serial stream;
+   * a GCC diagnostic is a BUILD failure the server hands back as data. Neither
+   * exists on the other track, so each is looked for only where it can occur.
+   */
+  const traceback = isCpp ? null : lastTraceback(serial)
+  const errors = compile?.diagnostics.filter((d) => d.severity === 'error') ?? []
+  const warnings = compile?.diagnostics.filter((d) => d.severity === 'warning') ?? []
+  const compiling = compile?.phase === 'compiling'
+  /** Anything red, whichever track produced it. */
+  const failed = traceback !== null || errors.length > 0 || Boolean(compile?.error)
 
   // Gutter follows the textarea exactly. useLayoutEffect so a programmatic
   // source change (reset to starter) cannot paint one frame misaligned.
@@ -207,16 +287,56 @@ export function CodePanel({
    * traceback to the REPL when the pasted block ends, so a traceback in the tail
    * of the stream is the honest signal that it did.
    */
+  /**
+   * ORDER MATTERS HERE, and the rule is: say the most recent true thing.
+   *
+   * `compiling` comes first because it is happening NOW and takes seconds — the
+   * one state the Python track never had, and the one a student will otherwise
+   * read as the button having done nothing.
+   *
+   * A compile ERROR outranks `dirty`. Both are true after a failed build — the
+   * draft does differ from what is on the board — but "press Run to load this"
+   * is a lie when pressing Run has just been tried and refused. Naming the
+   * error, and leaving the board's true state to the line below it, is the
+   * honest pair.
+   *
+   * On the MicroPython side this is unchanged, including the part that matters
+   * most: pico/engine.ts moves its replPhase to `running` when the paste is
+   * handed over and never moves it back, so a script that died on its first
+   * line still reads "script running". A traceback in the tail of the stream is
+   * the signal that it did not, and it wins over the REPL's own word.
+   */
   const statusText =
-    status === 'loading'
-      ? 'Loading MicroPython…'
-      : dirty
-        ? 'Edited — press Run to load this onto the board'
-        : traceback
-          ? 'Python error — see the serial monitor'
-          : status === 'running'
-            ? `On the board · ${replLabel}`
-            : 'On the board · stopped'
+    /**
+     * COMPILING IS CHECKED FIRST, ahead of `status === 'loading'`, and it has to
+     * be: the editor deliberately reports `loading` while a compile is in
+     * flight, because `ready` still describes the PREVIOUS binary. With the
+     * loading branch first, the one operation that takes visible seconds
+     * announced itself as "Loading the board…" — measured in the browser, not
+     * theorised — which tells the student nothing about what is actually
+     * happening or why it is slow.
+     */
+    compiling
+      ? 'Compiling your sketch…'
+      : status === 'loading'
+        ? isCpp
+          ? 'Loading the board…'
+          : 'Loading MicroPython…'
+        : compile?.error
+          ? 'Could not reach the compiler'
+          : errors.length > 0
+            ? `${errors.length} compile error${errors.length > 1 ? 's' : ''} — nothing new was loaded`
+            : dirty
+              ? isCpp
+                ? 'Edited — press Run to compile and load it'
+                : 'Edited — press Run to load this onto the board'
+              : traceback
+                ? 'Python error — see the serial monitor'
+                : status === 'running'
+                  ? isCpp
+                    ? 'On the board · running'
+                    : `On the board · ${replLabel}`
+                  : 'On the board · stopped'
 
   return (
     <section
@@ -242,8 +362,11 @@ export function CodePanel({
           <span className="shrink-0 text-[#566573]">{boardId}</span>
         </span>
 
-        <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wider text-[#566573]">
-          MicroPython
+        <span
+          data-testid="code-language"
+          className="ml-auto shrink-0 text-[10px] uppercase tracking-wider text-[#566573]"
+        >
+          {isCpp ? 'Arduino C++' : 'MicroPython'}
         </span>
 
         <button
@@ -265,14 +388,24 @@ export function CodePanel({
           type="button"
           data-testid="code-run"
           onClick={status === 'running' && !dirty ? onStop : onRun}
-          disabled={status === 'loading'}
+          /**
+           * Disabled WHILE COMPILING, which is not merely cosmetic: every press
+           * is a fresh POST and a fresh worker thread on the server, and the
+           * student has no way of telling that the first one is still going.
+           */
+          disabled={status === 'loading' || compiling}
           className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[3px] px-3 text-xs font-semibold text-white transition-colors disabled:opacity-40 ${
             status === 'running' && !dirty
               ? 'bg-red-600 hover:bg-red-700'
               : 'bg-green-600 hover:bg-green-700'
           }`}
         >
-          {status === 'running' && !dirty ? (
+          {compiling ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              Compiling…
+            </>
+          ) : status === 'running' && !dirty ? (
             <>
               <Square className="h-3 w-3" aria-hidden="true" />
               Stop
@@ -280,7 +413,7 @@ export function CodePanel({
           ) : (
             <>
               <Play className="h-3 w-3" aria-hidden="true" />
-              {dirty ? 'Run new code' : 'Run'}
+              {dirty ? (isCpp ? 'Compile & run' : 'Run new code') : 'Run'}
             </>
           )}
         </button>
@@ -327,8 +460,11 @@ export function CodePanel({
 
         <span
           data-testid="code-status"
+          /* aria-live so a screen-reader user is told the compile finished;
+             without it the only signal is a button label they are not on. */
+          aria-live="polite"
           className={`ml-auto text-[11px] ${
-            dirty ? 'text-[#b45309]' : traceback ? 'text-red-700' : 'text-[#566573]'
+            failed ? 'text-red-700' : dirty || compiling ? 'text-[#b45309]' : 'text-[#566573]'
           }`}
         >
           {statusText}
@@ -340,7 +476,7 @@ export function CodePanel({
           get line numbers in the clipboard. */}
       <div className="flex min-h-0 flex-1 flex-col">
         <label htmlFor="code-editor-input" className="sr-only">
-          MicroPython source for {boardLabel}
+          {isCpp ? 'Arduino C++' : 'MicroPython'} source for {boardLabel}
         </label>
         <div className="flex min-h-0 flex-1">
           <div
@@ -373,8 +509,20 @@ export function CodePanel({
           id="code-editor-help"
           className="shrink-0 border-t border-[#dfe3e8] px-3 py-1.5 text-[10px] leading-snug text-[#566573]"
         >
-          Tab indents, Shift-Tab outdents, Ctrl-Enter runs. Running restarts the board — MicroPython
-          reboots and your program starts again from the top.
+          {isCpp ? (
+            <>
+              Tab indents, Shift-Tab outdents, Ctrl-Enter compiles and runs. Your sketch is compiled
+              with avr-gcc and flashed to the board, so running restarts it from{' '}
+              <code className="font-mono">setup()</code>. You do not need{' '}
+              <code className="font-mono">#include &lt;Arduino.h&gt;</code> — it is added for you,
+              and functions may be called above where they are defined.
+            </>
+          ) : (
+            <>
+              Tab indents, Shift-Tab outdents, Ctrl-Enter runs. Running restarts the board —
+              MicroPython reboots and your program starts again from the top.
+            </>
+          )}
         </p>
       </div>
 
@@ -396,7 +544,7 @@ export function CodePanel({
             <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
           )}
           Serial monitor
-          {traceback && (
+          {failed && (
             <span
               data-testid="code-error-badge"
               className="ml-1.5 rounded-[3px] bg-red-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-red-700 normal-case"
@@ -404,10 +552,100 @@ export function CodePanel({
               error
             </span>
           )}
+          {/* Flash usage, where the Arduino IDE puts it. Only once something has
+              actually been built — a percentage of nothing is not information. */}
+          {isCpp && compile?.hasFirmware && compile.flashLimit > 0 && (
+            <span data-testid="code-flash" className="ml-auto normal-case tracking-normal">
+              {compile.flashBytes.toLocaleString()} B ·{' '}
+              {Math.round((compile.flashBytes / compile.flashLimit) * 100)}% of flash
+            </span>
+          )}
         </button>
 
         {serialOpen && (
           <div id="code-serial-body">
+            {/**
+             * COMPILER ERRORS, in the compiler's own words.
+             *
+             * This is the Arduino track's equivalent of the traceback callout
+             * below, and it is the single most important thing on the panel: a
+             * student who writes bad C++ has to see `expected ';' before '}'
+             * token` against a line number they can find, exactly as a Pico
+             * student sees a SyntaxError. Paraphrasing it into "there is a
+             * problem with your code" would remove the only part that teaches
+             * anything — and the line number is the part that turns a wall of
+             * red into a place to put the cursor.
+             *
+             * `#line` directives in lib/simulator/avr/ino.ts are what make the
+             * numbers trustworthy: the injected `#include <Arduino.h>` and the
+             * hoisted prototypes would otherwise shift every line below them.
+             */}
+            {errors.length > 0 && (
+              <div
+                className="mx-3 mb-2 border border-red-200 bg-red-50 px-2.5 py-2"
+                role="status"
+                data-testid="code-compile-errors"
+              >
+                <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-red-600">
+                  {errors.length === 1 ? 'Compile error' : `${errors.length} compile errors`}
+                </span>
+                <ul className="space-y-1">
+                  {errors.map((d, i) => (
+                    <li key={i} className="font-mono text-[10px] leading-snug text-red-800">
+                      {d.line !== null && (
+                        <span className="font-bold">
+                          Line {d.line}
+                          {d.column !== null ? `:${d.column}` : ''}{' '}
+                        </span>
+                      )}
+                      {d.message}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-[10px] leading-snug text-red-700">
+                  {compile?.hasFirmware
+                    ? 'The board is still running the last sketch that compiled.'
+                    : 'Nothing has been loaded onto the board yet.'}
+                </p>
+              </div>
+            )}
+
+            {/* A network or permission failure. Kept visually distinct from the
+                block above because it is not the student's mistake. */}
+            {compile?.error && (
+              <div
+                className="mx-3 mb-2 border border-amber-300 bg-amber-50 px-2.5 py-2"
+                role="status"
+                data-testid="code-compile-transport-error"
+              >
+                <span className="mb-0.5 block text-[9px] font-bold uppercase tracking-wider text-amber-700">
+                  Compiler unreachable
+                </span>
+                <p className="text-[10px] leading-snug text-amber-900">{compile.error}</p>
+              </div>
+            )}
+
+            {/* Warnings never block a run, so they are quiet — but they are the
+                thing that explains a sketch which builds and misbehaves. */}
+            {warnings.length > 0 && errors.length === 0 && (
+              <div
+                className="mx-3 mb-2 border border-[#fde68a] bg-[#fffbeb] px-2.5 py-2"
+                data-testid="code-compile-warnings"
+              >
+                <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-[#b45309]">
+                  {warnings.length === 1 ? 'Warning' : `${warnings.length} warnings`}
+                </span>
+                <ul className="space-y-1">
+                  {warnings.slice(0, 5).map((d, i) => (
+                    <li key={i} className="font-mono text-[10px] leading-snug text-[#92400e]">
+                      {d.line !== null && <span className="font-bold">Line {d.line} </span>}
+                      {d.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Repeated above the log, not instead of it: the raw stream stays
                 so a student can see WHERE the error happened, and the callout
                 makes sure they see THAT it happened. */}
@@ -563,6 +801,57 @@ export function useCodeWidth(): [number, (next: number) => void] {
     for (const fn of widthListeners) fn()
   }, [])
   return [width, setWidth]
+}
+
+/* ── Whether there is room for the panel and the circuit at once ────────── */
+
+/**
+ * The same `md` breakpoint Tailwind uses here, as a media query.
+ *
+ * Below it the editor stacks the canvas, this panel and the parts rail in one
+ * column, and there is not enough height for all three.
+ */
+const NARROW = '(max-width: 767px)'
+
+/**
+ * True on a phone-width viewport.
+ *
+ * WHY THIS EXISTS. A QA sweep measured the circuit canvas at **387×0** on a
+ * 390 px viewport: the panel is 45dvh and the parts rail 45dvh, both
+ * `shrink-0`, so the only flexible child — the canvas — was crushed to nothing
+ * and a student landed on a page with the circuit they are meant to be building
+ * nowhere on it. Opening the code panel by default is right on a laptop, where
+ * seeing the wire that `digitalWrite(13, …)` refers to while writing it is the
+ * whole point of a docked panel, and wrong on a phone, where the two cannot
+ * share the screen at all.
+ *
+ * `useSyncExternalStore` rather than an effect, for the reason the width store
+ * above gives at length: this value is read while producing the first client
+ * render, and any approach that reads it in an effect renders once wrong and
+ * once right — a visible flash of the panel opening and closing. It matters
+ * here more than for the width, because /dev/editor server-renders this
+ * component (it is only the student route that loads it with `ssr: false`), so
+ * a plain `window.innerWidth` read would be a hydration mismatch.
+ * `getServerSnapshot` returns the desktop answer, which is what the server has
+ * to assume, and React adopts the real one on the client in the same commit.
+ */
+export function useIsNarrow(): boolean {
+  return useSyncExternalStore(subscribeNarrow, getNarrowSnapshot, getNarrowServerSnapshot)
+}
+
+function subscribeNarrow(onChange: () => void): () => void {
+  const mq = window.matchMedia(NARROW)
+  mq.addEventListener('change', onChange)
+  return () => mq.removeEventListener('change', onChange)
+}
+
+function getNarrowSnapshot(): boolean {
+  return window.matchMedia(NARROW).matches
+}
+
+/** No viewport on the server; the desktop layout is the honest assumption. */
+function getNarrowServerSnapshot(): boolean {
+  return false
 }
 
 /**

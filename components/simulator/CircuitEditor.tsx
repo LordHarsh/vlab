@@ -9,14 +9,24 @@ import {
   useState,
   type CSSProperties,
 } from 'react'
-import { Code2, Minimize2 } from 'lucide-react'
+import { Code2, Loader2, Minimize2 } from 'lucide-react'
 import { CircuitCanvas } from './CircuitCanvas'
-import { CodePanel, CodePanelResizer, useCodeWidth } from './CodePanel'
+import { CodePanel, CodePanelResizer, useCodeWidth, useIsNarrow } from './CodePanel'
 import { useFullscreenGate } from './FullscreenGate'
 import { detectBoard } from '@/lib/simulator/model/boards'
-import { EMPTY_CODE, readCodeFile, writeCodeFile } from '@/lib/simulator/model/code'
+import {
+  EMPTY_CODE,
+  fileNameFor,
+  readCodeFile,
+  writeCodeFile,
+  type CodeLanguage,
+} from '@/lib/simulator/model/code'
+import { useSketchCompile } from './useSketchCompile'
 import { compile } from '@/lib/simulator/model/compile'
 import {
+  FARAD_UNITS,
+  HENRY_UNITS,
+  OHM_UNITS,
   PALETTE,
   PART_LIBRARY,
   formatValueUnit,
@@ -573,6 +583,25 @@ function PropControl({
 type Readout = { headline: string; detail?: string }
 
 /**
+ * A current, on whatever prefix keeps it readable.
+ *
+ * Fixed milliamps is wrong for the reactive parts specifically. An RC settles
+ * ASYMPTOTICALLY — at ten time constants a 1 kΩ/1 µF charge is still passing
+ * 227 nA — and `(2.27e-7 * 1000).toFixed(3)` is "0.000 mA", which sat next to
+ * the word "charging" and read as a contradiction. It is not a contradiction;
+ * it is a current three decimal places too small for the unit it was printed in.
+ */
+function formatAmps(amps: number): string {
+  const a = Math.abs(amps)
+  if (!Number.isFinite(a)) return '— A'
+  if (a >= 1) return `${a.toFixed(3)} A`
+  if (a >= 1e-3) return `${(a * 1e3).toFixed(3)} mA`
+  if (a >= 1e-6) return `${(a * 1e6).toFixed(2)} µA`
+  if (a > 0) return `${(a * 1e9).toFixed(1)} nA`
+  return '0 A'
+}
+
+/**
  * Turn one device's reported state into something a student can read.
  *
  * Reported, never solved: every number here came out of the engine's snapshot.
@@ -766,6 +795,128 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
     return { headline: `${num('shaftDegrees').toFixed(1)}°`, detail }
   }
 
+  /**
+   * A capacitor or an inductor.
+   *
+   * The transient engine genuinely integrates these in time — a capacitor really
+   * does charge — and until now there was nowhere for it to say so. A student
+   * building an RC could watch the current decay in the Measurements panel and
+   * had no way at all to read the VOLTAGE that current was building, which is
+   * the number the exercise is about.
+   *
+   * The trend word comes from the engine (analog-state.ts) rather than being
+   * inferred here from successive renders, because it is exact physics there —
+   * i = C·dv/dt — and would be a guess over a 20 Hz sample here.
+   */
+  if (el.kind === 'reactive') {
+    const isCap = el.element === 'capacitor'
+    if (s.connected !== true) {
+      return {
+        headline: 'not in the circuit',
+        detail: 'both leads have to reach something before there is anything to charge',
+      }
+    }
+    const volts = num('volts')
+    const amps = num('amps')
+    const trend = String(s.trend ?? 'steady')
+    const size = isCap
+      ? `${formatValueUnit(num('value'), FARAD_UNITS)}`
+      : `${formatValueUnit(num('value'), HENRY_UNITS)}`
+    if (isCap) {
+      return {
+        headline: `${volts.toFixed(3)} V · ${trend}`,
+        detail:
+          `${formatAmps(amps)} into it · ${size}` +
+          // Said out loud, because "steady" over a capacitor has two very
+          // different causes and the student can only tell them apart by
+          // knowing which engine is running.
+          (s.transient === true
+            ? trend === 'steady'
+              ? ' · the current has stopped'
+              : ''
+            : ' · solved at its DC limit (an open), not integrated in time'),
+      }
+    }
+    return {
+      headline: `${formatAmps(amps)} · ${trend}`,
+      detail:
+        `${volts.toFixed(3)} V across it · ${size}` +
+        (s.transient === true
+          ? trend === 'steady'
+            ? ' · settled — an inductor at DC is a wire'
+            : ''
+          : ' · solved at its DC limit (a wire), not integrated in time'),
+    }
+  }
+
+  if (el.kind === 'potentiometer') {
+    const detail =
+      `${Math.round(num('lowerOhms'))} Ω below the wiper · ` +
+      `${Math.round(num('upperOhms'))} Ω above · ` +
+      `${formatValueUnit(num('totalOhms'), OHM_UNITS)} track`
+    if (s.connected !== true) {
+      return { headline: `${num('position')}%`, detail: `${detail} · wiper wired to nothing` }
+    }
+    // The wiper voltage is the whole reason this part exists: it is what
+    // analogRead() actually converts. A pot used as a RHEOSTAT has one end
+    // open, which is legitimate and gives a wiper voltage that means something
+    // quite different, so the readout says which it is looking at.
+    return {
+      headline: `${num('position')}% · ${num('wiperVolts').toFixed(3)} V`,
+      detail: s.endsWired === true ? detail : `${detail} · one end open (rheostat)`,
+    }
+  }
+
+  if (el.kind === 'variable_resistor') {
+    const ohms = num('ohms')
+    if (s.connected !== true) {
+      return {
+        headline: formatValueUnit(Number(ohms.toPrecision(4)), OHM_UNITS),
+        detail: `${num('light')}% light · not wired into anything`,
+      }
+    }
+    return {
+      headline: formatValueUnit(Number(ohms.toPrecision(4)), OHM_UNITS),
+      detail:
+        `${num('light')}% light · ${num('volts').toFixed(3)} V across it · ` +
+        formatAmps(num('amps')),
+    }
+  }
+
+  if (el.kind === 'diode') {
+    if (s.connected !== true) {
+      return { headline: 'not in the circuit', detail: 'a lead is wired to nothing' }
+    }
+    const volts = num('volts')
+    // A junction has no threshold it "turns on" at — it conducts exponentially —
+    // so the word here is about which WAY it is biased. Backwards is the
+    // mistake this readout exists to catch.
+    return {
+      headline: `${volts.toFixed(3)} V ${String(s.biased ?? 'none')}`,
+      detail:
+        s.biased === 'reverse'
+          ? 'reverse biased — it blocks, which is either the point or the wrong way round'
+          : 'anode to cathode',
+    }
+  }
+
+  if (el.kind === 'button') {
+    const volts = num('volts')
+    if (s.connected !== true) {
+      return {
+        headline: s.pressed === true ? 'pressed' : 'released',
+        detail: 'contacts wired to nothing',
+      }
+    }
+    return {
+      headline: s.pressed === true ? 'pressed' : 'released',
+      detail:
+        s.pressed === true
+          ? `contacts closed · ${Math.abs(volts * 1000).toFixed(1)} mV across them`
+          : `contacts open · ${Math.abs(volts).toFixed(3)} V across them`,
+    }
+  }
+
   // A part whose model reports a shape this panel has never seen still gets its
   // numbers shown, rather than an empty row that looks like a broken sensor.
   const pairs = Object.entries(s).map(
@@ -774,8 +925,28 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
   return { headline: pairs.length > 0 ? pairs.join(' · ') : 'no reading' }
 }
 
-/** Part kinds that publish reported state into the snapshot. */
-const REPORTS_STATE = new Set(['buzzer', 'motor', 'sensor', 'stepper', 'relay_module'])
+/**
+ * Part kinds that publish reported state into the snapshot.
+ *
+ * The first five publish it through a behavioural model of their own. The rest
+ * are purely ANALOG parts with no such model — they have nowhere to report FROM,
+ * so the engine reads their state out of the solve instead (analog-state.ts).
+ * The distinction matters to nothing here: both arrive in the same
+ * `deviceStates` record, and this set only decides whether the panel is worth
+ * drawing at all.
+ */
+const REPORTS_STATE = new Set([
+  'buzzer',
+  'motor',
+  'sensor',
+  'stepper',
+  'relay_module',
+  'reactive',
+  'potentiometer',
+  'variable_resistor',
+  'diode',
+  'button',
+])
 
 /**
  * How far the Pico has got with the student's script, in words.
@@ -848,6 +1019,7 @@ export function CircuitEditor({
   initial,
   remote,
   experimentSlug,
+  starterSketch,
 }: {
   initial?: CircuitDoc
   /** Omitted in the dev harness, where there is no class or simulation. */
@@ -856,19 +1028,29 @@ export function CircuitEditor({
    * Which experiment this editor is opened for, so a PICO document can be given
    * the MicroPython the lab sheet asks the student to run.
    *
-   * The two tracks get their program in genuinely different ways and this is
-   * where that shows up in the UI. The AVR track has a compile step, so the
-   * editor picks a prebuilt .hex; the Pico track has none — one MicroPython image
-   * serves every experiment and the student's .py is typed into the emulated USB
-   * REPL at runtime.
-   *
-   * The slug is now only the STARTING point and the reset target: the student
-   * edits their own copy in the code panel and it is autosaved into
+   * The slug is only the STARTING point and the reset target: the student edits
+   * their own copy in the code panel and it is autosaved into
    * sim_attempts.code, so a returning student gets their program back, not the
    * authored one. A slug with no Pico script lands at an empty editor and a bare
    * REPL rather than guessing at one.
+   *
+   * ARDUINO SKETCHES DO NOT COME THROUGH HERE — see `starterSketch`. The Pico
+   * scripts are a PORT of lab sheets written for a Raspberry Pi SBC and so have
+   * to live in reviewable code; the Arduino listings already target the exact
+   * board being emulated, so they are read from the database instead.
    */
   experimentSlug?: string
+  /**
+   * The experiment's own published Arduino sketch, verbatim from its `code`
+   * section in the database.
+   *
+   * Passed in rather than fetched here because this is a client component and
+   * the page that renders it is already a server component holding a Supabase
+   * client and the experiment id — one more column on a query it is already
+   * making, against a section the student is already allowed to read, versus a
+   * second round trip and a loading state in the editor.
+   */
+  starterSketch?: string
 }) {
   /**
    * What the editor holds before the restore lands.
@@ -898,23 +1080,79 @@ export function CircuitEditor({
   const doc = state.doc
 
   /**
-   * The experiment's AUTHORED MicroPython — the thing "Reset to starter" goes
-   * back to, and what a student who has never opened this experiment starts on.
+   * The experiment's AUTHORED program — what "Reset to starter" goes back to,
+   * and what a student who has never opened this experiment starts on.
    *
-   * Empty string, not undefined, for everything else: the worker reads an empty
-   * script as "no program — sit at the REPL", which is the honest state for a
-   * Pico circuit nobody has written code for yet.
+   * TWO SOURCES, AND THEY ARE NOT THE SAME KIND OF THING.
+   *
+   * The Pico script comes from PICO_EXPERIMENTS, a table in this repository,
+   * because the published lab sheets for those six experiments target a
+   * Raspberry Pi SBC running RPi.GPIO under Linux — a different machine from
+   * the microcontroller we emulate. pico/experiments.ts is the PORT, and a port
+   * has to live in code where it can be reviewed and tested.
+   *
+   * The Arduino sketch arrives as `starterSketch`, read from the experiment's
+   * own published `code` section in the database by the page that renders this.
+   * Nothing is ported: that listing already targets exactly the board the
+   * student is looking at, and it is the same text they read two sections
+   * earlier in the lab sheet. Copying it into this repository would have made a
+   * second copy that could drift from the one an instructor edits — the very
+   * problem scripts/sketches/traffic-mega.cpp calls out in its header when it
+   * says it is transcribed "so that what students read and what the emulated
+   * board executes cannot drift apart". With the database as the single source,
+   * they cannot.
+   *
+   * (The `#include <Arduino.h>` that transcription had to add by hand is no
+   * longer needed either — lib/simulator/avr/ino.ts inserts it, along with the
+   * prototypes the Arduino IDE would have hoisted, so a published listing
+   * compiles verbatim. Five of the six do; the sixth needed one extra core
+   * translation unit, not an edit to the sketch.)
+   *
+   * Empty string, not undefined, for everything else — the dev harness, the
+   * free-form workspace, an experiment with no published listing. The Pico
+   * worker reads an empty script as "no program, sit at the REPL"; the AVR path
+   * reads it as "nothing to compile yet", and both are honest.
    */
   const starterScript = (experimentSlug && PICO_EXPERIMENTS[experimentSlug]?.script) || ''
+  const starterProgram = starterSketch || starterScript
 
   /** Draft vs loaded — see codeReducer above, which is where the rule is stated. */
-  const [code, codeDispatch] = useReducer(codeReducer, starterScript, (s) => ({
+  const [code, codeDispatch] = useReducer(codeReducer, starterProgram, (s) => ({
     draft: s,
     loaded: s,
   }))
   const draft = code.draft
   const script = code.loaded
-  const [codeOpen, setCodeOpen] = useState(true)
+  /**
+   * Whether the code panel is showing — the student's choice, or the layout's.
+   *
+   * `null` means "nobody has said", and then the VIEWPORT decides: open beside
+   * the circuit on a laptop, closed on a phone where the two cannot share the
+   * screen (see useIsNarrow, which records the 387×0 canvas that made this
+   * necessary). An explicit press of `Code` wins from then on, in either
+   * direction, and keeps winning if the window is resized — a student who
+   * opened the editor on a narrow window did mean it.
+   */
+  const isNarrow = useIsNarrow()
+  const [codeOpenChoice, setCodeOpenChoice] = useState<boolean | null>(null)
+  const codeOpen = codeOpenChoice ?? !isNarrow
+  const toggleCode = useCallback(() => setCodeOpenChoice((v) => !(v ?? !isNarrow)), [isNarrow])
+
+  /**
+   * Forward references, so the restore effect below can reach two things that
+   * are declared after it.
+   *
+   * The restore effect has to run BEFORE the simulator hooks in source order —
+   * it decides which document and which program those hooks are given — but it
+   * also needs to kick off the first compile, and `useSketchCompile` cannot be
+   * called until the document exists. Refs are the ordinary way out: both are
+   * assigned during render, and the effect that reads them runs after the whole
+   * render has committed, so neither is ever read stale or unset.
+   */
+  const draftRef = useRef(draft)
+  const compileRef = useRef<(source: string, board: 'arduino_uno' | 'arduino_mega') => void>(
+    () => {},
+  )
 
   /**
    * The code panel's width, remembered across reloads.
@@ -931,13 +1169,28 @@ export function CircuitEditor({
   /**
    * Whether this document has a board whose program the student can edit.
    *
-   * The Pico track interprets MicroPython, so its source is editable and worth
-   * storing. The AVR track does NOT: there is no avr-gcc in the browser, only
-   * three prebuilt .hex fixtures, so an editable C++ box would be a lie and
-   * there is nothing to persist. That asymmetry is why this is a track check
-   * and not a generic "has a board" check.
+   * BOTH TRACKS NOW DO, and that is the asymmetry this file used to record and
+   * no longer has to. The note here said the AVR track had no editable source
+   * because "there is no avr-gcc in the browser, only three prebuilt .hex
+   * fixtures, so an editable C++ box would be a lie". That was true and is the
+   * reason six of twelve experiments could not be programmed.
+   *
+   * It stopped being true when the compiler moved to the SERVER rather than to
+   * the browser. AVR_COMPILE_FINDINGS.md showed the WebAssembly toolchain works
+   * and cannot be shipped — serving GPL-3.0 cc1plus.wasm to a student is
+   * conveying under §6, and we cannot supply the Corresponding Source for
+   * binaries somebody else built. Running that same toolchain in a worker
+   * thread behind app/api/compile conveys nothing (GPLv3 §0 excludes network
+   * interaction with no transfer of a copy), needs no arduino-cli, and returns
+   * Intel HEX — which is compiler output and already covered.
    */
-  const isPico = useMemo(() => detectBoard(doc).board?.track === 'rp2040', [doc])
+  const boardTrack = useMemo(() => detectBoard(doc).board?.track ?? null, [doc])
+  const isPico = boardTrack === 'rp2040'
+  const isAvr = boardTrack === 'avr'
+  /** Which language the panel edits, and therefore how Run behaves. */
+  const codeLanguage: CodeLanguage = isAvr ? 'arduino_c' : 'micropython'
+  /** Both tracks store a program; only the file name and language differ. */
+  const codeFileName = fileNameFor(codeLanguage)
 
   /**
    * The placed board's own id, which is what the code is bound TO.
@@ -958,14 +1211,23 @@ export function CircuitEditor({
    * 015. Memoised on the text so autosave sees one changed value per keystroke
    * rather than a new object on every render.
    *
-   * `undefined` — not an empty bundle — for a document with no Pico, so that
-   * saving an Arduino circuit cannot blank the MicroPython stored against the
-   * same attempt row. See saveAttempt(): an absent key is left alone by the
-   * upsert; a present empty one would overwrite.
+   * `undefined` — not an empty bundle — for a document with NO PROGRAMMABLE
+   * BOARD, so that saving a circuit the student has temporarily removed the MCU
+   * from cannot blank the program stored against the same attempt row. See
+   * saveAttempt(): an absent key is left alone by the upsert; a present empty
+   * one would overwrite.
+   *
+   * The file name and language come from the track, so a Pico attempt stores
+   * `main.py` as `micropython` and an Arduino attempt stores `sketch.ino` as
+   * `arduino_c` — the same two values the published `code` sections already
+   * use, and the same ones parseCodeBundle reads back.
    */
   const codeBundle = useMemo(
-    () => (isPico ? writeCodeFile(EMPTY_CODE, draft) : undefined),
-    [isPico, draft],
+    () =>
+      isPico || isAvr
+        ? writeCodeFile(EMPTY_CODE, draft, codeFileName, codeLanguage)
+        : undefined,
+    [isPico, isAvr, draft, codeFileName, codeLanguage],
   )
 
   // Local-first autosave. Restores previous work before the student notices
@@ -994,8 +1256,53 @@ export function CircuitEditor({
      * string: a student who deliberately cleared their program and reloaded
      * must get an empty editor back, not the starter script they deleted.
      */
-    const saved = readCodeFile(restoredCode)
+    /**
+     * WHICH FILE TO READ IS DECIDED BY THE DOCUMENT BEING RESTORED, not by the
+     * one currently on screen — and the difference is a bug, not a nicety.
+     *
+     * This effect runs the moment the restore lands, and at that instant `doc`
+     * is still the neutral BLANK seed: the `dispatch({type:'load'})` two lines
+     * up is queued, not applied. `detectBoard(BLANK)` finds no board, so the
+     * track-derived name would be `main.py` for EVERY experiment, and an
+     * Arduino student's saved `sketch.ino` would silently fail to load — they
+     * would open on the starter sketch with their own work still in the
+     * database, which is the worst possible outcome for an autosave.
+     *
+     * `restored` is the document about to become `doc`, so asking it is asking
+     * the right question one render early.
+     */
+    const restoredBoard = restored ? detectBoard(restored).board : detectBoard(doc).board
+    const saved = readCodeFile(
+      restoredCode,
+      fileNameFor(restoredBoard?.track === 'avr' ? 'arduino_c' : 'micropython'),
+    )
     if (saved !== null) codeDispatch({ type: 'restore', source: saved })
+
+    /**
+     * COMPILE THE EXPERIMENT'S SKETCH HERE, in the same effect, for the same
+     * reason the file name is read here.
+     *
+     * This started as a separate effect gated on `restoreChecked`, and it was
+     * wrong in a way that only showed up on the second visit: both effects ran
+     * in the SAME commit, so the compile read `draft` before the `restore`
+     * dispatch above had been applied and built the STARTER. A returning
+     * student therefore opened with their own code in the editor and somebody
+     * else's program on the board, reported — accurately but absurdly — as
+     * "Edited, press Run". Reading `saved` directly removes the race: this is
+     * the exact text the editor is about to hold, known one render before the
+     * reducer holds it.
+     *
+     * The board is passed explicitly for the same reason; see the note on
+     * `SketchCompile.compile`. Deriving it from `doc` here would build a Mega
+     * circuit's firmware for a 328P.
+     */
+    const program = saved !== null ? saved : draftRef.current
+    if (restoredBoard?.track === 'avr' && program.trim() !== '') {
+      compileRef.current(program, restoredBoard.type as 'arduino_uno' | 'arduino_mega')
+    }
+    // `doc` and the two refs are read only as fallbacks; adding them would
+    // re-run a deliberately once-only effect on every edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restoreChecked, restored, restoredCode])
 
   /**
@@ -1042,9 +1349,46 @@ export function CircuitEditor({
    * Derived during render rather than synced in an effect: an effect would let
    * one frame reach the worker with the wrong firmware.
    */
-  const activeHexUrl = boardFirmware.some((f) => f.url === hexUrl)
+  const selectedHexUrl = boardFirmware.some((f) => f.url === hexUrl)
     ? hexUrl
     : (boardFirmware[0]?.url ?? '')
+
+  /**
+   * The student's own C++, compiled to firmware.
+   *
+   * Disabled on the Pico track, which has no compile step at all — MicroPython
+   * is interpreted on the board, so its source goes to the worker as text.
+   */
+  /**
+   * Which AVR this document holds. Defaulted rather than optional because the
+   * value is only ever USED under an `isAvr` guard, and a nullable board would
+   * push a meaningless null check into every call site.
+   */
+  const avrBoardType: 'arduino_uno' | 'arduino_mega' =
+    detectBoard(doc).board?.type === 'arduino_mega' ? 'arduino_mega' : 'arduino_uno'
+
+  const sketch = useSketchCompile({ classId: remote?.classId, enabled: isAvr })
+  // See the refs' declaration: assigned during render, read only from effects.
+  draftRef.current = draft
+  compileRef.current = sketch.compile
+
+  /**
+   * WHAT THE BOARD IS ACTUALLY GIVEN.
+   *
+   * The student's compiled sketch wins whenever one exists. Until then — a dev
+   * harness with no experiment, a workspace circuit nobody has written code
+   * for — the prebuilt .hex selector behaves exactly as it always has, so
+   * nothing that worked before this change stops working.
+   *
+   * The blob URL is what makes this a one-line junction rather than a rewrite
+   * of useSimulator: that hook takes a URL, fetches it, and tags every piece of
+   * worker state with it. A new compile mints a new URL, which tears down the
+   * worker and builds a fresh ATmega with cleared SRAM — the same thing
+   * flashing a real board does.
+   */
+  const activeHexUrl = sketch.hexUrl || selectedHexUrl
+  /** True once the student's own code, rather than a fixture, is on the board. */
+  const runningOwnCode = sketch.hexUrl !== '' && activeHexUrl === sketch.hexUrl
 
   const sim = useBoardSimulator(doc, { hexUrl: noFirmwareFor ? '' : activeHexUrl, script })
   const { ready, running, error, speedRatio, start, stop, reset } = sim
@@ -1057,10 +1401,23 @@ export function CircuitEditor({
    *
    * Shown in two places (the toolbar and the panel) because a student who has
    * edited and not run must not be left wondering why the output has not
-   * changed. It is never true on the AVR track — there is no editable source
-   * there for a draft to diverge from.
+   * changed.
+   *
+   * The two tracks compare against different things, because "what the board
+   * was given" means different things. A Pico was given SOURCE, so the
+   * comparison is against the script last handed to the interpreter. An Uno was
+   * given a BINARY, so the comparison is against the source that produced it —
+   * `compiledSource`, recorded by useSketchCompile at the moment the HEX came
+   * back. Comparing against a boolean "has been compiled" would get the common
+   * case wrong: a student who edits a line and then undoes it is not dirty, and
+   * telling them their board is stale would send them compiling for nothing.
+   *
+   * Before anything has been compiled at all, an AVR document is NOT dirty — it
+   * is running a prebuilt fixture and there is nothing stale about it.
    */
-  const codeDirty = isPico && draft !== script
+  const codeDirty = isPico
+    ? draft !== script
+    : isAvr && sketch.compiledSource !== null && draft !== sketch.compiledSource
 
   /**
    * "Start it once the new script has actually gone out."
@@ -1105,15 +1462,35 @@ export function CircuitEditor({
       codeDispatch({ type: 'load' })
       return
     }
+    /**
+     * On the AVR track, Run means COMPILE and then run.
+     *
+     * The same `pendingStart` machinery carries it: a successful compile mints
+     * a new blob URL, `useSimulator` tears the old worker down and brings a new
+     * one up, `ready` flips true, and the effect above fires `start()` on the
+     * render that already has the new firmware. Calling start() here instead
+     * would tag the run with the OLD hexUrl and be discarded, which is the same
+     * trap documented for the Pico path.
+     *
+     * A FAILED compile simply never sets `ready` again for a new URL, so the
+     * pending start expires harmlessly and the board keeps running whatever it
+     * had — which is exactly what should happen when the new code does not
+     * build.
+     */
+    if (isAvr && draft.trim() !== '' && draft !== sketch.compiledSource) {
+      pendingStart.current = true
+      sketch.compile(draft, avrBoardType)
+      return
+    }
     start()
-  }, [draft, isPico, script, start])
+  }, [draft, isPico, isAvr, script, start, sketch, avrBoardType])
 
   const editCode = useCallback((source: string) => codeDispatch({ type: 'edit', source }), [])
 
-  /** Back to the authored script. Loads the editor only — Run still has to be pressed. */
+  /** Back to the authored program. Loads the editor only — Run still has to be pressed. */
   const resetToStarter = useCallback(
-    () => codeDispatch({ type: 'edit', source: starterScript }),
-    [starterScript],
+    () => codeDispatch({ type: 'edit', source: starterProgram }),
+    [starterProgram],
   )
 
   /**
@@ -1337,29 +1714,105 @@ export function CircuitEditor({
         )}
 
         {sim.track === 'avr' && !noFirmwareFor && (
-          <>
-            <span className="text-[11px] text-[#566573] shrink-0">Firmware</span>
-            <div className="flex shrink-0" role="group" aria-label="Firmware">
-              {boardFirmware.map((f, i) => (
-                <button
-                  key={f.url}
-                  data-testid={`fw-${f.label}`}
-                  onClick={() => setHexUrl(f.url)}
-                  title={f.note}
-                  aria-pressed={activeHexUrl === f.url}
-                  className={`h-8 px-2.5 text-xs border transition-colors ${
-                    i === 0 ? 'rounded-l-[3px]' : '-ml-px'
-                  } ${i === boardFirmware.length - 1 ? 'rounded-r-[3px]' : ''} ${
-                    activeHexUrl === f.url
-                      ? 'z-10 border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
-                      : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1]'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </>
+          <div className="flex items-center gap-2 shrink-0" data-testid="avr-firmware">
+            {/**
+             * THE PREBUILT SELECTOR IS A FALLBACK NOW, NOT THE MAIN EVENT.
+             *
+             * It is shown only while the board is running one of the fixture
+             * images — the dev harness, the free-form workspace, an experiment
+             * with no published listing. The moment the student's own sketch is
+             * compiled it takes the board over, and leaving a selector on
+             * screen that no longer selects anything would be a control that
+             * lies. It is replaced by a statement of what is actually loaded.
+             */}
+            {runningOwnCode ? (
+              <span
+                data-testid="fw-own-code"
+                title="This board is running the sketch in the code panel"
+                className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]"
+              >
+                Your sketch
+                {sketch.flashBytes > 0 && (
+                  <span className="ml-1.5 text-[#566573]">
+                    {sketch.flashBytes.toLocaleString()} B
+                  </span>
+                )}
+              </span>
+            ) : (
+              <>
+                <span className="text-[11px] text-[#566573] shrink-0">Firmware</span>
+                <div className="flex shrink-0" role="group" aria-label="Firmware">
+                  {boardFirmware.map((f, i) => (
+                    <button
+                      key={f.url}
+                      data-testid={`fw-${f.label}`}
+                      onClick={() => setHexUrl(f.url)}
+                      title={f.note}
+                      aria-pressed={activeHexUrl === f.url}
+                      className={`h-8 px-2.5 text-xs border transition-colors ${
+                        i === 0 ? 'rounded-l-[3px]' : '-ml-px'
+                      } ${i === boardFirmware.length - 1 ? 'rounded-r-[3px]' : ''} ${
+                        activeHexUrl === f.url
+                          ? 'z-10 border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
+                          : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1]'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* The same `Code` button the Pico track has had, over an Arduino.
+                The note that used to stand here said an equivalent button would
+                "open an editor whose contents could never be compiled or run" —
+                true while the only compiler was one we could not lawfully ship
+                to a browser, and untrue since the toolchain moved to the
+                server behind app/api/compile. */}
+            <button
+              type="button"
+              data-testid="code-toggle"
+              onClick={toggleCode}
+              aria-expanded={codeOpen}
+              aria-controls="code-panel-region"
+              className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors ${
+                codeOpen
+                  ? 'border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
+                  : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#1477d1]'
+              }`}
+            >
+              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Code
+            </button>
+
+            {/* Compiling is seconds, not instant, so it is said out loud. */}
+            {sketch.status === 'compiling' && (
+              <span
+                data-testid="compile-status"
+                className="h-8 flex items-center gap-1.5 px-2 rounded-[3px] text-[11px] border border-[#dfe3e8] bg-white text-[#566573]"
+              >
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                Compiling…
+              </span>
+            )}
+            {sketch.status === 'error' && (
+              <span
+                data-testid="compile-error"
+                className="h-8 flex items-center px-2 rounded-[3px] text-[11px] border border-red-200 bg-red-50 text-red-700"
+              >
+                {sketch.error ? 'Compiler unreachable' : 'Compile error'} — see the code panel
+              </span>
+            )}
+            {codeDirty && sketch.status !== 'compiling' && sketch.status !== 'error' && (
+              <span
+                data-testid="code-dirty"
+                className="h-8 flex items-center px-2 rounded-[3px] text-[11px] border border-[#fde68a] bg-[#fffbeb] text-[#b45309]"
+              >
+                Board is running your previous code
+              </span>
+            )}
+          </div>
         )}
 
         {sim.track === 'rp2040' && (
@@ -1375,7 +1828,7 @@ export function CircuitEditor({
             <button
               type="button"
               data-testid="code-toggle"
-              onClick={() => setCodeOpen((v) => !v)}
+              onClick={toggleCode}
               aria-expanded={codeOpen}
               aria-controls="code-panel-region"
               className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors ${
@@ -1458,7 +1911,13 @@ export function CircuitEditor({
       {/* Canvas + code panel + rail. Stacked on phones, side by side from md up
           — a side-by-side rail at 390px left the canvas 70px wide. */}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        <div className="flex-1 relative min-w-0 min-h-0">
+        {/* `min-h-[30dvh]` below md is a FLOOR, not a preference: the panel and
+            the parts rail beneath it are both `shrink-0`, so the canvas is the
+            only child flex can take height from, and it was measured at 387×0
+            on a 390 px viewport — the circuit simply absent from the page. A
+            minimum means the worst case is a small circuit rather than no
+            circuit. Released at md, where the three sit side by side. */}
+        <div className="flex-1 relative min-w-0 min-h-[30dvh] md:min-h-0">
           <CircuitCanvas
             doc={doc}
             dispatch={dispatch}
@@ -1477,7 +1936,7 @@ export function CircuitEditor({
 
             Below md it stacks under the canvas at a fixed height, because a
             three-column layout on a phone gives every column nothing. */}
-        {sim.track === 'rp2040' && codeOpen && (
+        {(sim.track === 'rp2040' || sim.track === 'avr') && codeOpen && (
           <>
             <CodePanelResizer width={codeWidth} onWidth={setCodeWidth} />
             <div
@@ -1486,28 +1945,70 @@ export function CircuitEditor({
                  and be ignored below it, which an inline `width` could not do —
                  on a phone the panel is full-width and stacked. */
               style={{ '--code-w': `${codeWidth}px` } as CSSProperties}
-              className="flex h-[55dvh] min-h-0 w-full shrink-0 md:h-auto md:w-[var(--code-w)]"
+              /* 45dvh below md, not 55: with the canvas floor above it, 55dvh
+                 plus a 30dvh canvas overflowed the column and clipped whatever
+                 came last. 45 + 30 leaves the canvas its floor and room. */
+              className="flex h-[45dvh] min-h-0 w-full shrink-0 md:h-auto md:w-[var(--code-w)]"
             >
               <CodePanel
                 boardLabel={sim.board.label}
                 boardId={mcuPartId}
+                language={codeLanguage}
                 source={draft}
                 onSourceChange={editCode}
                 dirty={codeDirty}
-                status={!ready ? 'loading' : running ? 'running' : 'stopped'}
-                replLabel={REPL_LABEL[sim.snapshot.repl] ?? ''}
+                /**
+                 * "Loading" until the board has firmware — and on the AVR track
+                 * a compile in flight is ALSO not-yet-loaded, because `ready`
+                 * still describes the previous binary. Reporting `stopped`
+                 * there would make the panel claim a settled state in the
+                 * middle of the one operation that takes visible time.
+                 */
+                status={
+                  !ready || (isAvr && sketch.status === 'compiling')
+                    ? 'loading'
+                    : running
+                      ? 'running'
+                      : 'stopped'
+                }
+                replLabel={
+                  sim.track === 'rp2040' ? (REPL_LABEL[sim.snapshot.repl] ?? '') : ''
+                }
                 serial={snapshot.serial}
-                canReset={starterScript.length > 0}
+                canReset={starterProgram.length > 0}
                 onReset={resetToStarter}
                 onRun={runCode}
                 onStop={stop}
-                onClose={() => setCodeOpen(false)}
+                onClose={() => setCodeOpenChoice(false)}
+                compile={
+                  isAvr
+                    ? {
+                        phase: sketch.status,
+                        diagnostics: sketch.diagnostics,
+                        error: sketch.error,
+                        flashBytes: sketch.flashBytes,
+                        flashLimit: sketch.flashLimit,
+                        ms: sketch.ms,
+                        cached: sketch.cached,
+                        hasFirmware: runningOwnCode,
+                      }
+                    : undefined
+                }
               />
             </div>
           </>
         )}
 
-        <aside className="w-full h-[45dvh] shrink-0 border-t border-[#dfe3e8] md:h-auto md:w-80 md:border-t-0 md:border-l bg-white overflow-y-auto text-sm">
+        {/* The parts rail steps aside for the editor on a phone — three stacked
+            regions do not fit in one column, and a student who has opened the
+            code panel is writing code, not dragging components. Closing the
+            panel brings it straight back. Unchanged from md up, where all three
+            are side by side and there is room. */}
+        <aside
+          className={`w-full h-[45dvh] shrink-0 border-t border-[#dfe3e8] md:h-auto md:w-80 md:border-t-0 md:border-l bg-white overflow-y-auto text-sm ${
+            codeOpen && (sim.track === 'rp2040' || sim.track === 'avr') ? 'max-md:hidden' : ''
+          }`}
+        >
           {/* A native experiment whose circuits.role='starter' row is missing
               (or whose load failed) lands on the empty seed board. Saying so is
               better than letting the student wonder where the parts went. */}
