@@ -39,6 +39,29 @@ export interface StoredAttempt {
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
+/**
+ * How long an open may hang before it is treated as unavailable.
+ *
+ * `indexedDB.open()` CAN HANG FOR EVER, and it is not hypothetical — it was hit
+ * on this machine. Another tab of the same app whose renderer had frozen was
+ * holding a connection to `vlab-simulator`, and from that moment every open of
+ * that one database in every other tab returned neither `success` nor `error`
+ * nor `blocked`; it simply never fired. (A freshly-named database in the same
+ * tab opened instantly, so the origin's storage was fine — that single database
+ * was queued behind the frozen connection.)
+ *
+ * That is a total outage of the editor, not a degraded one. useAutosave awaits
+ * this before it sets `restoreChecked`, and CircuitEditor paints "Loading your
+ * circuit…" until it does — so one frozen tab, anywhere in the browser, leaves
+ * every other tab permanently on the spinner. A student with the lab open twice
+ * is a completely ordinary thing, and this file's whole premise is that losing
+ * local storage must never take the editor down with it.
+ *
+ * Three seconds because a local open that is going to succeed takes single-digit
+ * milliseconds; anything near this is already pathological.
+ */
+const OPEN_TIMEOUT_MS = 3000
+
 function openDb(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
   dbPromise = new Promise((resolve, reject) => {
@@ -46,15 +69,43 @@ function openDb(): Promise<IDBDatabase> {
       reject(new Error('IndexedDB unavailable'))
       return
     }
+
+    /**
+     * A failed open is NOT cached — `dbPromise` is cleared so the next call
+     * tries again. The block that caused it is somebody else's frozen tab, and
+     * that tab will eventually go away; caching the rejection would mean local
+     * autosave stayed dead for the rest of the session over a condition that had
+     * already cleared. Every caller here swallows the rejection anyway, so a
+     * retry costs one queued open and nothing else.
+     */
+    const fail = (e: Error) => {
+      dbPromise = null
+      reject(e)
+    }
+
     const req = indexedDB.open(DB_NAME, DB_VERSION)
+    const timer = setTimeout(() => fail(new Error('IndexedDB open timed out')), OPEN_TIMEOUT_MS)
+
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: 'key' })
       }
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error ?? new Error('IndexedDB open failed'))
+    req.onsuccess = () => {
+      clearTimeout(timer)
+      resolve(req.result)
+    }
+    req.onerror = () => {
+      clearTimeout(timer)
+      fail(req.error ?? new Error('IndexedDB open failed'))
+    }
+    // Fired when another connection is holding the database against an upgrade.
+    // Unhandled, this is one of the ways the open above never settles.
+    req.onblocked = () => {
+      clearTimeout(timer)
+      fail(new Error('IndexedDB open blocked by another tab'))
+    }
   })
   return dbPromise
 }

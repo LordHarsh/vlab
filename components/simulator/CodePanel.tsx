@@ -188,14 +188,28 @@ export function CodePanel({
     )
   }
 
+  /**
+   * "Running" is the REPL's word, not the program's, and after a traceback the
+   * two disagree.
+   *
+   * pico/engine.ts moves its `replPhase` to `running` the moment the paste is
+   * handed over and never moves it back — it has no way to know whether the
+   * block that was pasted survived. So a script that died on its first line
+   * still reads "script running", which is precisely the wrong thing to tell a
+   * student staring at a board doing nothing. MicroPython only prints a
+   * traceback to the REPL when the pasted block ends, so a traceback in the tail
+   * of the stream is the honest signal that it did.
+   */
   const statusText =
     status === 'loading'
       ? 'Loading MicroPython…'
       : dirty
         ? 'Edited — press Run to load this onto the board'
-        : status === 'running'
-          ? `On the board · ${replLabel}`
-          : 'On the board · stopped'
+        : traceback
+          ? 'Python error — see the serial monitor'
+          : status === 'running'
+            ? `On the board · ${replLabel}`
+            : 'On the board · stopped'
 
   return (
     <section
@@ -306,7 +320,9 @@ export function CodePanel({
 
         <span
           data-testid="code-status"
-          className={`ml-auto text-[11px] ${dirty ? 'text-[#b45309]' : 'text-[#566573]'}`}
+          className={`ml-auto text-[11px] ${
+            dirty ? 'text-[#b45309]' : traceback ? 'text-red-700' : 'text-[#566573]'
+          }`}
         >
           {statusText}
         </span>
@@ -441,22 +457,43 @@ export function CodePanelResizer({
 }) {
   const clamp = (v: number) => Math.min(CODE_PANEL_MAX, Math.max(CODE_PANEL_MIN, v))
 
+  /**
+   * The drag listens on the WINDOW, and pointer capture is best-effort.
+   *
+   * Capturing on the handle and listening there is the tidier-looking version
+   * and it is the one that broke: `setPointerCapture()` THROWS
+   * `InvalidPointerId` whenever the pointer is not currently active, and a throw
+   * inside the handler means the move/up listeners below it are never attached
+   * at all — the handle simply does not drag. It was caught here with a
+   * synthetic drag, but the same shape fails for real: a pointerdown whose
+   * pointer is released before the handler runs, a stylus that lifts, a browser
+   * that has already implicitly released capture.
+   *
+   * Window listeners also fix the ordinary case the element-scoped version got
+   * wrong anyway — dragging FASTER than the layout can follow puts the cursor
+   * outside a 6-pixel-wide handle, and without capture those moves would never
+   * have arrived.
+   */
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     e.preventDefault()
-    const el = e.currentTarget
-    el.setPointerCapture(e.pointerId)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // Nice to have — it keeps the cursor's hit target on the handle — but the
+      // window listeners below are what actually make the drag work.
+    }
     const startX = e.clientX
     const startWidth = width
 
     const move = (ev: PointerEvent) => onWidth(clamp(startWidth - (ev.clientX - startX)))
     const up = () => {
-      el.removeEventListener('pointermove', move)
-      el.removeEventListener('pointerup', up)
-      el.removeEventListener('pointercancel', up)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
     }
-    el.addEventListener('pointermove', move)
-    el.addEventListener('pointerup', up)
-    el.addEventListener('pointercancel', up)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
