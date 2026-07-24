@@ -1838,7 +1838,7 @@ export interface RelayModuleParams {
 export const RELAY_MODULE_4CH: RelayModuleParams = {
   coilVolts: 5,
   coilOhms: 70,
-  pullInVolts: 2.5,
+  pullInVolts: 3.75,
   dropOutVolts: 0.5,
   maxCoilVolts: 5.5,
   inputOhms: 1000,
