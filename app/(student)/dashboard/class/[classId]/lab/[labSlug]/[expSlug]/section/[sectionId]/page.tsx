@@ -129,6 +129,7 @@ export default async function SectionPage({
             platform={simPlatform}
             simulationId={simSimulationId}
             classId={classId}
+            experimentSlug={expSlug}
           />
         )
       case 'quiz': {

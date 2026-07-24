@@ -429,7 +429,14 @@ export function compile(doc: CircuitDoc): CompileResult {
               deviceId: `${part.id}.${pin.id}`,
               pinId: pin.id,
               role: 'io',
-              volts: 5,
+              /**
+               * The board's OWN I/O rail, not a constant. This line used to read
+               * `volts: 5`, which is right for an Uno and overstates a shorted
+               * Pico pad by 52% (3.3 V through the same pad impedance). The
+               * fault message quotes this number to the student, so a wrong
+               * value here is a wrong lesson, not a rounding error.
+               */
+              volts: el.logicVolts,
             })
           }
           /**

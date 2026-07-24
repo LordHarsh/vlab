@@ -42,6 +42,7 @@ export function SimulationSection({
   platform = null,
   simulationId = null,
   classId = null,
+  experimentSlug = null,
 }: {
   type?: SimulationKind
   simType?: string | null
@@ -54,13 +55,27 @@ export function SimulationSection({
   simulationId?: string | null
   /** Native only — the enrolled class the attempt belongs to. */
   classId?: string | null
+  /**
+   * Native only — which experiment this is, so a Raspberry Pi Pico circuit can
+   * be given the MicroPython its lab sheet asks the student to run. There is no
+   * compile step on that track and no in-browser Python editor yet, so the
+   * script is looked up by slug. Ignored by every Arduino experiment.
+   */
+  experimentSlug?: string | null
 }) {
   if (type === 'builtin') {
     return <BuiltinSimulation simType={simType} title={title} platform={platform} />
   }
 
   if (type === 'native') {
-    return <NativeSimulation simulationId={simulationId} classId={classId} title={title} />
+    return (
+      <NativeSimulation
+        simulationId={simulationId}
+        classId={classId}
+        title={title}
+        experimentSlug={experimentSlug}
+      />
+    )
   }
 
   return <TinkercadSimulation designId={designId} height={height} title={title} />
@@ -124,10 +139,12 @@ function NativeSimulation({
   simulationId,
   classId,
   title,
+  experimentSlug,
 }: {
   simulationId: string | null
   classId: string | null
   title: string
+  experimentSlug: string | null
 }) {
   if (!simulationId || !classId) {
     return (
@@ -143,7 +160,10 @@ function NativeSimulation({
       data-testid="native-simulation"
       className="w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]"
     >
-      <NativeCircuitEditor remote={{ simulationId, classId }} />
+      <NativeCircuitEditor
+        remote={{ simulationId, classId }}
+        experimentSlug={experimentSlug ?? undefined}
+      />
     </div>
   )
 }

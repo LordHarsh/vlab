@@ -16,6 +16,17 @@ export const PITCH = 10
 
 export type PinType = 'power' | 'gnd' | 'digital' | 'analog' | 'passive'
 
+/**
+ * Every MCU board the simulator can run.
+ *
+ * Two entries, and deliberately a closed union rather than a plugin registry:
+ * the two tracks run different emulators (`avr8js` vs `rp2040js`) and different
+ * toolchains (a precompiled .hex vs MicroPython typed into a REPL), so a third
+ * board is a real piece of work and not a data row. See model/boards.ts for the
+ * per-board profile the engine selection reads.
+ */
+export type BoardType = 'arduino_uno' | 'raspberry_pi_pico'
+
 export interface PinGeometry {
   id: string
   name: string
@@ -39,7 +50,16 @@ export interface PartDefinition {
   svg: string
   /** Electrical role, consumed by the netlist → circuit compiler. */
   electrical:
-    | { kind: 'mcu'; board: 'arduino_uno' }
+    /**
+     * A microcontroller board.
+     *
+     * `logicVolts` is the I/O rail — what a pin driving HIGH actually puts on
+     * the wire — and it is DATA on the board rather than a constant in the
+     * compiler because the two boards do not share it: an Uno drives 5 V, a
+     * Pico drives 3.3 V and is not 5 V tolerant. compile() used to hardcode 5,
+     * which overstated a shorted Pico pad by 52%.
+     */
+    | { kind: 'mcu'; board: BoardType; logicVolts: number }
     | { kind: 'breadboard' }
     | { kind: 'resistor'; defaultOhms: number }
     | { kind: 'led'; color: string }
@@ -164,7 +184,7 @@ function makeUno(): PartDefinition {
   return {
     type: 'arduino_uno',
     label: 'Arduino Uno',
-    electrical: { kind: 'mcu', board: 'arduino_uno' },
+    electrical: { kind: 'mcu', board: 'arduino_uno', logicVolts: 5 },
     // All GND pins are the same net on the real board.
     buses: [['GND.1', 'GND.2', 'GND.3']],
     ...wokwiGeometry('arduino-uno', {
@@ -175,6 +195,133 @@ function makeUno(): PartDefinition {
       omit: ['A5.2', 'A4.2'],
       subtle: ['AREF', 'IOREF', 'RESET'],
     }),
+  }
+}
+
+// ─── Raspberry Pi Pico ────────────────────────────────────────────────────────
+
+/**
+ * The single most important difference from the Uno is the rail: a Pico's GPIO
+ * run at 3.3 V and are NOT 5 V tolerant. Every downstream number moves — an LED
+ * through 220 Ω draws about 5.2 mA here against 12.4 mA on an Uno, because the
+ * LED's ~2 V forward drop eats a far larger share of a 3.3 V budget. That is
+ * why `logicVolts` is on the part and not a constant in compile().
+ *
+ * The header is the physical 40-pin layout in silkscreen order, so a student
+ * counting pins on a photo of a real Pico finds the same thing here. GP23/GP24/
+ * GP25 exist on the die but are NOT brought out to a Pico's header, so they are
+ * absent — GP25 is the on-board LED, which pico/engine.ts reports separately
+ * rather than pretending it is wireable.
+ *
+ * HAND-DRAWN ON PURPOSE. @wokwi/elements ships no Pico element (the harvested
+ * set in wokwi-art.generated.json is resistor, led, pushbutton, potentiometer,
+ * buzzer, photoresistor, ntc, hc-sr04, pir, dht22, servo, 7segment, rgb-led,
+ * slide-switch, stepper-motor, led-bar-graph, tilt-switch, arduino-uno), and
+ * reusing the Uno's art would put a student's wire on a pin that does not
+ * exist.
+ */
+const PICO_W = 90
+const PICO_H = 220
+const PICO_LEFT_X = 10
+const PICO_RIGHT_X = 80
+const PICO_TOP_Y = 15
+
+type PicoHeaderEntry = [id: string, name: string, type: PinType]
+
+/** Physical header positions 1 → 20, top to bottom on the left edge. */
+const PICO_LEFT_HEADER: PicoHeaderEntry[] = [
+  ['GP0', 'GP0', 'digital'],
+  ['GP1', 'GP1', 'digital'],
+  ['GND.1', 'GND', 'gnd'],
+  ['GP2', 'GP2', 'digital'],
+  ['GP3', 'GP3', 'digital'],
+  ['GP4', 'GP4', 'digital'],
+  ['GP5', 'GP5', 'digital'],
+  ['GND.2', 'GND', 'gnd'],
+  ['GP6', 'GP6', 'digital'],
+  ['GP7', 'GP7', 'digital'],
+  ['GP8', 'GP8', 'digital'],
+  ['GP9', 'GP9', 'digital'],
+  ['GND.3', 'GND', 'gnd'],
+  ['GP10', 'GP10', 'digital'],
+  ['GP11', 'GP11', 'digital'],
+  ['GP12', 'GP12', 'digital'],
+  ['GP13', 'GP13', 'digital'],
+  ['GND.4', 'GND', 'gnd'],
+  ['GP14', 'GP14', 'digital'],
+  ['GP15', 'GP15', 'digital'],
+]
+
+/**
+ * Physical header positions 21 → 40, i.e. BOTTOM to TOP on the right edge —
+ * the direction a real Pico is numbered.
+ *
+ * `3.3V` and `5V` are deliberately named for the VOLTAGE and not the silkscreen
+ * (`3V3(OUT)` and `VBUS`), because compile() keys its rail stamping off exactly
+ * those two pin ids. The human-facing `name` keeps the real label.
+ */
+const PICO_RIGHT_HEADER: PicoHeaderEntry[] = [
+  ['GP16', 'GP16', 'digital'],
+  ['GP17', 'GP17', 'digital'],
+  ['GND.5', 'GND', 'gnd'],
+  ['GP18', 'GP18', 'digital'],
+  ['GP19', 'GP19', 'digital'],
+  ['GP20', 'GP20', 'digital'],
+  ['GP21', 'GP21', 'digital'],
+  ['GND.6', 'GND', 'gnd'],
+  ['GP22', 'GP22', 'digital'],
+  ['RUN', 'RUN', 'passive'],
+  ['GP26', 'GP26/A0', 'analog'],
+  ['GP27', 'GP27/A1', 'analog'],
+  ['AGND', 'AGND', 'gnd'],
+  ['GP28', 'GP28/A2', 'analog'],
+  ['ADC_VREF', 'ADC_VREF', 'passive'],
+  ['3.3V', '3V3(OUT)', 'power'],
+  ['3V3_EN', '3V3_EN', 'passive'],
+  ['GND.7', 'GND', 'gnd'],
+  ['VSYS', 'VSYS', 'passive'],
+  ['5V', 'VBUS', 'power'],
+]
+
+function makePico(): PartDefinition {
+  const pins: PinGeometry[] = []
+  PICO_LEFT_HEADER.forEach(([id, name, type], i) => {
+    pins.push({ id, name, x: PICO_LEFT_X, y: PICO_TOP_Y + i * PITCH, type })
+  })
+  // Pin 21 sits at the BOTTOM right and the numbering walks upward to pin 40.
+  PICO_RIGHT_HEADER.forEach(([id, name, type], i) => {
+    pins.push({ id, name, x: PICO_RIGHT_X, y: PICO_TOP_Y + (19 - i) * PITCH, type })
+  })
+
+  const holes = pins
+    .map(
+      (p) =>
+        `<rect x="${p.x - 3.5}" y="${p.y - 3.5}" width="7" height="7" rx="1.2" ` +
+        `fill="#c9a227" stroke="#8a6d14" stroke-width="0.5"/>` +
+        `<circle cx="${p.x}" cy="${p.y}" r="2" fill="#2b2b2b"/>`,
+    )
+    .join('')
+
+  return {
+    type: 'raspberry_pi_pico',
+    label: 'Raspberry Pi Pico',
+    width: PICO_W,
+    height: PICO_H,
+    pins,
+    // Every GND pad is the same copper on the real board, AGND included — it is
+    // joined to GND through a 0 Ω link, not isolated.
+    buses: [['GND.1', 'GND.2', 'GND.3', 'GND.4', 'GND.5', 'GND.6', 'GND.7', 'AGND']],
+    electrical: { kind: 'mcu', board: 'raspberry_pi_pico', logicVolts: 3.3 },
+    svg: `
+      <rect x="0" y="0" width="${PICO_W}" height="${PICO_H}" rx="8" fill="#0f5132" stroke="#0a3d26"/>
+      <rect x="22" y="6" width="46" height="26" rx="2" fill="#1b1b1b"/>
+      <text x="45" y="23" font-size="9" text-anchor="middle" fill="#d8d8d8" font-family="monospace">USB</text>
+      <rect x="30" y="96" width="30" height="30" rx="3" fill="#1b1b1b" stroke="#000"/>
+      <text x="45" y="108" font-size="7" text-anchor="middle" fill="#9ad" font-family="monospace">RP2</text>
+      <text x="45" y="118" font-size="7" text-anchor="middle" fill="#9ad" font-family="monospace">040</text>
+      <text x="45" y="200" font-size="7" text-anchor="middle" fill="#cfe8d8" font-family="monospace">Pico 3V3</text>
+      ${holes}
+    `,
   }
 }
 
@@ -486,6 +633,7 @@ const capacitor: PartDefinition = {
 
 export const PART_LIBRARY: Record<string, PartDefinition> = {
   arduino_uno: makeUno(),
+  raspberry_pi_pico: makePico(),
   breadboard: makeBreadboard(),
   resistor,
   led,
@@ -505,6 +653,7 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
 /** Palette order. Breadboard and board first — students place those first too. */
 export const PALETTE: string[] = [
   'arduino_uno',
+  'raspberry_pi_pico',
   'breadboard',
   'resistor',
   'led',

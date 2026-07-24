@@ -17,19 +17,27 @@
  */
 
 import { Simulator, USBCDC, GPIOPinState, type Logger, type RP2040 } from 'rp2040js'
+import type { CPU } from 'avr8js'
 import { compile, type CompileResult } from '../model/compile'
-import type { CircuitDoc } from '../model/document'
+import type { CircuitDoc, PlacedPart } from '../model/document'
 import type { SolveFault } from '../types'
-import { MIN_RESISTANCE } from '../devices'
 import {
-  PICO_ONBOARD_LED_GPIO,
-  adcChannelOf,
-  gpioIndexOf,
-  registerPicoPart,
-} from './board'
+  BuzzerMonitor,
+  DHT11,
+  FlowSensor,
+  G_RELEASED,
+  HCSR04,
+  PIRSensor,
+  R_PULLDOWN,
+  type BehaviouralContext,
+  type BehaviouralDevice,
+  type DeviceState,
+  type DriveLevel,
+} from '../behavioural'
+import { BUZZER_5V, MIN_RESISTANCE } from '../devices'
+import { PICO_ADC_PINS, PICO_ONBOARD_LED_GPIO, adcChannelOf, gpioIndexOf } from './board'
+import { PicoBehaviouralClock } from './clock-shim'
 import type { PicoFirmware } from './firmware'
-
-registerPicoPart()
 
 /** RP2040 system clock as the Pico's stage-2 bootloader configures it. */
 export const PICO_CLOCK_HZ = 125_000_000
@@ -170,6 +178,13 @@ export interface PicoSnapshot {
   limitations: string[]
   /** Where the REPL hand-off has got to. See feedScript(). */
   repl: ReplPhase
+  /**
+   * partId → whatever that part is doing that a node voltage cannot express:
+   * the reading a DHT11 is sending, the rpm of a motor. REPORTED state, derived
+   * from the solved circuit and from simulated time — never a substitute for
+   * solving. Same field, same meaning as the AVR engine's.
+   */
+  deviceStates: Record<string, DeviceState>
 }
 
 /**
@@ -233,6 +248,17 @@ export class PicoSimulationEngine {
    */
   private readonly avgTauNanos = 25e6
 
+  /**
+   * Behavioural parts (a DHT11 and friends), running the SAME models the AVR
+   * engine runs, on an RP2040 clock. See ./clock-shim.ts for why that is a
+   * translation rather than a fork.
+   */
+  private readonly clockShim: PicoBehaviouralClock
+  private devices: BehaviouralDevice[] = []
+  /** Behavioural drive state, keyed "partId:signal". Part of the memo key. */
+  private deviceDrives = new Map<string, DriveLevel>()
+  private deviceStates: Record<string, DeviceState> = {}
+
   private inputLevels = new Map<string, boolean>()
   private wiredPins = new Set<string>()
   /** Wired header GPIOs as [pinId, gpioIndex], so the hot path skips the regex. */
@@ -294,9 +320,12 @@ export class PicoSimulationEngine {
       this.onboardLedOn = state === GPIOPinState.High
     })
 
+    this.clockShim = new PicoBehaviouralClock(this.mcu.clock)
+
     this.doc = doc
     this.compiled = compile(doc)
     this.rebuildWatchList()
+    this.buildBehavioural()
     this.evaluate()
   }
 
@@ -305,10 +334,74 @@ export class PicoSimulationEngine {
     this.doc = doc
     this.compiled = compile(doc)
     this.rebuildWatchList()
+    this.buildBehavioural()
     this.topologyVersion++
     this.cache.clear()
     this.dirtyFlag[0] = 1
     this.evaluate()
+  }
+
+  private partProps(partId: string): Record<string, number | string> {
+    const part: PlacedPart | undefined = this.doc.parts.find((p) => p.id === partId)
+    return part ? part.props : {}
+  }
+
+  /**
+   * Instantiate tier-2 parts, exactly as ../engine.ts does.
+   *
+   * The one Pico-specific line is the default `volts` for a device driving its
+   * line HIGH: PICO_VDD rather than the AVR's 5. A device that names its own
+   * output level (an HC-SR501 drives 3.3 V whatever the board) still wins, as
+   * it should — that is a datasheet property of the part, not of the rail.
+   */
+  private buildBehavioural(): void {
+    // Self-clocked devices hold live alarms on the RP2040 clock. Rebuilding
+    // without cancelling them leaves an orphan still driving a Norton port that
+    // belongs to the previous compile.
+    for (const d of this.devices) d.dispose?.()
+    this.clockShim.cancelAll()
+    this.devices = []
+    this.deviceDrives.clear()
+    this.deviceStates = {}
+
+    for (const b of this.compiled.behavioural) {
+      const ctx: BehaviouralContext = {
+        /**
+         * The one unavoidable cast on this path.
+         *
+         * BehaviouralContext types this as avr8js's CPU class, which has
+         * private fields and therefore cannot be satisfied structurally. What
+         * makes it safe is that the models touch exactly three members of it,
+         * PicoBehaviouralClock implements all three against the real avr8js
+         * signatures, and pico.test.ts fails if a device ever reaches for a
+         * fourth. See ./clock-shim.ts.
+         */
+        cpu: this.clockShim as unknown as CPU,
+        voltage: (signal) => {
+          const n = b.nets[signal]
+          return n !== undefined && n < this.voltages.length ? this.voltages[n] : 0
+        },
+        drive: (signal, level, volts = PICO_VDD) => {
+          const port = b.ports[signal]
+          if (!port) return
+          const key = `${b.partId}:${signal}`
+          if (this.deviceDrives.get(key) === level) return
+          this.deviceDrives.set(key, level)
+          port.set(
+            level === 'release' ? G_RELEASED : 1 / R_PULLDOWN,
+            level === 'high' ? volts / R_PULLDOWN : 0,
+          )
+          this.dirtyFlag[0] = 1
+        },
+        props: () => this.partProps(b.partId),
+        report: (state) => {
+          this.deviceStates[b.partId] = state
+        },
+      }
+
+      const device = makeBehavioural(b.protocol, b.partId, ctx)
+      if (device) this.devices.push(device)
+    }
   }
 
   /**
@@ -357,6 +450,11 @@ export class PicoSimulationEngine {
   private stateKey(): string {
     let k = `${this.topologyVersion}|`
     for (const [pinId] of this.watched) k += pinId + (this.drives.get(pinId) ?? 'float')[0]
+    // A behavioural device shares the wire, so its drive is part of the
+    // operating point. Omitting it makes every DHT11 transition a cache HIT on
+    // the previous solution — the sensor pulls its line low and the solver goes
+    // on reporting it high, which is exactly the bug the AVR engine hit.
+    for (const [id, level] of this.deviceDrives) k += '|' + id + level[0]
     return k
   }
 
@@ -406,6 +504,7 @@ export class PicoSimulationEngine {
       this.voltages = hit.voltages
       this.dirtyFlag[0] = 0
       this.driveInputs()
+      for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
       return
     }
 
@@ -421,7 +520,7 @@ export class PicoSimulationEngine {
       this.solves++
       this.voltages = res.voltages
 
-      for (const pinId of ['GP26', 'GP27', 'GP28']) {
+      for (const pinId of PICO_ADC_PINS) {
         const ch = adcChannelOf(pinId)
         if (ch === null) continue
         const netId = this.compiled.analogNets.get(pinId)
@@ -444,6 +543,7 @@ export class PicoSimulationEngine {
     this.cache.set(key, this.latest)
     this.dirtyFlag[0] = 0
     this.driveInputs()
+    for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
   }
 
   /**
@@ -560,10 +660,10 @@ export class PicoSimulationEngine {
   /**
    * Faults the solver found, plus the ones it structurally cannot see.
    *
-   * Same shape as ../engine.ts, with the rail corrected: compile() reports a
-   * shorted I/O pin as 5 V because it was written for an Uno, so the number is
-   * recomputed here from PICO_VDD. Passing the 5 V figure through would
-   * overstate the current by 52% — see PICO_COMPILE_TODO in ./board.ts.
+   * `s.volts` is now the BOARD's own rail. compile() used to hardcode 5 V for a
+   * shorted I/O pin, so this method recomputed the number from PICO_VDD to stop
+   * a Pico fault being overstated by 52%; that workaround is gone, and the
+   * assertion in pico.test.ts group I is what keeps it gone.
    */
   private faults(): SolveFault[] {
     const shorts = this.compiled.shortedPins
@@ -581,14 +681,14 @@ export class PicoSimulationEngine {
             `On real hardware this destroys the board or the supply.`,
         })
       } else if (this.drives.get(s.pinId) === 'high') {
-        const amps = PICO_VDD / R_DRIVE
+        const amps = s.volts / R_DRIVE
         out.push({
           kind: 'short_circuit',
           severity: 'destructive',
           deviceId: s.deviceId,
           value: amps,
           message:
-            `${s.pinId} is driving ${PICO_VDD} V straight into GND — ` +
+            `${s.pinId} is driving ${s.volts} V straight into GND — ` +
             `${(amps * 1000).toFixed(0)} mA through a pad rated for ` +
             `${(PIN_RATED_CURRENT * 1000).toFixed(0)} mA. On real hardware this damages the pin.`,
         })
@@ -611,19 +711,53 @@ export class PicoSimulationEngine {
     return [...new Set(out)]
   }
 
+  /**
+   * Reported device state at snapshot time.
+   *
+   * Motors are computed HERE rather than published by the device, because their
+   * speed has to come from the TIME-AVERAGED current: a PWM-driven motor sits
+   * at two DC operating points and a snapshot of either is a speed the shaft
+   * never runs at. Speed is affine in current (DCMotor.rpmFor), so converting
+   * the exact time-weighted average is exactly the average speed. Identical to
+   * ../engine.ts — and it matters more here, because rp2040js drives the PWM
+   * block through the same GPIOPin.value path, so a Pico PWM needs no other
+   * special casing.
+   */
+  private states(averaged: Record<string, number>): Record<string, DeviceState> {
+    // Give devices whose reading AGES (a buzzer that stopped being driven) a
+    // chance to notice — solves only happen on pin edges, and silence has none.
+    for (let i = 0; i < this.devices.length; i++) this.devices[i].refresh?.()
+
+    const out: Record<string, DeviceState> = { ...this.deviceStates }
+    for (const [partId, motor] of this.compiled.motors) {
+      const amps = averaged[partId] ?? motor.current
+      const rpm = motor.rpmFor(amps)
+      out[partId] = {
+        rpm: Math.abs(rpm),
+        direction: rpm > 0 ? 'forward' : rpm < 0 ? 'reverse' : 'stopped',
+        amps,
+        load: motor.load,
+        stalled: rpm === 0 && Math.abs(amps) > 0,
+      }
+    }
+    return out
+  }
+
   snapshot(): PicoSnapshot {
     this.advanceAverage()
     const pins: Record<string, PicoPinDrive> = {}
     for (const [pinId] of this.watched) pins[pinId] = this.drives.get(pinId) ?? 'float'
     const adc: Record<string, number> = {}
-    for (const pinId of ['GP26', 'GP27', 'GP28']) {
+    for (const pinId of PICO_ADC_PINS) {
       const ch = adcChannelOf(pinId)!
       const v = Number(this.mcu.adc.channelValues[ch] ?? 0)
       adc[pinId] = Math.max(0, Math.min(PICO_ADC_MAX, Math.round((v / PICO_VDD) * PICO_ADC_MAX)))
     }
+    const currents = this.averagedCurrents()
     return {
       ledBrightness: this.averagedBrightness(),
-      currents: this.averagedCurrents(),
+      currents,
+      deviceStates: this.states(currents),
       adc,
       faults: this.faults(),
       problems: this.compiled.problems,
@@ -639,6 +773,38 @@ export class PicoSimulationEngine {
       limitations: this.limitations(),
       repl: this.replPhase,
     }
+  }
+}
+
+/**
+ * Protocol name → behavioural model.
+ *
+ * The SAME table as ../engine.ts's, and deliberately a duplicate of four lines
+ * rather than a shared export: the two engines instantiate the same classes,
+ * and if they ever stop agreeing that is a fact worth seeing in a diff.
+ *
+ * An unknown protocol returns null rather than throwing — a document authored
+ * against a newer part library should degrade to an inert part, not take the
+ * whole worker down.
+ */
+function makeBehavioural(
+  protocol: string,
+  partId: string,
+  ctx: BehaviouralContext,
+): BehaviouralDevice | null {
+  switch (protocol) {
+    case 'dht11':
+      return new DHT11(partId, ctx)
+    case 'hc_sr04':
+      return new HCSR04(partId, ctx)
+    case 'pir':
+      return new PIRSensor(partId, ctx)
+    case 'flow':
+      return new FlowSensor(partId, ctx)
+    case 'buzzer':
+      return new BuzzerMonitor(partId, ctx, BUZZER_5V)
+    default:
+      return null
   }
 }
 

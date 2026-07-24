@@ -40,7 +40,7 @@ import {
   type DeviceState,
   type DriveLevel,
 } from './behavioural'
-import { BUZZER_5V, MIN_RESISTANCE } from './devices'
+import { BUZZER_5V, MIN_RESISTANCE, type NortonPort } from './devices'
 import type { CircuitDoc, PlacedPart } from './model/document'
 import type { SolveFault } from './types'
 
@@ -177,9 +177,30 @@ export class SimulationEngine {
    */
   private avg = new Map<string, number>()
   private lastAvgCycle = 0
+  /** Poll order, rebuilt from the compiler's order on every edit. */
   private devices: BehaviouralDevice[] = []
+  /**
+   * The live device per part id, with the wiring it was built against.
+   *
+   * Separate from `devices` because this is the map that decides SURVIVAL
+   * across an edit; `devices` is just the iteration order. See buildBehavioural.
+   */
+  private live = new Map<string, { device: BehaviouralDevice; signature: string }>()
+  /**
+   * What each behavioural part is attached to in the CURRENT compile.
+   *
+   * Every device context reads its nets and ports THROUGH this map rather than
+   * closing over a compile result. That indirection is the whole mechanism that
+   * lets a surviving device be re-pointed at a fresh compile without being
+   * rebuilt: compile() allocates a new Circuit, and therefore brand-new
+   * NortonPorts, every single time, so a device still holding the old ones would
+   * be stamping into a matrix nobody solves.
+   */
+  private bindings = new Map<string, CompileResult['behavioural'][number]>()
   /** Behavioural drive state, keyed "partId:signal". Part of the memo key. */
   private deviceDrives = new Map<string, DriveLevel>()
+  /** The `volts` that went with each of those, so a re-point can re-stamp it. */
+  private deviceVolts = new Map<string, number>()
   /** Latest reported state per behavioural part, for the snapshot. */
   private deviceStates: Record<string, DeviceState> = {}
   /** Last logic level presented to each MCU input pin, for hysteresis. */
@@ -289,51 +310,148 @@ export class SimulationEngine {
   /** Wired pins grouped by AVR port, so a port write only checks its own pins. */
   private watched: Record<'B' | 'C' | 'D', Array<[string, number]>> = { B: [], C: [], D: [] }
 
+  /** Stamp one behavioural drive onto its port. The one place that maths lives. */
+  private stampDrive(port: NortonPort, level: DriveLevel, volts: number): void {
+    port.set(
+      level === 'release' ? G_RELEASED : 1 / R_PULLDOWN,
+      level === 'high' ? volts / R_PULLDOWN : 0,
+    )
+  }
+
   /**
-   * Instantiate tier-2 parts. Each gets a live view of its own net voltage and
-   * its own props, so moving the temperature slider changes what the next
-   * reading reports without rebuilding anything.
+   * One device's view of the engine, addressed by PART ID rather than by a
+   * captured compile result — see `bindings`.
+   */
+  private contextFor(partId: string): BehaviouralContext {
+    return {
+      cpu: this.cpu,
+      voltage: (signal) => {
+        const n = this.bindings.get(partId)?.nets[signal]
+        return n !== undefined && n < this.voltages.length ? this.voltages[n] : 0
+      },
+      // The engine owns both the port and the cache key, so a device's drive
+      // can never diverge from what the cache thinks it is.
+      drive: (signal, level, volts = VCC) => {
+        const port = this.bindings.get(partId)?.ports[signal]
+        if (!port) return
+        const key = `${partId}:${signal}`
+        if (this.deviceDrives.get(key) === level) return
+        this.deviceDrives.set(key, level)
+        this.deviceVolts.set(key, volts)
+        this.stampDrive(port, level, volts)
+        this.dirtyFlag[0] = 1
+      },
+      props: () => this.partProps(partId),
+      report: (state) => {
+        this.deviceStates[partId] = state
+      },
+    }
+  }
+
+  /**
+   * What a device is wired to, as a string, so two compiles can be compared.
+   *
+   * Nets AND driven signals, because both change what the device is: a sensor
+   * moved to another pin is on a different net, and a sensor whose output lead
+   * was pulled loses the port it drives through.
+   */
+  private static wiringSignature(b: CompileResult['behavioural'][number]): string {
+    const nets = Object.entries(b.nets)
+      .map(([signal, net]) => `${signal}=${net}`)
+      .sort()
+      .join(',')
+    return `${b.protocol}|${nets}|${Object.keys(b.ports).sort().join('+')}`
+  }
+
+  /**
+   * Instantiate tier-2 parts, and — the important half — DO NOT re-instantiate
+   * the ones that have not actually changed.
+   *
+   * This used to throw every behavioural device away on any call, which is to
+   * say on any document edit at all, including a mere prop change. That is not a
+   * neutral act: these devices carry state that only means anything as a
+   * continuous history. An HC-SR501 is the clearest case — its output stays high
+   * until `hold` seconds after motion STOPS, and un-ticking the "motion in
+   * front" checkbox is a prop change, so the very act of asking the module to
+   * start its hold window destroyed the module and its window with it. The
+   * output dropped instantly, which is the one thing the datasheet says it must
+   * not do. A flow sensor's cumulative pulse count had the same problem: turning
+   * the tap reset the meter.
+   *
+   * So a device SURVIVES an edit when it is still the same part, still the same
+   * model, and still on the same nets driving the same signals. Anything else —
+   * deleted, re-wired, replaced with a different part on the same id — is a
+   * genuinely different device and is rebuilt, because at that point the
+   * continuity being preserved would be a fiction.
+   *
+   * Two things make survival safe rather than merely cheap:
+   *
+   *   - `bindings` is re-pointed at the new compile before anything else runs,
+   *     so a surviving device reads the CURRENT ports and nets;
+   *   - the drives it had set are re-stamped onto those new ports. They come up
+   *     released, and a device that only drives on its own scheduled edges (a
+   *     DHT11 halfway through a 40-bit frame) would otherwise let its line float
+   *     until the next one.
+   *
+   * Self-clocked devices that do NOT survive are disposed, exactly as before:
+   * their callbacks are still on the CPU's event list, and an orphan would go on
+   * driving a port belonging to a compile nobody solves any more.
    */
   private buildBehavioural(): void {
-    // Self-clocked devices (a PIR watching a slider, a flow sensor generating a
-    // pulse train) have live callbacks on the CPU's event list. Rebuilding the
-    // document without cancelling them leaves an orphan still driving a port
-    // that belongs to the previous compile.
-    for (const d of this.devices) d.dispose?.()
-    this.devices = []
-    this.deviceDrives.clear()
-    this.deviceStates = {}
+    const present = new Map(this.compiled.behavioural.map((b) => [b.partId, b]))
 
-    for (const b of this.compiled.behavioural) {
-      const ctx: BehaviouralContext = {
-        cpu: this.cpu,
-        voltage: (signal) => {
-          const n = b.nets[signal]
-          return n !== undefined && n < this.voltages.length ? this.voltages[n] : 0
-        },
-        // The engine owns both the port and the cache key, so a device's drive
-        // can never diverge from what the cache thinks it is.
-        drive: (signal, level, volts = VCC) => {
-          const port = b.ports[signal]
-          if (!port) return
-          const key = `${b.partId}:${signal}`
-          if (this.deviceDrives.get(key) === level) return
-          this.deviceDrives.set(key, level)
-          port.set(
-            level === 'release' ? G_RELEASED : 1 / R_PULLDOWN,
-            level === 'high' ? volts / R_PULLDOWN : 0,
-          )
-          this.dirtyFlag[0] = 1
-        },
-        props: () => this.partProps(b.partId),
-        report: (state) => {
-          this.deviceStates[b.partId] = state
-        },
-      }
-
-      const device = makeBehavioural(b.protocol, b.partId, ctx)
-      if (device) this.devices.push(device)
+    // 1. Retire what is gone or has been rewired, and forget its state.
+    for (const [partId, entry] of [...this.live]) {
+      const b = present.get(partId)
+      if (b && entry.signature === SimulationEngine.wiringSignature(b)) continue
+      entry.device.dispose?.()
+      this.live.delete(partId)
+      this.forgetDevice(partId)
     }
+
+    // 2. Re-point the survivors, build the newcomers.
+    for (const [partId, b] of present) {
+      this.bindings.set(partId, b)
+      const entry = this.live.get(partId)
+      if (entry) {
+        for (const signal of Object.keys(b.ports)) {
+          const key = `${partId}:${signal}`
+          const level = this.deviceDrives.get(key)
+          if (level === undefined) continue
+          this.stampDrive(b.ports[signal], level, this.deviceVolts.get(key) ?? VCC)
+        }
+        continue
+      }
+      const device = makeBehavioural(b.protocol, partId, this.contextFor(partId))
+      if (device) {
+        this.live.set(partId, { device, signature: SimulationEngine.wiringSignature(b) })
+      }
+    }
+
+    // 3. A part the compiler no longer reports is not inert, it is absent.
+    for (const partId of [...this.bindings.keys()]) {
+      if (!present.has(partId)) this.bindings.delete(partId)
+    }
+
+    // 4. Poll order follows the compiler's, so an edit cannot silently reorder
+    //    which device gets to see the solved voltages first.
+    this.devices = []
+    for (const b of this.compiled.behavioural) {
+      const entry = this.live.get(b.partId)
+      if (entry) this.devices.push(entry.device)
+    }
+  }
+
+  /** Drop every trace of one behavioural part: drives, volts, reported state. */
+  private forgetDevice(partId: string): void {
+    const prefix = partId + ':'
+    for (const key of [...this.deviceDrives.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.deviceDrives.delete(key)
+        this.deviceVolts.delete(key)
+      }
+    }
+    delete this.deviceStates[partId]
   }
 
   /**

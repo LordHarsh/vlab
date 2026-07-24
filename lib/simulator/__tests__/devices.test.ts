@@ -1208,15 +1208,26 @@ group('8. Inside the running engine, on real firmware')
 
 {
   /**
-   * Editing the document mid-run rebuilds every behavioural device. The old ones
-   * still have callbacks sitting on the CPU's event list, and an orphan that
-   * kept firing would go on driving a Norton port belonging to the previous
-   * compile — a ghost sensor the student cannot see or delete. dispose() is what
-   * prevents that, and doubling the flow rate is how it shows: the new device
-   * must pulse at the NEW rate, and the old one must not add pulses of its own.
+   * Editing the document mid-run must leave EXACTLY ONE sensor running, at the
+   * new rate, and must not restart its meter.
    *
-   * 0.2 s at 20 L/min = 150 Hz is 30 pulses. An undisposed 10 L/min ghost would
-   * add ~15 more on top.
+   * Two failures are in scope here and doubling the flow rate separates all
+   * three outcomes cleanly:
+   *
+   *   45 pulses — correct. 0.2 s at 10 L/min (75 Hz) is 15, then 0.2 s at
+   *               20 L/min (150 Hz) is 30. The turbine kept turning across the
+   *               edit, which is what a hall-effect meter does when you open the
+   *               tap: it does not reset to zero.
+   *   30 pulses — the count was reset. That is what happened while ANY document
+   *               edit destroyed and rebuilt every behavioural device; the same
+   *               defect made an HC-SR501 drop its output the instant the motion
+   *               checkbox was un-ticked, instead of holding for Tx.
+   *   ~60       — a GHOST. The old device's callbacks are still on the CPU's
+   *               event list and it is still driving a Norton port belonging to
+   *               a compile nobody solves. dispose() is what prevents that, and
+   *               it is still exercised here: the flow prop changes, so the
+   *               sensor's WIRING is unchanged and it survives — but a device
+   *               that was retired and rebuilt without disposal would double up.
    */
   const program = parseIntelHex(
     fs.readFileSync(path.join(process.cwd(), 'public', 'sim', 'blink.hex'), 'utf8'),
@@ -1238,11 +1249,59 @@ group('8. Inside the running engine, on real firmware')
   eng.run(200_000)
   const after = Number(eng.snapshot().deviceStates.f.pulses)
   truth(
-    'a mid-run edit rebuilds the sensor at the new rate, with no ghost',
-    after >= 27 && after <= 33,
-    '30 ±3 pulses (0.2 s at 150 Hz)',
+    'a mid-run prop edit re-rates the sensor without resetting it or ghosting it',
+    after >= 42 && after <= 48,
+    '45 ±3 pulses (15 at 75 Hz, then 30 at 150 Hz)',
     `${after} pulses`,
   )
+}
+
+{
+  /**
+   * The same continuity, on the device it matters most to.
+   *
+   * An HC-SR501 is RETRIGGERABLE: OUT goes high on detection and stays high
+   * until `hold` seconds after motion stops. Un-ticking "motion in front" is a
+   * prop edit, and while every prop edit rebuilt the behavioural devices, that
+   * edit reset holdUntilCycle to 0 and the output fell on the very next poll —
+   * the module's whole timing behaviour was unobservable in the editor, because
+   * the only way to ask for it was to destroy it.
+   *
+   * hold = 2 s here: 1 s after motion stops the output must still be HIGH, and
+   * by 3 s it must have fallen. Both are checked, so a model that simply latched
+   * high forever would fail too.
+   */
+  const program = parseIntelHex(
+    fs.readFileSync(path.join(process.cwd(), 'public', 'sim', 'blink.hex'), 'utf8'),
+  )
+  const withMotion = (motion: number): CircuitDoc => ({
+    parts: [place('uno', 'arduino_uno'), place('p', 'pir_motion', { motion, hold: 2, warmup: 0 })],
+    wires: [
+      wire(['p', 'VCC'], ['uno', '5V']),
+      wire(['p', 'GND'], ['uno', 'GND.1']),
+      wire(['p', 'OUT'], ['uno', 'D7']),
+    ],
+  })
+
+  const eng = new SimulationEngine(program, withMotion(1))
+  eng.run(500_000)
+  const during = eng.snapshot().deviceStates.p.motion === true
+
+  eng.setDocument(withMotion(0))
+  eng.run(1_000_000)
+  const held = eng.snapshot().deviceStates.p.motion === true
+
+  eng.run(2_000_000)
+  const released = eng.snapshot().deviceStates.p.motion === false
+
+  truth('motion in front of a PIR drives its output high', during, 'high', during ? 'high' : 'low')
+  truth(
+    'un-ticking "motion" does NOT drop it — the 2 s hold survives the edit',
+    held,
+    'still high 1 s later',
+    held ? 'still high' : 'dropped immediately',
+  )
+  truth('and it falls once the hold window really has expired', released, 'low by 3 s', released ? 'low' : 'still high')
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────

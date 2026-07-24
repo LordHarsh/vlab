@@ -32,10 +32,12 @@ import {
   PICO_ADC_MAX,
   type PicoSnapshot,
 } from '../pico/engine'
-import { PICO_PART, gpioIndexOf, adcChannelOf, registerPicoPart } from '../pico/board'
-import type { CircuitDoc, DocWire } from '../model/document'
-
-registerPicoPart()
+import { PICO_PART, gpioIndexOf, adcChannelOf } from '../pico/board'
+import { BEHAVIOURAL_CPU_SURFACE, NANOS_PER_AVR_CYCLE } from '../pico/clock-shim'
+import { PICO_EXPERIMENTS } from '../pico/experiments'
+import { BOARDS, detectBoard } from '../model/boards'
+import { PALETTE, PART_LIBRARY, getPart } from '../model/parts'
+import type { CircuitDoc, DocWire, PlacedPart } from '../model/document'
 
 // ─── Harness (same shape as engine.test.ts) ──────────────────────────────────
 
@@ -228,6 +230,22 @@ const PAD_INPUT_PULLDOWN = 0b0110110 // the reset value
 const PAD_INPUT_NOPULL = 0b0110010
 const PAD_INPUT_PULLUP = 0b0111010
 
+/**
+ * The same "input, no pulls" pad, plus bit 6: INPUT ENABLE.
+ *
+ * A finding worth writing down, because it cost an hour. rp2040js resets
+ * padValue to 0b0110110, which has INPUT ENABLE CLEAR; the datasheet's own
+ * reset value for PADS_BANK0_GPIOn is 0x56, which has it SET. The difference
+ * does not touch the analog model at all — `GPIOPin.value`, which is what the
+ * engine's PinBridge listens to, is derived from the output enable and the pull
+ * bits and never consults it — but `GPIOPin.inputValue` is gated on it, and
+ * that is the observable group L uses to watch the DHT11's reply on the wire.
+ * Real firmware always sets it (pico-sdk's gpio_init calls
+ * gpio_set_input_enabled), so a test that pokes registers by hand must too, or
+ * it is watching a line that is wired up but not listening.
+ */
+const PAD_OPEN_DRAIN = 0b1110010
+
 function selectSio(eng: PicoSimulationEngine, gp: number): void {
   eng.mcu.writeUint32(IO_BANK0_BASE + gp * 8 + 4, FUNCSEL_SIO)
 }
@@ -248,6 +266,27 @@ function makeInput(eng: PicoSimulationEngine, gp: number, pad = PAD_INPUT_NOPULL
 }
 
 /**
+ * Open-drain, exactly as MicroPython's `mp_hal_pin_open_drain` configures a pad
+ * for a one-wire sensor: SIO function, no pulls, input enabled, and the line
+ * driven by TOGGLING THE OUTPUT ENABLE rather than the output value. `od_low`
+ * turns the pad into an output already holding 0; `od_high` turns it back into
+ * an input and lets whatever pull-up is on the wire raise it.
+ */
+function openDrainInit(eng: PicoSimulationEngine, gp: number): void {
+  selectSio(eng, gp)
+  eng.mcu.writeUint32(PADS_BANK0_BASE + 4 + gp * 4, PAD_OPEN_DRAIN)
+  eng.mcu.writeUint32(SIO_GPIO_OUT_CLR, 1 << gp)
+  eng.mcu.writeUint32(SIO_GPIO_OE_CLR, 1 << gp)
+}
+function odLow(eng: PicoSimulationEngine, gp: number): void {
+  eng.mcu.writeUint32(SIO_GPIO_OUT_CLR, 1 << gp)
+  eng.mcu.writeUint32(SIO_GPIO_OE_SET, 1 << gp)
+}
+function odHigh(eng: PicoSimulationEngine, gp: number): void {
+  eng.mcu.writeUint32(SIO_GPIO_OE_CLR, 1 << gp)
+}
+
+/**
  * Advance far enough for the READOUT to have caught up, then sample.
  *
  * 200 ms is eight time constants of the engine's 25 ms display filter, so the
@@ -260,6 +299,28 @@ function makeInput(eng: PicoSimulationEngine, gp: number, pad = PAD_INPUT_NOPULL
 function settle(eng: PicoSimulationEngine, micros = 200_000): PicoSnapshot {
   eng.run(micros)
   return eng.snapshot()
+}
+
+/**
+ * What the PROGRAM printed, with the REPL's echo of its own source removed.
+ *
+ * This is not tidiness, it is correctness, and it caught a false assertion in
+ * this very file. MicroPython's paste mode echoes every character it receives,
+ * so the serial buffer contains the script's own source — including the string
+ * literals inside its `print()` calls. Asserting `/Sensor read failed/` against
+ * the raw buffer therefore matches the ECHO of `print("Sensor read failed")`
+ * and reports a failure that never happened; asserting `/Press button to toggle
+ * LED\./` matches the echo and passes whether or not the program ever ran.
+ *
+ * Everything the program prints necessarily comes after the last line of the
+ * echoed source, so that is where the cut is made. If the echo has already
+ * scrolled out of the 2 KB buffer there is nothing to strip and the whole
+ * buffer is program output.
+ */
+function programOutput(serial: string, script: string): string {
+  const lastLine = script.trimEnd().split('\n').pop()!.trim()
+  const at = serial.lastIndexOf(lastLine)
+  return at < 0 ? serial : serial.slice(at + lastLine.length)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -672,6 +733,638 @@ if (!HAVE_FIRMWARE) {
     true,
     'measured',
     `${(6 / wall).toFixed(2)}x realtime (6.00 s sim in ${wall.toFixed(1)} s wall)`,
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('H. The Pico is a first-class part, not a runtime splice')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * The Pico used to insert itself into PART_LIBRARY and PALETTE from an
+   * import side-effect, because model/parts.ts belonged to another workstream.
+   * That stopgap is the thing this group exists to keep dead: a part that
+   * registers itself is invisible to anyone who imports parts.ts alone, so the
+   * palette a student sees would depend on which modules the page happened to
+   * pull in.
+   */
+  const partsSrc = fs.readFileSync(
+    path.join(process.cwd(), 'lib', 'simulator', 'model', 'parts.ts'),
+    'utf8',
+  )
+  const boardSrc = fs.readFileSync(
+    path.join(process.cwd(), 'lib', 'simulator', 'pico', 'board.ts'),
+    'utf8',
+  )
+
+  truth(
+    'parts.ts itself registers raspberry_pi_pico in PART_LIBRARY',
+    /raspberry_pi_pico:\s*makePico\(\)/.test(partsSrc),
+    'a literal entry in the registry',
+    /raspberry_pi_pico:\s*makePico\(\)/.test(partsSrc) ? 'present' : 'missing',
+  )
+  truth(
+    'and pico/board.ts no longer mutates PART_LIBRARY or PALETTE at import time',
+    !/PART_LIBRARY\[/.test(boardSrc) && !/PALETTE\.splice/.test(boardSrc),
+    'no mutation',
+    /PART_LIBRARY\[|PALETTE\.splice/.test(boardSrc) ? 'still splices itself in' : 'no mutation',
+  )
+  truth(
+    'getPart("raspberry_pi_pico") resolves',
+    getPart('raspberry_pi_pico').label === 'Raspberry Pi Pico',
+    'Raspberry Pi Pico',
+    getPart('raspberry_pi_pico').label,
+  )
+  truth(
+    'and it is in the palette, next to the other board',
+    PALETTE.indexOf('raspberry_pi_pico') === PALETTE.indexOf('arduino_uno') + 1,
+    'immediately after arduino_uno',
+    `index ${PALETTE.indexOf('raspberry_pi_pico')} (uno at ${PALETTE.indexOf('arduino_uno')})`,
+  )
+
+  const picoEl = PART_LIBRARY.raspberry_pi_pico.electrical
+  const unoEl = PART_LIBRARY.arduino_uno.electrical
+  truth(
+    'the Pico declares its own 3.3 V logic rail',
+    picoEl.kind === 'mcu' && picoEl.board === 'raspberry_pi_pico' && picoEl.logicVolts === 3.3,
+    'mcu / raspberry_pi_pico / 3.3 V',
+    picoEl.kind === 'mcu' ? `mcu / ${picoEl.board} / ${picoEl.logicVolts} V` : picoEl.kind,
+  )
+  truth(
+    'and the Uno still declares 5 V — the union widened, the Uno did not move',
+    unoEl.kind === 'mcu' && unoEl.board === 'arduino_uno' && unoEl.logicVolts === 5,
+    'mcu / arduino_uno / 5 V',
+    unoEl.kind === 'mcu' ? `mcu / ${unoEl.board} / ${unoEl.logicVolts} V` : unoEl.kind,
+  )
+
+  /**
+   * The art is hand-drawn, and this asserts WHY rather than trusting a comment:
+   * @wokwi/elements ships no Pico, so there is nothing harvested to use, and
+   * borrowing the Uno's would put a student's wire on a pin that does not
+   * exist. If a Pico element ever appears in the harvest, this fails and
+   * somebody gets to decide deliberately.
+   */
+  const artPath = path.join(process.cwd(), 'lib', 'simulator', 'model', 'wokwi-art.generated.json')
+  const art = JSON.parse(fs.readFileSync(artPath, 'utf8')) as { parts: Record<string, unknown> }
+  const picoArt = Object.keys(art.parts).filter((k) => /pico|rp2040|raspberry/i.test(k))
+  truth(
+    'no harvested wokwi art exists for a Pico, so the SVG is honestly hand-drawn',
+    picoArt.length === 0,
+    'no pico element in the harvest',
+    picoArt.join(',') || 'none',
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('I. compile() takes the rail from the board, not from a constant')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * A pin wired STRAIGHT to GND. The solver cannot see this fault — once
+   * shorted, the pin's net IS net 0, so there is no node to solve for — so
+   * compile() reports it, and the number it reports is the voltage the pin
+   * would be driving. That number used to be the literal 5.
+   *
+   * The hand derivation is Ohm's law through the pad's own output impedance:
+   *
+   *   Pico   3.3 V / 50 Ω = 66.0 mA
+   *   Uno    5.0 V / 25 Ω = 200.0 mA
+   *
+   * and the bug being pinned is that 5 V through the PICO's 50 Ω pad gives
+   * 100 mA — 51.5% too high, and quoted to the student in the fault message.
+   */
+  const picoShort: CircuitDoc = {
+    parts: [{ id: 'pico', type: 'raspberry_pi_pico', x: 0, y: 0, rotation: 0, props: {} }],
+    wires: [wire(['pico', 'GP15'], ['pico', 'GND.1'])],
+  }
+  const unoShort: CircuitDoc = {
+    parts: [{ id: 'uno', type: 'arduino_uno', x: 0, y: 0, rotation: 0, props: {} }],
+    wires: [wire(['uno', 'D13'], ['uno', 'GND.1'])],
+  }
+
+  const picoIo = compile(picoShort).shortedPins.find((s) => s.pinId === 'GP15')
+  const unoIo = compile(unoShort).shortedPins.find((s) => s.pinId === 'D13')
+
+  truth(
+    'a shorted Pico I/O pin is reported at 3.3 V',
+    picoIo?.volts === 3.3,
+    '3.3',
+    String(picoIo?.volts),
+  )
+  truth(
+    'a shorted Uno I/O pin is still reported at 5 V — the Uno path is unchanged',
+    unoIo?.volts === 5,
+    '5',
+    String(unoIo?.volts),
+  )
+
+  const picoAmps = PICO_VDD / R_DRIVE
+  const wrongAmps = 5 / R_DRIVE
+  truth(
+    `the old constant would have overstated the Pico fault by ` +
+      `${(((wrongAmps - picoAmps) / picoAmps) * 100).toFixed(0)}%`,
+    Math.abs((wrongAmps - picoAmps) / picoAmps - 0.5152) < 0.001,
+    '51.5% (100.0 mA claimed vs 66.0 mA real)',
+    `${(((wrongAmps - picoAmps) / picoAmps) * 100).toFixed(1)}%`,
+  )
+
+  // And the engine must quote the corrected figure, not recompute around it.
+  const eng = new PicoSimulationEngine(inertFirmware(), picoShort)
+  driveHigh(eng, 15)
+  const s = settle(eng, 1000)
+  const fault = s.faults.find((f) => f.kind === 'short_circuit')
+  truth(
+    'the engine raises the short only while the pin is DRIVING',
+    fault !== undefined,
+    'one short_circuit fault',
+    `${s.faults.length} faults: ${s.faults.map((f) => f.kind).join(',') || 'none'}`,
+  )
+  near('and quotes the hand-derived current', (fault?.value ?? 0) * 1000, picoAmps * 1000, 0.001)
+  truth(
+    'the message says 3.3 V and 66 mA, never 5 V or 100 mA',
+    fault !== undefined &&
+      /3\.3 V/.test(fault.message) &&
+      /66 mA/.test(fault.message) &&
+      !/5 V|100 mA/.test(fault.message),
+    'mentions 3.3 V / 66 mA only',
+    fault?.message.slice(0, 100) ?? '(no fault)',
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('J. Board-aware engine selection')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  const picoDoc = picoLedDoc()
+  const unoDoc: CircuitDoc = {
+    parts: [{ id: 'uno', type: 'arduino_uno', x: 0, y: 0, rotation: 0, props: {} }],
+    wires: [],
+  }
+  const bothDoc: CircuitDoc = {
+    parts: [...picoDoc.parts, { id: 'uno', type: 'arduino_uno', x: 600, y: 0, rotation: 0, props: {} }],
+    wires: picoDoc.wires,
+  }
+
+  const p = detectBoard(picoDoc)
+  const u = detectBoard(unoDoc)
+  const none = detectBoard({ parts: [], wires: [] })
+  const both = detectBoard(bothDoc)
+
+  truth(
+    'a document with a Pico selects the rp2040 track',
+    p.board?.track === 'rp2040' && p.board.language === 'micropython' && p.problem === null,
+    'rp2040 / micropython / no problem',
+    `${p.board?.track} / ${p.board?.language} / ${p.problem ?? 'no problem'}`,
+  )
+  truth(
+    'a document with an Uno still selects the avr track',
+    u.board?.track === 'avr' && u.board.language === 'arduino_c' && u.problem === null,
+    'avr / arduino_c / no problem',
+    `${u.board?.track} / ${u.board?.language} / ${u.problem ?? 'no problem'}`,
+  )
+  truth(
+    'a document with no board runs nothing, and says so',
+    none.board === null && /No microcontroller/.test(none.problem ?? ''),
+    'null board, a problem naming the fix',
+    `${none.board?.type ?? 'null'} / ${none.problem ?? 'silent'}`,
+  )
+  /**
+   * Two boards is a real thing a student can draw. Picking whichever was
+   * placed first would leave the other one wired but inert — a circuit that
+   * looks live and is not. Refusing is the honest answer: the two emulators own
+   * independent clocks and there is no co-simulation.
+   */
+  truth(
+    'a document with BOTH boards refuses rather than guessing',
+    both.board === null &&
+      both.present.length === 2 &&
+      /Only one board can run at a time/.test(both.problem ?? ''),
+    'null board, both listed, an explanation',
+    `${both.board?.type ?? 'null'} / present=${both.present.join('+')} / ${both.problem?.slice(0, 40) ?? 'silent'}`,
+  )
+
+  // One source of truth: the profile table must not drift from the part data.
+  for (const [type, profile] of Object.entries(BOARDS)) {
+    const el = PART_LIBRARY[type].electrical
+    truth(
+      `BOARDS.${type}.logicVolts agrees with the part definition`,
+      el.kind === 'mcu' && el.logicVolts === profile.logicVolts,
+      `${profile.logicVolts} V`,
+      el.kind === 'mcu' ? `${el.logicVolts} V` : el.kind,
+    )
+  }
+
+  /**
+   * `circuits.board` is a CHECK-constrained column created in migration 015,
+   * long before this part existed, and it does not accept the string
+   * 'raspberry_pi_pico'. Whoever authors the Pico starter migration has to
+   * write 'rp2040'. Asserting the mapping against the real SQL is what stops
+   * that being discovered by a failing insert in production.
+   */
+  const sql = fs.readFileSync(
+    path.join(process.cwd(), 'supabase', 'migrations', '015_native_simulator.sql'),
+    'utf8',
+  )
+  const allowed = /check \(board in \(([^)]*)\)\)/.exec(sql)?.[1] ?? ''
+  for (const profile of Object.values(BOARDS)) {
+    truth(
+      `${profile.type} maps to a board value migration 015 accepts ('${profile.dbBoard}')`,
+      allowed.includes(`'${profile.dbBoard}'`),
+      `'${profile.dbBoard}' in ${allowed.trim() || '(constraint not found)'}`,
+      allowed.includes(`'${profile.dbBoard}'`) ? 'accepted' : 'REJECTED by the check constraint',
+    )
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('K. Experiment 5 — led-button-rpi, end to end')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  const exp = PICO_EXPERIMENTS['led-button-rpi']
+
+  /** Set the push button's `pressed` prop without mutating the shared doc. */
+  function withButton(pressed: number): CircuitDoc {
+    return {
+      ...exp.doc,
+      parts: exp.doc.parts.map((p: PlacedPart) =>
+        p.id === 'btn' ? { ...p, props: { pressed } } : p,
+      ),
+    }
+  }
+
+  const c = compile(exp.doc)
+  truth(
+    'the circuit is fully wired — no dangling leads, no channel crossings',
+    c.problems.length === 0,
+    'no problems',
+    c.problems.join(' | ') || 'none',
+  )
+  truth(
+    'GP17 (the LED) and GP27 (the button) both reach the solver',
+    c.mcuPorts.has('GP17') && c.mcuPorts.has('GP27'),
+    'GP17 + GP27 stamped',
+    [...c.mcuPorts.keys()].join(','),
+  )
+  truth(
+    'and it is a Pico circuit, so the rp2040 track runs it',
+    detectBoard(exp.doc).board?.track === 'rp2040',
+    'rp2040',
+    String(detectBoard(exp.doc).board?.track),
+  )
+  truth(
+    'the script is MicroPython, with no RPi.GPIO left in it',
+    /from machine import Pin/.test(exp.script) && !/RPi\.GPIO|GPIO\.(BCM|setup|cleanup)/.test(exp.script),
+    'machine.Pin, no RPi.GPIO',
+    /RPi\.GPIO/.test(exp.script) ? 'still imports RPi.GPIO' : 'ported',
+  )
+
+  if (!HAVE_FIRMWARE) {
+    truth('firmware present in public/pico', false, 'bootrom.bin + micropython.bin', 'missing')
+  } else {
+    const eng = new PicoSimulationEngine(realFirmware(), exp.doc, { script: exp.script })
+    const t0 = Date.now()
+    // 6 s: boot to prompt is ~1.8 s, the paste a fraction of a second, and the
+    // rest lets the script's 50 ms polling loop get going.
+    eng.run(6_000_000)
+    let s = eng.snapshot()
+    let out = programOutput(s.serial, exp.script)
+
+    truth(
+      'MicroPython accepted the ported script — no traceback',
+      s.repl === 'running' && !/Traceback|SyntaxError|NameError/.test(s.serial),
+      'running, clean',
+      /Traceback|SyntaxError|NameError/.test(s.serial) ? s.serial.slice(-160) : s.repl,
+    )
+    truth(
+      'and it printed its prompt line',
+      /Press button to toggle LED\./.test(out),
+      'Press button to toggle LED.',
+      JSON.stringify(out.slice(-60)),
+    )
+    /**
+     * With the contacts OPEN the only thing on GP27 is the Pico's own
+     * PULL_DOWN, so the input reads 0 and the LED must be dark. This is the
+     * assertion that fails if the button were wired to GND the way the
+     * published Circuit Diagram section says — there the input reads 0 whether
+     * or not the button is pressed and NOTHING ever happens.
+     */
+    truth(
+      'button open: GP27 is held down by the internal pull-down',
+      s.pins.GP27 === 'pulldown',
+      'pulldown',
+      String(s.pins.GP27),
+    )
+    truth('and GP17 is driving low, so the LED is off', s.pins.GP17 === 'low', 'low', String(s.pins.GP17))
+    near('LED dark', s.currents.led * 1000, 0, 0.01)
+    truth('nothing has toggled yet', !/LED ON/.test(out), 'no "LED ON"', /LED ON/.test(out) ? 'toggled early' : 'quiet')
+
+    /**
+     * Press. The loop polls every 50 ms and then debounces for 300 ms, so
+     * 150 ms is long enough for exactly ONE toggle and far too short for a
+     * second — which is what makes this deterministic rather than a race.
+     */
+    eng.setDocument(withButton(1))
+    eng.run(150_000)
+    s = eng.snapshot()
+    out = programOutput(s.serial, exp.script)
+    truth(
+      'pressing the button toggles the LED on, once',
+      s.pins.GP17 === 'high' && /LED ON/.test(out) && !/LED OFF/.test(out),
+      'GP17 high, one "LED ON"',
+      `GP17 ${s.pins.GP17}, printed ${JSON.stringify(out.slice(-24))}`,
+    )
+
+    // Release and let the readout settle. The state is LATCHED — this is a
+    // toggle, not a momentary — so the LED must stay lit with nothing pressed.
+    eng.setDocument(withButton(0))
+    eng.run(500_000)
+    s = eng.snapshot()
+    const wall = (Date.now() - t0) / 1000
+    truth('the LED stays on after the button is released', s.pins.GP17 === 'high', 'high', String(s.pins.GP17))
+    /**
+     * THE ELECTRICAL ASSERTION. GP17 → 220 Ω → LED → GND on a 3.3 V rail
+     * through the pad's 50 Ω, which the bisection at the top of this file
+     * solves independently of the engine. Same number as group C, reached
+     * through real MicroPython and a real button instead of a register poke.
+     */
+    near('and carries the hand-derived 3.3 V current', s.currents.led * 1000, PICO_LED_A * 1000, 0.05)
+    near(
+      'the 220 Ω resistor carries the same current (it is a series loop)',
+      s.currents.r220 * 1000,
+      PICO_LED_A * 1000,
+      0.05,
+    )
+    record(
+      'exp 5 speed (informational)',
+      true,
+      'measured',
+      `${(6.65 / wall).toFixed(2)}x realtime (6.65 s sim in ${wall.toFixed(1)} s wall)`,
+    )
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('L. Experiment 7 — the DHT11 answers PICO timing')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * The open question the previous pass left: behavioural.ts's DHT11 was
+   * written against an AVR library's bit-banging and had never been driven by
+   * a Pico. It runs on avr8js's cycle counter; rp2040js counts nanoseconds.
+   * pico/clock-shim.ts translates between them, and this group decodes the
+   * sensor's reply OFF THE WIRE to prove the translation is exact rather than
+   * approximately right.
+   *
+   * The expected waveform is the DHT11 datasheet, restated here rather than
+   * imported, for the same reason the Shockley parameters are restated at the
+   * top of this file:
+   *
+   *   host holds the line low >= 18 ms, then releases it
+   *   sensor idles 30 us, then acknowledges: 80 us LOW, 80 us HIGH
+   *   then 40 bits, each 50 us LOW followed by 27 us HIGH (a 0)
+   *                                       or 70 us HIGH (a 1)
+   *   then one last 50 us LOW, and the bus is released
+   *   payload: humidity int, humidity dec, temp int, temp dec, checksum
+   *            (a DHT11 always sends 0 for both decimals)
+   */
+  const ACK_LOW_US = 80
+  const ACK_HIGH_US = 80
+  const BIT_LOW_US = 50
+  const ZERO_HIGH_US = 27
+  const ONE_HIGH_US = 70
+  /** Anything between the two is a 1; the gap is 43 us wide, so this is safe. */
+  const BIT_THRESHOLD_US = (ZERO_HIGH_US + ONE_HIGH_US) / 2
+
+  const TEMP_C = 27
+  const HUMIDITY = 61
+  const expectedBytes = [HUMIDITY, 0, TEMP_C, 0, (HUMIDITY + 0 + TEMP_C + 0) & 0xff]
+
+  const exp = PICO_EXPERIMENTS['dht11-rpi']
+  function dhtDoc(temperature: number, humidity: number): CircuitDoc {
+    return {
+      ...exp.doc,
+      parts: exp.doc.parts.map((p: PlacedPart) =>
+        p.id === 'dht' ? { ...p, props: { temperature, humidity } } : p,
+      ),
+    }
+  }
+
+  const c = compile(exp.doc)
+  truth(
+    'the circuit is fully wired — VCC, GND, DATA and the 10 kΩ pull-up',
+    c.problems.length === 0,
+    'no problems',
+    c.problems.join(' | ') || 'none',
+  )
+  truth(
+    'the DHT11 gets a Norton port on DATA so it can pull the line down',
+    c.behavioural.length === 1 &&
+      c.behavioural[0].protocol === 'dht11' &&
+      'DATA' in c.behavioural[0].ports,
+    'one dht11 with a DATA port',
+    c.behavioural.map((b) => `${b.protocol}:${Object.keys(b.ports).join('+')}`).join(',') || 'none',
+  )
+
+  // ── L1: the waveform on the wire, with no interpreter involved ─────────────
+  {
+    const eng = new PicoSimulationEngine(inertFirmware(), dhtDoc(TEMP_C, HUMIDITY))
+    const GP = 4
+    openDrainInit(eng, GP)
+    odLow(eng, GP)
+    eng.run(18_000) // the driver's 18 ms start pulse
+    odHigh(eng, GP)
+    eng.run(2)
+
+    /**
+     * Sample the line at 1 us. That is what quantises the measured widths, so
+     * every expectation below carries a ±2 us tolerance — ample, since the two
+     * bit symbols are 43 us apart.
+     */
+    const edges: Array<{ us: number; high: boolean }> = []
+    let prev = eng.mcu.gpio[GP].inputValue
+    const t0 = eng.mcu.clock.nanos
+    for (let i = 0; i < 6000; i++) {
+      eng.run(1)
+      const v = eng.mcu.gpio[GP].inputValue
+      if (v !== prev) {
+        edges.push({ us: (eng.mcu.clock.nanos - t0) / 1000, high: v })
+        prev = v
+      }
+    }
+
+    // 1 falling (ack low) + 1 rising (ack high) + 40 x (falling, rising) + the
+    // final falling and release = 84 transitions.
+    truth(
+      'the sensor answers the start pulse with a full 40-bit frame',
+      edges.length === 84,
+      '84 transitions (ack + 40 bits + release)',
+      String(edges.length),
+    )
+
+    if (edges.length === 84) {
+      const width = (i: number) => edges[i + 1].us - edges[i].us
+      near('acknowledge LOW width', width(0), ACK_LOW_US, 2, 'us')
+      near('acknowledge HIGH width', width(1), ACK_HIGH_US, 2, 'us')
+
+      // Bits start at index 2: each is a LOW then a HIGH.
+      const bits: number[] = []
+      let lowOk = true
+      let symbolOk = true
+      for (let b = 0; b < 40; b++) {
+        const lowAt = 2 + b * 2
+        const highAt = lowAt + 1
+        if (Math.abs(width(lowAt) - BIT_LOW_US) > 2) lowOk = false
+        const high = width(highAt)
+        const bit = high > BIT_THRESHOLD_US ? 1 : 0
+        if (Math.abs(high - (bit ? ONE_HIGH_US : ZERO_HIGH_US)) > 2) symbolOk = false
+        bits.push(bit)
+      }
+      truth('every bit is preceded by the datasheet 50 us LOW', lowOk, `all 40 within ±2 us of ${BIT_LOW_US}`, lowOk ? 'ok' : 'drifted')
+      truth(
+        `and every HIGH is either ${ZERO_HIGH_US} us or ${ONE_HIGH_US} us`,
+        symbolOk,
+        'clean symbols',
+        symbolOk ? 'ok' : 'a symbol was between the two',
+      )
+
+      const bytes: number[] = []
+      for (let i = 0; i < 5; i++) {
+        let v = 0
+        for (let b = 0; b < 8; b++) v = (v << 1) | bits[i * 8 + b]
+        bytes.push(v)
+      }
+      truth(
+        `the decoded frame is the reading the part is set to (${HUMIDITY}%, ${TEMP_C} °C)`,
+        bytes.join(',') === expectedBytes.join(','),
+        expectedBytes.join(','),
+        bytes.join(','),
+      )
+      truth(
+        'and its checksum is the sum of the four data bytes, as the datasheet says',
+        bytes[4] === ((bytes[0] + bytes[1] + bytes[2] + bytes[3]) & 0xff),
+        String((bytes[0] + bytes[1] + bytes[2] + bytes[3]) & 0xff),
+        String(bytes[4]),
+      )
+    }
+  }
+
+  // ── L2: MicroPython's own frozen `dht` driver reading it ───────────────────
+  if (!HAVE_FIRMWARE) {
+    truth('firmware present in public/pico', false, 'bootrom.bin + micropython.bin', 'missing')
+  } else {
+    const eng = new PicoSimulationEngine(realFirmware(), dhtDoc(TEMP_C, HUMIDITY), {
+      script: exp.script,
+    })
+    const t0 = Date.now()
+    eng.run(5_000_000)
+    let s = eng.snapshot()
+    let out = programOutput(s.serial, exp.script)
+
+    truth(
+      'MicroPython accepted the ported script — no traceback',
+      s.repl === 'running' && !/Traceback|SyntaxError|NameError/.test(s.serial),
+      'running, clean',
+      /Traceback|SyntaxError|NameError/.test(s.serial) ? s.serial.slice(-200) : s.repl,
+    )
+    truth(
+      'the frozen `dht` module read the behavioural sensor and printed the reading',
+      new RegExp(`Temp=${TEMP_C}\\.0C\\s+Humidity=${HUMIDITY}\\.0%`).test(out),
+      `Temp=${TEMP_C}.0C  Humidity=${HUMIDITY}.0%`,
+      JSON.stringify(out.slice(-70)),
+    )
+    /**
+     * Every reading, not just one. A DHT11 frame ends in a checksum and
+     * MicroPython's driver raises if it does not match, so a single mistimed
+     * bit anywhere in 40 would surface here as a failed read rather than as a
+     * wrong number.
+     */
+    truth(
+      'no read failed — the checksum matched every time',
+      !/Sensor read failed/.test(out),
+      'no failures',
+      /Sensor read failed/.test(out) ? 'at least one read failed' : 'clean',
+    )
+    truth(
+      'and the engine reports what the sensor is sending',
+      s.deviceStates.dht?.temperature === TEMP_C && s.deviceStates.dht?.humidity === HUMIDITY,
+      `${TEMP_C} °C / ${HUMIDITY}%`,
+      JSON.stringify(s.deviceStates.dht ?? null),
+    )
+
+    /**
+     * Move the sliders mid-run. This is what separates "the sensor works" from
+     * "the number was baked in at boot": the NEXT reading has to change, and it
+     * has to change without restarting the interpreter.
+     */
+    eng.setDocument(dhtDoc(9, 88))
+    eng.run(4_000_000)
+    s = eng.snapshot()
+    out = programOutput(s.serial, exp.script)
+    const wall = (Date.now() - t0) / 1000
+    truth(
+      'moving the temperature/humidity sliders changes the NEXT reading',
+      /Temp=9\.0C\s+Humidity=88\.0%/.test(out),
+      'Temp=9.0C  Humidity=88.0%',
+      JSON.stringify(out.slice(-70)),
+    )
+    record(
+      'exp 7 speed (informational)',
+      true,
+      'measured',
+      `${(9 / wall).toFixed(2)}x realtime (9.00 s sim in ${wall.toFixed(1)} s wall)`,
+    )
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('M. The behavioural clock shim')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * The one cast on the Pico's behavioural path hands rp2040js's clock to a
+   * model that is typed against avr8js's CPU. That is only safe while the
+   * models touch nothing but the three members the shim implements — so this
+   * reads behavioural.ts and checks.
+   */
+  const src = fs.readFileSync(
+    path.join(process.cwd(), 'lib', 'simulator', 'behavioural.ts'),
+    'utf8',
+  )
+  const used = [...new Set([...src.matchAll(/\bcpu\.([a-zA-Z_]\w*)/g)].map((m) => m[1]))].sort()
+  const extra = used.filter((m) => !BEHAVIOURAL_CPU_SURFACE.includes(m))
+  truth(
+    'behavioural.ts uses only the CPU members the shim implements',
+    extra.length === 0,
+    BEHAVIOURAL_CPU_SURFACE.join(', '),
+    used.join(', ') + (extra.length ? `  — UNIMPLEMENTED: ${extra.join(', ')}` : ''),
+  )
+
+  truth(
+    'the cycle scale is 16 MHz, matching behavioural.ts’s own CLOCK_HZ',
+    NANOS_PER_AVR_CYCLE * 16e6 === 1e9,
+    '62.5 ns x 16e6 = 1e9',
+    `${NANOS_PER_AVR_CYCLE} x 16e6 = ${NANOS_PER_AVR_CYCLE * 16e6}`,
+  )
+  truth(
+    'and behavioural.ts really does convert its microseconds at 16 MHz',
+    /const CLOCK_HZ = 16_000_000/.test(src),
+    'CLOCK_HZ = 16_000_000',
+    /const CLOCK_HZ = ([\d_]+)/.exec(src)?.[1] ?? '(not found)',
+  )
+
+  /**
+   * The translation end to end, measured rather than argued: a device asking
+   * for a 27 us step must get an edge 27 us of RP2040 time later. Group L
+   * measures exactly that on a real waveform (the ZERO_HIGH_US symbol), so
+   * this only has to pin the arithmetic that gets it there — 27 us is 432 AVR
+   * cycles, which is 27,000 ns.
+   */
+  const cycles = Math.max(1, Math.round((27 * 16_000_000) / 1e6))
+  truth(
+    '27 us of datasheet time is 432 notional AVR cycles is 27,000 ns of Pico time',
+    cycles === 432 && cycles * NANOS_PER_AVR_CYCLE === 27_000,
+    '432 cycles, 27000 ns',
+    `${cycles} cycles, ${cycles * NANOS_PER_AVR_CYCLE} ns`,
   )
 }
 

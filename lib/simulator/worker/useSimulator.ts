@@ -36,7 +36,7 @@ const EMPTY: EngineSnapshot = {
  * button stayed enabled during the swap and 'start' arrived before 'init', which
  * the worker silently dropped.
  */
-export function useSimulator(hexUrl: string, doc: CircuitDoc) {
+export function useSimulator(hexUrl: string, doc: CircuitDoc, enabled = true) {
   const workerRef = useRef<Worker | null>(null)
   const [readyFor, setReadyFor] = useState<string | null>(null)
   const [runFor, setRunFor] = useState<string | null>(null)
@@ -48,10 +48,10 @@ export function useSimulator(hexUrl: string, doc: CircuitDoc) {
   })
   const [bench, setBench] = useState<{ mcps: number; xRealtime: number } | null>(null)
 
-  const ready = readyFor === hexUrl
-  const running = runFor === hexUrl
-  const snapshot = tagged.url === hexUrl ? tagged.snapshot : EMPTY
-  const speedRatio = tagged.url === hexUrl ? tagged.speed : 0
+  const ready = enabled && readyFor === hexUrl
+  const running = enabled && runFor === hexUrl
+  const snapshot = enabled && tagged.url === hexUrl ? tagged.snapshot : EMPTY
+  const speedRatio = enabled && tagged.url === hexUrl ? tagged.speed : 0
 
   const docRef = useRef(doc)
   useEffect(() => {
@@ -59,6 +59,15 @@ export function useSimulator(hexUrl: string, doc: CircuitDoc) {
   }, [doc])
 
   useEffect(() => {
+    /**
+     * `enabled` is how useBoardSimulator keeps exactly ONE emulator alive.
+     *
+     * Rules of hooks mean both board hooks are always called; without this the
+     * dormant one would still spawn a worker, fetch its firmware and — for the
+     * Pico — allocate the RP2040's unconditional 16 MB flash window for a board
+     * that is not in the circuit.
+     */
+    if (!enabled) return
     let disposed = false
     const url = hexUrl
     const worker = new Worker(new URL('./engine.worker.ts', import.meta.url), {
@@ -93,7 +102,7 @@ export function useSimulator(hexUrl: string, doc: CircuitDoc) {
       worker.terminate()
       workerRef.current = null
     }
-  }, [hexUrl])
+  }, [hexUrl, enabled])
 
   // Push document edits through to the engine.
   useEffect(() => {
