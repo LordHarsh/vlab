@@ -79,17 +79,32 @@ export async function markSectionVisited(
       .eq('id', existing.id)
     if (error) console.error('[markSectionVisited] update failed:', error.message)
   } else {
-    const { error } = await supabase.from('student_progress').insert({
-      student_id: profileId,
-      experiment_id: experimentId,
-      class_id: classId,
-      completed_section_ids: [sectionId],
-      last_section_id: sectionId,
-      started_at: now,
-      last_accessed_at: now,
-      total_time_seconds: 0,
-    })
-    if (error) console.error('[markSectionVisited] insert failed:', error.message)
+    // UPSERT, not insert. The select above and this write are not atomic, so
+    // two near-simultaneous visits (a fast section click, a double render, a
+    // reload mid-flight) both saw no row and both inserted — the second hit
+    // `student_progress_student_id_experiment_id_class_id_key` and the
+    // student's visit was dropped on the floor. Observed live in the server
+    // log on revisiting an experiment.
+    //
+    // onConflict names the unique constraint's own columns so the loser of the
+    // race updates instead of failing. completed_section_ids is deliberately
+    // NOT overwritten here: the winner may already have recorded other
+    // sections, and clobbering them would lose progress. The next visit's
+    // update branch merges this section in.
+    const { error } = await supabase.from('student_progress').upsert(
+      {
+        student_id: profileId,
+        experiment_id: experimentId,
+        class_id: classId,
+        completed_section_ids: [sectionId],
+        last_section_id: sectionId,
+        started_at: now,
+        last_accessed_at: now,
+        total_time_seconds: 0,
+      },
+      { onConflict: 'student_id,experiment_id,class_id', ignoreDuplicates: false },
+    )
+    if (error) console.error('[markSectionVisited] upsert failed:', error.message)
   }
 }
 
