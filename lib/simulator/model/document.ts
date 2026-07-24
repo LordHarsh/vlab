@@ -196,7 +196,19 @@ export type DocAction =
   | { type: 'movePart'; id: string; x: number; y: number }
   | { type: 'rotatePart'; id: string }
   | { type: 'removePart'; id: string }
-  | { type: 'setProp'; id: string; key: string; value: number | string }
+  | {
+      type: 'setProp'
+      id: string
+      key: string
+      value: number | string
+      /**
+       * Set on every frame of a drag except the first — see `moveWaypoint`,
+       * which carries the same flag for the same reason. Turning a knob on the
+       * canvas streams one action per pointermove, so without this a single
+       * quarter-turn of a potentiometer would cost thirty presses to undo.
+       */
+      transient?: boolean
+    }
   | { type: 'addWire'; wire: DocWire }
   | { type: 'removeWire'; id: string }
   | { type: 'addWaypoint'; id: string; index: number; point: Point }
@@ -247,7 +259,8 @@ const HISTORY_LIMIT = 100
  */
 function isTransient(action: DocAction): boolean {
   if (TRANSIENT.has(action.type)) return true
-  return action.type === 'moveWaypoint' && action.transient === true
+  if (action.type === 'moveWaypoint') return action.transient === true
+  return action.type === 'setProp' && action.transient === true
 }
 
 export function docReducer(state: DocState, action: DocAction): DocState {

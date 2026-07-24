@@ -437,8 +437,55 @@ export function CodePanel({
 
 export const CODE_PANEL_MIN = 280
 export const CODE_PANEL_MAX = 900
+export const CODE_PANEL_DEFAULT = 420
 /** One press of an arrow key. Coarse enough to be useful, fine enough to aim. */
 const NUDGE = 24
+
+/**
+ * Where the chosen panel width is kept.
+ *
+ * localStorage rather than the document: the split is a property of the person
+ * and the screen they are sitting at, not of the circuit. Saving it into the
+ * graph would sync one student's laptop layout onto another student's phone,
+ * and would make "I resized the panel" an edit to their work.
+ */
+export const CODE_WIDTH_KEY = 'vlab.sim.codeWidth'
+
+/**
+ * Turn whatever localStorage handed back into a usable width, or null.
+ *
+ * Null for anything unusable rather than a silent fallback to a number, so the
+ * caller can tell "never set" from "set to 280". Everything else here is
+ * defensive for a reason: this string is user-writable via devtools, survives
+ * deploys, and `Number(null)` is 0 — an unguarded read would collapse the panel
+ * to nothing on the next reload and leave no way to get it back.
+ */
+export function parseCodeWidth(raw: string | null): number | null {
+  if (raw === null || raw.trim() === '') return null
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return null
+  return Math.min(CODE_PANEL_MAX, Math.max(CODE_PANEL_MIN, Math.round(n)))
+}
+
+/** Read the stored width. Returns null on a server render or a sealed store. */
+export function readCodeWidth(): number | null {
+  try {
+    return parseCodeWidth(globalThis.localStorage?.getItem(CODE_WIDTH_KEY) ?? null)
+  } catch {
+    // Safari in private mode throws on localStorage access rather than
+    // returning null. A panel that cannot remember its width is fine; an editor
+    // that will not mount is not.
+    return null
+  }
+}
+
+export function writeCodeWidth(width: number): void {
+  try {
+    globalThis.localStorage?.setItem(CODE_WIDTH_KEY, String(Math.round(width)))
+  } catch {
+    /* see readCodeWidth */
+  }
+}
 
 /**
  * Resizes the code panel by pointer OR keyboard.

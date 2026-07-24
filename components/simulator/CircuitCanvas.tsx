@@ -4,8 +4,15 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   PITCH,
   getPart,
+  knobAngleFor,
+  knobValueFor,
+  ledBodyFill,
+  ledColour,
+  ledGlowFill,
+  type KnobControl,
   type PartDefinition,
   type PinGeometry,
+  type PropSpec,
 } from '@/lib/simulator/model/parts'
 import {
   WIRE_COLORS,
@@ -43,6 +50,27 @@ interface Drag {
   id: string
   offsetX: number
   offsetY: number
+}
+
+/**
+ * A pointer gesture turning a knob on a part's artwork.
+ *
+ * Held in state rather than a ref (unlike `WireGesture`) because the knob draws
+ * itself differently while it is being turned, and the value it writes is
+ * derived from the pointer's absolute position each frame rather than from a
+ * delta — so there is no stale-closure hazard to avoid.
+ */
+interface KnobDrag {
+  partId: string
+  knob: KnobControl
+  prop: PropSpec
+  /** Knob centre in WORLD units, resolved once at pointerdown. */
+  cx: number
+  cy: number
+  /** The part's own rotation, subtracted so a rotated pot still tracks. */
+  rotation: number
+  /** Set once this gesture has landed its one undo entry. */
+  pushed: boolean
 }
 
 interface WireDraft {
@@ -135,6 +163,7 @@ export function CircuitCanvas({
   const gesture = useRef<WireGesture | null>(null)
   /** Which wire a gesture is on, purely so its handles stay visible. */
   const [shaping, setShaping] = useState<string | null>(null)
+  const [knobDrag, setKnobDrag] = useState<KnobDrag | null>(null)
 
   /** Client coords → world coords. All interaction maths happens in world space. */
   const toWorld = useCallback(
@@ -170,6 +199,43 @@ export function CircuitCanvas({
 
   function onPointerMove(e: React.PointerEvent) {
     const w = toWorld(e.clientX, e.clientY)
+
+    /**
+     * Turning a knob outranks everything else: the gesture began on the knob,
+     * so nothing else can legitimately claim these moves.
+     *
+     * The value comes from the pointer's ABSOLUTE angle about the shaft rather
+     * than from an accumulated delta, which is what makes it feel like a real
+     * knob — the tick ends up pointing at the finger, and a drag that leaves the
+     * knob and comes back does not have to retrace its path.
+     */
+    if (knobDrag) {
+      const dx = w.x - knobDrag.cx
+      const dy = w.y - knobDrag.cy
+      // Undo the PART's rotation, so a pot dropped sideways still follows the
+      // pointer instead of tracking 90° out.
+      const t = (-knobDrag.rotation * Math.PI) / 180
+      const lx = dx * Math.cos(t) - dy * Math.sin(t)
+      const ly = dx * Math.sin(t) + dy * Math.cos(t)
+      const next = knobValueFor(knobDrag.knob, knobDrag.prop, lx, ly)
+
+      const current = Number(
+        partById.get(knobDrag.partId)?.props[knobDrag.knob.key] ?? knobDrag.prop.default ?? 0,
+      )
+      // A frame that lands on the value we already hold is dropped, so a shaky
+      // pointer inside one step neither re-renders nor burns the undo entry.
+      if (next === current) return
+
+      dispatch({
+        type: 'setProp',
+        id: knobDrag.partId,
+        key: knobDrag.knob.key,
+        value: next,
+        transient: knobDrag.pushed,
+      })
+      if (!knobDrag.pushed) setKnobDrag({ ...knobDrag, pushed: true })
+      return
+    }
 
     if (panning) {
       setView((v) => ({ ...v, x: v.x + (e.clientX - panning.x), y: v.y + (e.clientY - panning.y) }))
@@ -241,8 +307,36 @@ export function CircuitCanvas({
     }
     setDrag(null)
     setPanning(null)
+    setKnobDrag(null)
     // A wire released over empty space is abandoned, not left dangling.
     setWire(null)
+  }
+
+  /**
+   * Grab a knob. The centre is resolved to WORLD units once, here, because the
+   * part can be dragged out from under a live gesture and re-deriving it every
+   * frame would make the knob track the part rather than the finger.
+   */
+  function startKnobDrag(
+    e: React.PointerEvent,
+    part: PlacedPart,
+    def: PartDefinition,
+    knob: KnobControl,
+    prop: PropSpec,
+  ) {
+    e.stopPropagation()
+    const centre = localToWorld(part, def, knob.cx, knob.cy)
+    onSelect(part.id)
+    setKnobDrag({
+      partId: part.id,
+      knob,
+      prop,
+      cx: centre.x,
+      cy: centre.y,
+      rotation: part.rotation,
+      pushed: false,
+    })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
   function startPartDrag(e: React.PointerEvent, part: PlacedPart) {
@@ -343,10 +437,28 @@ export function CircuitCanvas({
             const def = getPart(part.type)
             const isSel = selected === part.id
             const brightness = ledBrightness?.get(part.id) ?? 0
-            const ledFill =
-              def.electrical.kind === 'led'
-                ? `rgb(${Math.round(70 + brightness * 185)},${Math.round(25 + brightness * 45)},${Math.round(25 + brightness * 35)})`
-                : undefined
+            const isLed = def.electrical.kind === 'led'
+            const colour = isLed ? ledColour(part.props.color) : null
+
+            /**
+             * Per-instance artwork, as CSS custom properties on the group.
+             *
+             * The harvested SVG is shared by every instance and injected as raw
+             * markup, so it cannot be parameterised any other way — but a custom
+             * property INHERITS, so setting it here reaches the one attribute in
+             * that markup that reads it (`fill="var(--led-body, …)"`). The pot's
+             * `--knob-angle` is wokwi's own variable, already wired to a
+             * `rotate()` on its indicator, so the real tick turns.
+             */
+            const vars: Record<string, string> = {}
+            if (colour) vars['--led-body'] = ledBodyFill(colour, brightness)
+            const knobProp = def.knob
+              ? def.props?.find((p) => p.key === def.knob!.key)
+              : undefined
+            if (def.knob?.angleVar && knobProp) {
+              const value = Number(part.props[def.knob.key] ?? knobProp.default ?? 0)
+              vars[def.knob.angleVar] = `${knobAngleFor(def.knob, knobProp, value)}deg`
+            }
 
             return (
               <g
@@ -354,22 +466,38 @@ export function CircuitCanvas({
                 transform={partTransform(part, def)}
                 data-testid={`part-${part.id}`}
               >
-                {def.electrical.kind === 'led' && brightness > 0.02 && (
+                {colour && brightness > 0.02 && (
                   <circle
                     cx={15}
                     cy={20}
                     r={14 + brightness * 26}
-                    fill={`rgba(255,70,50,${brightness * 0.32})`}
+                    data-testid={`led-glow-${part.id}`}
+                    fill={ledGlowFill(colour, brightness)}
                     pointerEvents="none"
                   />
                 )}
 
                 <g
-                  style={ledFill ? ({ '--led-fill': ledFill } as React.CSSProperties) : undefined}
+                  style={vars as React.CSSProperties}
                   onPointerDown={(e) => startPartDrag(e, part)}
                   className="cursor-move"
                   dangerouslySetInnerHTML={{ __html: def.svg }}
                 />
+
+                {def.knob && knobProp && (
+                  <Knob
+                    part={part}
+                    def={def}
+                    knob={def.knob}
+                    prop={knobProp}
+                    turning={knobDrag?.partId === part.id}
+                    onGrab={(e) => startKnobDrag(e, part, def, def.knob!, knobProp)}
+                    onSet={(value) =>
+                      dispatch({ type: 'setProp', id: part.id, key: def.knob!.key, value })
+                    }
+                    onFocus={() => onSelect(part.id)}
+                  />
+                )}
 
                 {isSel && (
                   <rect
@@ -479,6 +607,139 @@ export function CircuitCanvas({
 
 function partTransform(part: PlacedPart, def: PartDefinition): string {
   return `translate(${part.x} ${part.y}) rotate(${part.rotation} ${def.width / 2} ${def.height / 2})`
+}
+
+/**
+ * A point in part-local units, in world units — `partTransform` done in numbers.
+ *
+ * It has to agree with that string exactly, including the rotation being about
+ * the bounding box's CENTRE rather than the origin. A knob whose centre is
+ * computed about the wrong pivot tracks the pointer with a constant offset,
+ * which reads as "the knob is slippery" rather than as an outright bug.
+ */
+function localToWorld(part: PlacedPart, def: PartDefinition, lx: number, ly: number): Point {
+  const ox = def.width / 2
+  const oy = def.height / 2
+  const t = (part.rotation * Math.PI) / 180
+  const cos = Math.cos(t)
+  const sin = Math.sin(t)
+  const dx = lx - ox
+  const dy = ly - oy
+  return { x: part.x + ox + dx * cos - dy * sin, y: part.y + oy + dx * sin + dy * cos }
+}
+
+// ─── Knob ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A knob on a part's artwork: drag to turn, or focus it and use the arrow keys.
+ *
+ * Tinkercad has NO slider in its inspector — continuous values are canvas
+ * interactions (DEVICE_CONTROLS_AUDIT.md §2) — and our inert potentiometer knob
+ * was reported by a tester as a broken control. This is the fix, but not by
+ * moving the value onto the canvas and off the panel: the panel slider stays,
+ * both write the same document value, and either one alone would exclude
+ * somebody.
+ *
+ * KEYBOARD IS NOT AN AFTERTHOUGHT HERE. A pointer drag on a 30-unit circle is
+ * unavailable to a keyboard, switch or screen-reader user, so the knob is a
+ * real `role="slider"` with a name, a range, a live value and arrow-key
+ * handling. Its `<title>` gives a pointer user the same reading on hover.
+ */
+function Knob({
+  part,
+  def,
+  knob,
+  prop,
+  turning,
+  onGrab,
+  onSet,
+  onFocus,
+}: {
+  part: PlacedPart
+  def: PartDefinition
+  knob: KnobControl
+  prop: PropSpec
+  turning: boolean
+  onGrab: (e: React.PointerEvent) => void
+  onSet: (value: number) => void
+  onFocus: () => void
+}) {
+  const [focused, setFocused] = useState(false)
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const step = prop.step ?? 1
+  const value = Number(part.props[knob.key] ?? prop.default ?? 0)
+  const label = `${def.label} ${prop.label.toLowerCase()}`
+  const reading = `${value}${prop.unit ?? ''}`
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    // Big steps on PageUp/PageDown, ends on Home/End — the standard slider
+    // keyboard contract, which is what `role="slider"` promises a screen reader.
+    const big = Math.max(step, (max - min) / 10)
+    const next =
+      e.key === 'ArrowRight' || e.key === 'ArrowUp'
+        ? value + step
+        : e.key === 'ArrowLeft' || e.key === 'ArrowDown'
+          ? value - step
+          : e.key === 'PageUp'
+            ? value + big
+            : e.key === 'PageDown'
+              ? value - big
+              : e.key === 'Home'
+                ? min
+                : e.key === 'End'
+                  ? max
+                  : null
+    if (next === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    onSet(Math.min(max, Math.max(min, next)))
+  }
+
+  return (
+    <g
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={reading}
+      data-testid={`knob-${part.id}`}
+      onPointerDown={onGrab}
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        setFocused(true)
+        onFocus()
+      }}
+      onBlur={() => setFocused(false)}
+      className={turning ? 'cursor-grabbing outline-none' : 'cursor-grab outline-none'}
+    >
+      {/* Invisible grab target over the cap. Painted `transparent` rather than
+          left fill-less, because an unfilled shape takes no pointer at all. */}
+      <circle cx={knob.cx} cy={knob.cy} r={knob.r} fill="transparent" />
+      {/* A ring, only while turning or focused. The artwork already looks like a
+          knob; a permanent overlay would just obscure it. The focus ring is
+          drawn rather than left to `outline`, because an SVG <g> gets no usable
+          focus outline in Safari or Firefox — the one browser that does draw it
+          is not enough to call a control keyboard-operable. */}
+      {(turning || focused) && (
+        <circle
+          cx={knob.cx}
+          cy={knob.cy}
+          r={knob.r}
+          data-testid={`knob-ring-${part.id}`}
+          fill="none"
+          stroke={ACCENT}
+          strokeWidth={focused && !turning ? 2 : 1.5}
+          strokeDasharray={focused && !turning ? '4 3' : undefined}
+          opacity={0.85}
+          pointerEvents="none"
+        />
+      )}
+      <title>{`${label}: ${reading} — drag to turn, or use the arrow keys`}</title>
+    </g>
+  )
 }
 
 // ─── Wire geometry ────────────────────────────────────────────────────────────

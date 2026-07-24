@@ -11,12 +11,27 @@ import {
 } from 'react'
 import { Code2, Minimize2 } from 'lucide-react'
 import { CircuitCanvas } from './CircuitCanvas'
-import { CodePanel, CodePanelResizer } from './CodePanel'
+import {
+  CODE_PANEL_DEFAULT,
+  CodePanel,
+  CodePanelResizer,
+  readCodeWidth,
+  writeCodeWidth,
+} from './CodePanel'
 import { useFullscreenGate } from './FullscreenGate'
 import { detectBoard } from '@/lib/simulator/model/boards'
 import { EMPTY_CODE, readCodeFile, writeCodeFile } from '@/lib/simulator/model/code'
 import { compile } from '@/lib/simulator/model/compile'
-import { PALETTE, PART_LIBRARY, getPart, type PartDefinition } from '@/lib/simulator/model/parts'
+import {
+  PALETTE,
+  PART_LIBRARY,
+  formatValueUnit,
+  getPart,
+  parseValueUnit,
+  splitValueUnit,
+  type PartDefinition,
+  type PropSpec,
+} from '@/lib/simulator/model/parts'
 import type { DeviceState } from '@/lib/simulator/behavioural'
 import { useBoardSimulator } from '@/lib/simulator/worker/useBoardSimulator'
 import type { SolveFault } from '@/lib/simulator/types'
@@ -165,7 +180,7 @@ function PartsPalette({
      * The resistor keeps its own line because its options list starts at 0 Ω —
      * "none (wire)" — which is a legitimate choice but a terrible default.
      */
-    const props: Record<string, number> = {}
+    const props: Record<string, number | string> = {}
     for (const p of def.props ?? []) if (p.default !== undefined) props[p.key] = p.default
     if (def.electrical.kind === 'resistor') props.ohms = def.electrical.defaultOhms
 
@@ -227,11 +242,162 @@ function PartsPalette({
   )
 }
 
-type PropSpec = NonNullable<PartDefinition['props']>[number]
-
 /** A declared prop whose only two positions are 0 and 1 is a boolean. */
 function isToggle(prop: PropSpec): boolean {
   return prop.type === 'range' && prop.min === 0 && prop.max === 1 && prop.step === 1
+}
+
+/** Shared field chrome, so the text box and the unit dropdown line up. */
+const FIELD =
+  'h-[37px] bg-white border-[0.8px] border-[#dfe3e8] rounded-none px-2 text-xs ' +
+  'text-[#34495e] outline-none focus:border-[#1477d1]'
+
+/**
+ * Free numeric entry plus an SI unit dropdown — Tinkercad's `VALUE_AND_UNIT`.
+ *
+ * The control this replaces was a ten-entry `<select>` that could not express
+ * 150 Ω or 3.3 kΩ. Two things about it are load-bearing rather than cosmetic:
+ *
+ *  - **All validation is in parts.ts**, not here. `parseValueUnit` is what
+ *    decides what a typed string means, and it exists outside React because
+ *    `Resistor.stamp` THROWS on a negative or non-finite resistance — the last
+ *    place that can stop a student reaching that stack trace is this field, so
+ *    the rule it enforces has to be assertable without mounting a component.
+ *  - **A rejected entry does not reach the document.** The text stays as typed,
+ *    the field says why in words, and the simulation keeps running on the last
+ *    good value. Silently substituting something plausible is the failure mode
+ *    the whole audit is about.
+ *
+ * Changing the UNIT changes the value, as it does on Tinkercad: `1` + `kΩ`
+ * becomes `1` + `Ω` = 1 Ω. The figure is what the student typed; the dropdown
+ * says what they meant by it.
+ */
+function ValueUnitControl({
+  prop,
+  value,
+  onChange,
+}: {
+  prop: PropSpec
+  value: number
+  onChange: (v: number) => void
+}) {
+  const units = useMemo(() => prop.units ?? [{ label: prop.unit ?? '', mul: 1 }], [prop])
+  const id = `prop-input-${prop.key}`
+  const unitId = `prop-unit-${prop.key}`
+  const noteId = `prop-note-${prop.key}`
+  const listId = `prop-list-${prop.key}`
+
+  const [draft, setDraft] = useState(() => splitValueUnit(value, units))
+  const [note, setNote] = useState<{ kind: 'error' | 'clamp'; text: string } | null>(null)
+
+  /**
+   * The value this control itself last wrote.
+   *
+   * Without it the effect below would reformat the box on every keystroke —
+   * committing `4.7` changes `value`, which would re-split it and overwrite the
+   * `4.7` the student is still typing. With it, the effect only fires for
+   * changes that came from SOMEWHERE ELSE: undo, a starter load, or the knob
+   * being dragged on the canvas.
+   */
+  const written = useRef(value)
+
+  useEffect(() => {
+    if (value === written.current) return
+    written.current = value
+    setDraft(splitValueUnit(value, units))
+    setNote(null)
+  }, [value, units])
+
+  function commit(text: string, unitIndex: number) {
+    const result = parseValueUnit(text, prop, unitIndex)
+    if (!result.ok) {
+      setNote({ kind: 'error', text: result.reason })
+      return
+    }
+    const asked = Number(text.trim()) * (units[unitIndex]?.mul ?? 1)
+    if (result.value !== asked) {
+      setNote({ kind: 'clamp', text: `Limited to ${formatValueUnit(result.value, units)}.` })
+      setDraft(splitValueUnit(result.value, units))
+    } else {
+      setNote(null)
+    }
+    written.current = result.value
+    onChange(result.value)
+  }
+
+  return (
+    <div className="mb-3">
+      <label htmlFor={id} className="block text-[10px] text-[#566573] mb-1">
+        {prop.label}
+      </label>
+      <div className="flex gap-1.5">
+        <input
+          type="text"
+          inputMode="decimal"
+          id={id}
+          data-testid={`prop-${prop.key}`}
+          value={draft.text}
+          list={prop.options ? listId : undefined}
+          aria-invalid={note?.kind === 'error' ? true : undefined}
+          aria-describedby={note ? noteId : undefined}
+          onChange={(e) => {
+            setDraft((d) => ({ ...d, text: e.target.value }))
+            commit(e.target.value, draft.unitIndex)
+          }}
+          onBlur={() => setDraft(splitValueUnit(written.current, units))}
+          className={`${FIELD} flex-1 min-w-0 tabular-nums ${
+            note?.kind === 'error' ? 'border-red-500' : ''
+          }`}
+        />
+        {/* Suggestions, not the vocabulary. A datalist keeps the common values
+            one keystroke away without taking the free field back off them. */}
+        {prop.options && (
+          <datalist id={listId}>
+            {prop.options.map((o) => {
+              const split = splitValueUnit(o, units)
+              return split.unitIndex === draft.unitIndex ? (
+                <option key={o} value={split.text} />
+              ) : null
+            })}
+          </datalist>
+        )}
+        <select
+          id={unitId}
+          data-testid={`prop-${prop.key}-unit`}
+          aria-label={`${prop.label} unit`}
+          value={draft.unitIndex}
+          onChange={(e) => {
+            const next = Number(e.target.value)
+            setDraft((d) => ({ ...d, unitIndex: next }))
+            commit(draft.text, next)
+          }}
+          className={`${FIELD} w-[74px] shrink-0`}
+        >
+          {units.map((u, i) => (
+            <option key={u.label} value={i}>
+              {u.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {note ? (
+        <p
+          id={noteId}
+          data-testid={`prop-${prop.key}-note`}
+          role={note.kind === 'error' ? 'alert' : 'status'}
+          className={`mt-1 text-[10px] leading-snug ${
+            note.kind === 'error' ? 'text-red-600' : 'text-[#566573]'
+          }`}
+        >
+          {note.text}
+        </p>
+      ) : (
+        prop.hint && (
+          <p className="mt-1 text-[10px] leading-snug text-[#566573]">{prop.hint}</p>
+        )
+      )}
+    </div>
+  )
 }
 
 /**
@@ -250,8 +416,8 @@ function PropControl({
   onChange,
 }: {
   prop: PropSpec
-  value: number
-  onChange: (v: number) => void
+  value: number | string
+  onChange: (v: number | string) => void
 }) {
   const id = `prop-input-${prop.key}`
   const testId = `prop-${prop.key}`
@@ -263,7 +429,7 @@ function PropControl({
           type="checkbox"
           id={id}
           data-testid={testId}
-          checked={value >= 0.5}
+          checked={Number(value) >= 0.5}
           onChange={(e) => onChange(e.target.checked ? 1 : 0)}
           className="h-3.5 w-3.5 shrink-0 accent-[#1477d1]"
         />
@@ -279,8 +445,8 @@ function PropControl({
       <div className="mb-3">
         <label htmlFor={id} className="flex justify-between text-[10px] text-[#566573] mb-1">
           <span>{prop.label}</span>
-          <span className="text-[#34495e] tabular-nums">
-            {value}
+          <span className="text-[#34495e] tabular-nums" data-testid={`${testId}-value`}>
+            {Number(value)}
             {prop.unit ?? ''}
           </span>
         </label>
@@ -291,10 +457,44 @@ function PropControl({
           min={prop.min}
           max={prop.max}
           step={prop.step}
-          value={value}
+          value={Number(value)}
           onChange={(e) => onChange(Number(e.target.value))}
           className="w-full accent-[#1477d1]"
         />
+      </div>
+    )
+  }
+
+  if (prop.type === 'number') {
+    return <ValueUnitControl prop={prop} value={Number(value)} onChange={onChange} />
+  }
+
+  /**
+   * A fixed list of STRINGS — an LED's colour. Separate from the numeric
+   * `select` below because the document stores the string: encoding a colour as
+   * an index would put "3" in a saved circuit and leave every future reader
+   * guessing which list it was an index into.
+   */
+  if (prop.type === 'choice') {
+    return (
+      <div className="mb-3">
+        <label htmlFor={id} className="block text-[10px] text-[#566573] mb-1">
+          {prop.label}
+        </label>
+        <select
+          id={id}
+          data-testid={testId}
+          value={String(value)}
+          onChange={(e) => onChange(e.target.value)}
+          className={`${FIELD} w-full`}
+        >
+          {prop.choices?.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+        {prop.hint && <p className="mt-1 text-[10px] leading-snug text-[#566573]">{prop.hint}</p>}
       </div>
     )
   }
@@ -307,9 +507,9 @@ function PropControl({
       <select
         id={id}
         data-testid={testId}
-        value={String(value)}
+        value={String(Number(value))}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-[37px] bg-white border-[0.8px] border-[#dfe3e8] rounded-none px-2 text-xs text-[#34495e] outline-none focus:border-[#1477d1]"
+        className={`${FIELD} w-full`}
       >
         {prop.options?.map((o) => (
           <option key={o} value={o}>
@@ -671,7 +871,32 @@ export function CircuitEditor({
   const draft = code.draft
   const script = code.loaded
   const [codeOpen, setCodeOpen] = useState(true)
-  const [codeWidth, setCodeWidth] = useState(420)
+
+  /**
+   * The code panel's width, remembered across reloads.
+   *
+   * Seeded with the DEFAULT and adopted from storage in an effect, not read
+   * during the initial render. Reading localStorage in a `useState` initialiser
+   * would give the server one width and the client another, which React 19
+   * reports as a hydration mismatch and repairs by throwing the client tree
+   * away — a visible flash on every load, to save one frame.
+   */
+  const [codeWidth, setCodeWidth] = useState(CODE_PANEL_DEFAULT)
+  useEffect(() => {
+    const stored = readCodeWidth()
+    if (stored !== null) setCodeWidth(stored)
+  }, [])
+
+  /**
+   * Persist on change rather than on drag end: the resizer streams widths and
+   * has no "finished" event, and a student who resizes and immediately reloads
+   * would otherwise lose it. One localStorage write per pointermove is a string
+   * assignment, which is cheaper than the layout the same event already caused.
+   */
+  const setAndStoreCodeWidth = useCallback((next: number) => {
+    setCodeWidth(next)
+    writeCodeWidth(next)
+  }, [])
 
   /**
    * Whether this document has a board whose program the student can edit.
@@ -1201,7 +1426,7 @@ export function CircuitEditor({
             three-column layout on a phone gives every column nothing. */}
         {sim.track === 'rp2040' && codeOpen && (
           <>
-            <CodePanelResizer width={codeWidth} onWidth={setCodeWidth} />
+            <CodePanelResizer width={codeWidth} onWidth={setAndStoreCodeWidth} />
             <div
               id="code-panel-region"
               /* The width lives in a custom property so it can apply from md up
@@ -1257,7 +1482,14 @@ export function CircuitEditor({
 
               {selectedDef.props?.map((prop) => (
                 <PropControl
-                  key={prop.key}
+                  /**
+                   * Keyed by PART as well as by prop, so selecting a different
+                   * resistor remounts the field. The value/unit control holds
+                   * the half-typed figure in its own state, and without the id
+                   * in the key React would reuse the mounted instance and show
+                   * the previous resistor's draft over the new one's value.
+                   */
+                  key={`${selectedPart.id}:${prop.key}`}
                   prop={prop}
                   /**
                    * The engine falls back to the declared default when a part
@@ -1277,7 +1509,7 @@ export function CircuitEditor({
                    * trailing `?? 0` only satisfies Number() and is unreachable
                    * while that check is clean.
                    */
-                  value={Number(selectedPart.props[prop.key] ?? prop.default ?? 0)}
+                  value={selectedPart.props[prop.key] ?? prop.default ?? 0}
                   onChange={(value) =>
                     dispatch({ type: 'setProp', id: selectedPart.id, key: prop.key, value })
                   }

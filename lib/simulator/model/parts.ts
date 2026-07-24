@@ -137,28 +137,100 @@ export interface PartDefinition {
     | { kind: 'reactive'; element: 'capacitor' | 'inductor' }
     | { kind: 'passive' }
   /** Editable properties surfaced in the inspector. */
-  props?: Array<{
-    key: string
-    label: string
-    type: 'number' | 'select' | 'range'
-    options?: number[]
-    unit?: string
-    min?: number
-    max?: number
-    step?: number
-    /**
-     * The value the part has when the document carries none for this key.
-     *
-     * NOT decoration, and not optional in practice — see checkPropDefaults() at
-     * the foot of this file. It has to equal whatever the ENGINE falls back to
-     * for the same missing prop, because the inspector reads this and the
-     * simulation reads that: `resistor.ohms` declared no default for months, so
-     * the inspector fell through to `options[0]` — 0 Ω, "none (wire)" — over a
-     * resistor compile.ts was solving at 220 Ω. The panel and the physics
-     * disagreed and nothing said so.
-     */
-    default?: number
-  }>
+  props?: PropSpec[]
+  /**
+   * A control the student operates on the ARTWORK rather than in the panel.
+   *
+   * Tinkercad's inspector has no slider in it at all — its control vocabulary is
+   * TEXT / READ_ONLY / VALUE_AND_UNIT / VALUE_UNIT_CHECK / VALUE_AND_FIXEDUNIT /
+   * CHECKBOX / SELECTBOX / BUTTON — because a continuously variable physical
+   * thing is turned where it lives (DEVICE_CONTROLS_AUDIT.md §2). A knob that
+   * cannot be turned reads as broken, and one QA tester reported exactly that.
+   *
+   * The panel control is NOT replaced by this. A pointer drag is unavailable to
+   * a keyboard user and awkward on a phone, so the declared `range` prop keeps
+   * its slider and the two drive the same document value.
+   */
+  knob?: KnobControl
+}
+
+/**
+ * One editable property of a placed part.
+ *
+ * Four shapes, and the inspector picks its control from the shape rather than
+ * from the part — a part that ships tomorrow gets a working inspector for free:
+ *
+ *   `range`   slider (or a checkbox when min/max/step are 0/1/1)
+ *   `select`  <select> over a fixed list of numbers
+ *   `number`  free numeric entry + an SI unit dropdown — Tinkercad's
+ *             VALUE_AND_UNIT, the control a resistor actually wants
+ *   `choice`  <select> over a fixed list of STRINGS (an LED's colour)
+ */
+export type PropSpec = {
+  key: string
+  label: string
+  type: 'number' | 'select' | 'range' | 'choice'
+  /** `select` only: the numbers offered. */
+  options?: number[]
+  /** `choice` only: the strings offered, with the label each one shows. */
+  choices?: ReadonlyArray<{ value: string; label: string }>
+  /**
+   * `number` only: the SI unit dropdown beside the field.
+   *
+   * `mul` is what the TYPED figure is multiplied by to get the STORED value, so
+   * the stored unit is whichever entry has `mul: 1`. That indirection is the
+   * whole point: `capacitor.microfarads` is stored in µF because compile.ts
+   * reads it in µF, and a student who types `470` and picks `nF` must end up
+   * with 0.47 in the document rather than 470.
+   */
+  units?: ReadonlyArray<{ label: string; mul: number }>
+  /** Unit suffix shown beside a `range` readout, and the base symbol elsewhere. */
+  unit?: string
+  min?: number
+  max?: number
+  step?: number
+  /** One line under the control. Where an affordance needs saying out loud. */
+  hint?: string
+  /**
+   * The value the part has when the document carries none for this key.
+   *
+   * NOT decoration, and not optional in practice — see
+   * propDeclarationProblems() at the foot of this file. It has to equal whatever
+   * the ENGINE falls back to for the same missing prop, because the inspector
+   * reads this and the simulation reads that: `resistor.ohms` declared no
+   * default for months, so the inspector fell through to `options[0]` — 0 Ω,
+   * "none (wire)" — over a resistor compile.ts was solving at 220 Ω. The panel
+   * and the physics disagreed and nothing said so.
+   */
+  default?: number | string
+}
+
+/**
+ * A rotary control drawn on a part's artwork.
+ *
+ * Angles are degrees clockwise from twelve o'clock, which is how the harvested
+ * potentiometer art is drawn (`#rotating` is a tick at x=10,y=2 above a
+ * transform-origin of 10,8 — i.e. pointing straight up at 0°).
+ */
+export interface KnobControl {
+  /** The `range` prop this drives. Must be declared in `props`. */
+  key: string
+  /** Grab target, in part-local units. */
+  cx: number
+  cy: number
+  r: number
+  /** Angle at the prop's `min`, degrees clockwise from twelve o'clock. */
+  fromDeg: number
+  /** Angle at the prop's `max`. */
+  toDeg: number
+  /**
+   * CSS custom property the artwork's own rotation reads, if it has one.
+   *
+   * The wokwi potentiometer ships `transform: rotate(var(--knob-angle, 0deg))`
+   * on its indicator, so setting this one variable on the instance's group
+   * turns the real tick rather than drawing a second one over it.
+   */
+  angleVar?: string
 }
 
 /**
@@ -170,6 +242,67 @@ export interface PartDefinition {
  * of them.
  */
 export const RESISTOR_DEFAULT_OHMS = 220
+
+/**
+ * The SI ladder Tinkercad offers beside a resistance field, verbatim:
+ * `pΩ nΩ μΩ mΩ Ω kΩ MΩ GΩ` (DEVICE_CONTROLS_AUDIT.md §6.1, observed).
+ *
+ * `mul` is relative to the STORED unit, and `ohms` is stored in ohms, so `Ω`
+ * is the entry with `mul: 1`.
+ */
+export const OHM_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
+  { label: 'pΩ', mul: 1e-12 },
+  { label: 'nΩ', mul: 1e-9 },
+  { label: 'μΩ', mul: 1e-6 },
+  { label: 'mΩ', mul: 1e-3 },
+  { label: 'Ω', mul: 1 },
+  { label: 'kΩ', mul: 1e3 },
+  { label: 'MΩ', mul: 1e6 },
+  { label: 'GΩ', mul: 1e9 },
+]
+
+/**
+ * The same ladder for capacitance — but note what `mul: 1` is on.
+ *
+ * compile.ts reads `Number(part.props.microfarads ?? 1)` and hands the result to
+ * `new Capacitor(..., microfarads * 1e-6)`, so the DOCUMENT stores microfarads
+ * and µF is the unit with `mul: 1`. Typing `470` and picking `nF` therefore has
+ * to store 0.47, not 470 — which is exactly the sort of factor-of-a-thousand
+ * error a fixed µF dropdown made impossible and a free field makes easy.
+ */
+export const FARAD_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
+  { label: 'pF', mul: 1e-6 },
+  { label: 'nF', mul: 1e-3 },
+  { label: 'μF', mul: 1 },
+  { label: 'mF', mul: 1e3 },
+  { label: 'F', mul: 1e6 },
+]
+
+/**
+ * Ceiling on a typed resistance, ohms.
+ *
+ * Not a physical limit — it is the top of the offered ladder (999 GΩ is under
+ * 1e12) and a guard against a paste of nonsense reaching the solver. The FLOOR
+ * is 0, which is a legitimate value: `Resistor.stamp` clamps 0 Ω up to
+ * MIN_RESISTANCE and the part behaves as the piece of wire it is drawn as.
+ * Negative and non-finite are what `Resistor.stamp` THROWS on, so the field
+ * rejects them before a student can reach that.
+ */
+export const RESISTOR_MAX_OHMS = 1e12
+
+/** Ceiling on a typed capacitance, microfarads — 1 farad, the top of the ladder. */
+export const CAPACITOR_MAX_UF = 1e6
+
+/**
+ * Floor on a typed capacitance, microfarads — 1 femtofarad.
+ *
+ * Zero is excluded on purpose, and it is the one place capacitance and
+ * resistance differ: a 0 Ω resistor is a wire, but a 0 F capacitor is not a
+ * component at all. `Capacitor.geq()` would stamp `0/h = 0 S` in transient — a
+ * floating node, i.e. a singular matrix — where a 1 fF cap is merely a very
+ * good open.
+ */
+export const CAPACITOR_MIN_UF = 1e-9
 
 // ─── Breadboard ───────────────────────────────────────────────────────────────
 
@@ -432,20 +565,179 @@ const resistor: PartDefinition = {
     {
       key: 'ohms',
       label: 'Resistance',
-      type: 'select',
+      // Free entry, not a ten-entry <select>. The old list could not express
+      // 150 Ω or 3.3 kΩ — two of the most common values in a starter kit — and
+      // a student who needs one of those has no way to say so.
+      type: 'number',
       unit: 'Ω',
+      units: OHM_UNITS,
+      min: 0,
+      max: RESISTOR_MAX_OHMS,
+      // Kept, and now offered as SUGGESTIONS rather than as the whole vocabulary.
+      // 0 Ω is in the list because it is the only way the "none (wire)"
+      // affordance stays discoverable once the control is a text box.
       options: [0, 100, 220, 330, 470, 1000, 2200, 4700, 10000, 100000],
+      hint: '0 Ω is a plain wire.',
       default: RESISTOR_DEFAULT_OHMS,
     },
   ],
   ...wokwiGeometry('resistor'),
 }
 
+// ─── LED colours ──────────────────────────────────────────────────────────────
+
+/** Thermal voltage at 300 K, the same figure devices.ts solves with. */
+const VT_300K = 0.025852
+
+/**
+ * Emission coefficient shared by every LED colour.
+ *
+ * One value across the set on purpose: `LED_RED`'s n = 1.8 was fitted against
+ * ngspice reference numbers (devices.ts), and re-fitting n per colour would need
+ * a second reference solve per colour that nobody has run. Holding n and moving
+ * `is` reproduces the datasheet Vf at 20 mA exactly, and the slope either side
+ * of it is then the same shape as red's — which is the honest limit of this
+ * model and is stated in the UI.
+ */
+const LED_N = 1.8
+
+/**
+ * Shockley saturation current that puts `vfAt20mA` volts across the junction at
+ * a forward current of 20 mA.
+ *
+ *   Vf = n·VT·ln(If/Is)  =>  Is = If·exp(−Vf/(n·VT))
+ *
+ * Derived rather than fitted, exactly as OPTO_LED is in devices.ts, so the
+ * constants below cannot drift away from the datasheet figures beside them.
+ */
+export function ledSaturationCurrent(vfAt20mA: number): number {
+  return 0.02 * Math.exp(-vfAt20mA / (LED_N * VT_300K))
+}
+
+export interface LedColour {
+  value: string
+  label: string
+  /** The unlit epoxy dome. */
+  body: string
+  /** Emitted light as r,g,b — the lit dome and the glow around it. */
+  emit: readonly [number, number, number]
+  /** Typical forward voltage at IF = 20 mA, volts. Datasheet figure. */
+  vfVolts: number
+  /** Saturation current, amps. See ledSaturationCurrent(). */
+  is: number
+  /** Emission coefficient. */
+  n: number
+}
+
+/**
+ * The six colours Tinkercad's LED inspector offers, with REAL forward voltages.
+ *
+ * Vf is typical at IF = 20 mA for 5 mm T-1¾ lamps of the Kingbright WP7113
+ * family, which is the part every Arduino starter kit actually ships:
+ *
+ *   red     WP7113ID    AlGaInP   2.0 V     amber/orange WP7113SEC AlGaInP 2.0 V
+ *   yellow  WP7113YD    GaAsP/GaP 2.1 V     green        WP7113PGC InGaN   3.2 V
+ *   blue    WP7113QBC   InGaN     3.2 V     white        WP7113QWC InGaN   3.2 V
+ *
+ * THIS IS NOT COSMETIC. A blue LED needs 3.2 V of the supply where a red one
+ * needs 2.0, so the same 220 Ω on the same 5 V rail passes ~13.8 mA of red and
+ * ~7.5 mA of blue — and on a Pico's 3.3 V rail a blue LED barely lights at all,
+ * which is a real bench result students hit and misdiagnose as a broken part.
+ * Shipping colour as appearance-only would have taught the opposite.
+ *
+ * RED IS THE HISTORIC CONSTANT, deliberately. `LED_RED` in devices.ts is
+ * { is: 1e-20, n: 1.8 }, fitted to the ngspice reference solves in
+ * SIMULATOR_ARCHITECTURE.md §5.5 (220 Ω → 13.76 mA). ledSaturationCurrent(1.96)
+ * gives 1.02e-20 — the same number to 2 %, i.e. 0.4 mV of Vf — so red keeps the
+ * literal and every existing solver, engine and starter number stays put.
+ * parts.test.ts asserts that agreement rather than trusting this comment.
+ */
+export const LED_COLOURS: ReadonlyArray<LedColour> = [
+  { value: 'red', label: 'Red', body: '#d0342c', emit: [255, 70, 50], vfVolts: 1.96, is: 1e-20, n: LED_N },
+  { value: 'orange', label: 'Orange', body: '#d97722', emit: [255, 140, 45], vfVolts: 2.0, is: ledSaturationCurrent(2.0), n: LED_N },
+  { value: 'yellow', label: 'Yellow', body: '#d6b31f', emit: [255, 205, 60], vfVolts: 2.1, is: ledSaturationCurrent(2.1), n: LED_N },
+  { value: 'green', label: 'Green', body: '#2f9e44', emit: [70, 230, 90], vfVolts: 3.2, is: ledSaturationCurrent(3.2), n: LED_N },
+  { value: 'blue', label: 'Blue', body: '#2f6fd0', emit: [70, 140, 255], vfVolts: 3.2, is: ledSaturationCurrent(3.2), n: LED_N },
+  { value: 'white', label: 'White', body: '#d8d8d8', emit: [255, 250, 235], vfVolts: 3.2, is: ledSaturationCurrent(3.2), n: LED_N },
+]
+
+export const LED_DEFAULT_COLOUR = 'red'
+
+/** The declared colour, or red for a document that carries none. */
+export function ledColour(value: unknown): LedColour {
+  return LED_COLOURS.find((c) => c.value === value) ?? LED_COLOURS[0]
+}
+
+/** "#d0342c" → [208, 52, 44]. Returns black for anything unparseable. */
+function hexRgb(hex: string): [number, number, number] {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return [0, 0, 0]
+  const n = parseInt(m[1], 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+/**
+ * The dome's fill at a given brightness: the unlit epoxy, lerped toward the
+ * emitted colour.
+ *
+ * Here rather than in the canvas so the colours can be asserted without a DOM,
+ * and so the ONE place that decides what a lit LED looks like is beside the
+ * table that says what colour it is.
+ */
+export function ledBodyFill(colour: LedColour, brightness: number): string {
+  const t = Math.min(1, Math.max(0, Number.isFinite(brightness) ? brightness : 0))
+  const [r0, g0, b0] = hexRgb(colour.body)
+  const [r1, g1, b1] = colour.emit
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * t)
+  return `rgb(${mix(r0, r1)},${mix(g0, g1)},${mix(b0, b1)})`
+}
+
+/** The halo around a lit LED. Transparent at rest, so an unlit LED has none. */
+export function ledGlowFill(colour: LedColour, brightness: number): string {
+  const t = Math.min(1, Math.max(0, Number.isFinite(brightness) ? brightness : 0))
+  const [r, g, b] = colour.emit
+  return `rgba(${r},${g},${b},${t * 0.32})`
+}
+
+/**
+ * The LED, with its dome colour driven by a per-instance CSS variable.
+ *
+ * The harvested art hardcodes `fill="red"` on the dome. Rewriting that one
+ * attribute to `var(--led-body, …)` is what lets one piece of artwork serve six
+ * colours: the canvas sets the variable on each instance's group, and anything
+ * that renders the raw definition (the palette tile) falls back to red.
+ */
+const ledArt = wokwiGeometry('led')
+const LED_DOME_FILL = 'opacity=".65" fill="red"'
 const led: PartDefinition = {
   type: 'led',
   label: 'LED',
   electrical: { kind: 'led', color: 'red' },
-  ...wokwiGeometry('led'),
+  props: [
+    {
+      key: 'color',
+      label: 'Colour',
+      type: 'choice',
+      choices: LED_COLOURS.map((c) => ({ value: c.value, label: `${c.label} — ${c.vfVolts.toFixed(1)} V` })),
+      hint: 'Colour sets the forward voltage, so it changes the current too.',
+      default: LED_DEFAULT_COLOUR,
+    },
+  ],
+  ...ledArt,
+  svg: ledArt.svg.replace(LED_DOME_FILL, `opacity=".65" fill="var(--led-body, ${LED_COLOURS[0].body})"`),
+}
+
+/**
+ * Loud rather than silent: if a future @wokwi/elements bump renames that
+ * attribute, the LED silently stops responding to its colour prop and nothing
+ * else in the suite would notice.
+ */
+if (!ledArt.svg.includes(LED_DOME_FILL)) {
+  console.error(
+    '[parts] the harvested LED art no longer carries `' +
+      LED_DOME_FILL +
+      '`, so the colour prop cannot reach the dome. Re-check wokwi-art.generated.json.',
+  )
 }
 
 const pushButton: PartDefinition = {
@@ -478,6 +770,29 @@ const potentiometer: PartDefinition = {
   props: [
     { key: 'position', label: 'Knob', type: 'range', min: 0, max: 100, step: 1, unit: '%', default: 50 },
   ],
+  /**
+   * The knob turns. It is the reason this part exists.
+   *
+   * Geometry is read off the harvested art rather than eyeballed. The 20 mm
+   * viewBox maps to 78.74 units (20 × 100/25.4), so one viewBox unit is 3.937
+   * of ours; the shaft ellipse sits at (9.95, 8.06) with rx 6.60, which lands
+   * the centre at (39.2, 31.7) with a 26.0-unit radius. The grab target is a
+   * touch wider than the shaft — 30 units — because the whole cap is what a
+   * finger reaches for, and it still stops well short of the pin row at y ≈ 71.
+   *
+   * ±150° is the sweep of a real single-turn pot: 300° of travel with a stop at
+   * each end and the flat centre detent at twelve o'clock, which is exactly
+   * where 50 % lands.
+   */
+  knob: {
+    key: 'position',
+    cx: 39.2,
+    cy: 31.7,
+    r: 30,
+    fromDeg: -150,
+    toDeg: 150,
+    angleVar: '--knob-angle',
+  },
   ...wokwiGeometry('potentiometer', {
     rename: { GND: '1', SIG: '2', VCC: '3' },
     types: { '1': 'passive', '2': 'passive', '3': 'passive' },
@@ -1231,8 +1546,21 @@ const capacitor: PartDefinition = {
     // resistor's, one line earlier in the same file — the inspector used to show
     // options[0], which happens to be 1 here, so it was right by accident.
     // Declared now so it is right on purpose.
-    { key: 'microfarads', label: 'Capacitance', type: 'select', unit: 'uF',
-      options: [1, 10, 47, 100, 220, 470], default: 1 },
+    //
+    // Free entry with a pF…F ladder, because the six-entry µF list could not
+    // express a 100 nF decoupling cap — the single most common capacitor on any
+    // board — without asking a student to type it as 0.1 µF.
+    {
+      key: 'microfarads',
+      label: 'Capacitance',
+      type: 'number',
+      unit: 'F',
+      units: FARAD_UNITS,
+      min: CAPACITOR_MIN_UF,
+      max: CAPACITOR_MAX_UF,
+      options: [1, 10, 47, 100, 220, 470],
+      default: 1,
+    },
   ],
   svg: `
     <line x1="0" y1="15" x2="16" y2="15" stroke="#9a9a9a" stroke-width="2"/>
@@ -1312,12 +1640,166 @@ export function getPart(type: string): PartDefinition {
   return def
 }
 
+// ─── Free numeric entry, with a unit ──────────────────────────────────────────
+//
+// Tinkercad's VALUE_AND_UNIT is a free-text number beside an SI-prefix dropdown
+// (DEVICE_CONTROLS_AUDIT.md §2, §6.1). All of the arithmetic and all of the
+// validation live here rather than in the React control, so both can be
+// asserted without mounting anything — and so the SAME rules apply wherever a
+// value is typed.
+
+/** A typed figure and the unit it was typed in. */
+export interface ValueAndUnit {
+  text: string
+  unitIndex: number
+}
+
+/**
+ * Split a stored value into the figure and unit a student would recognise.
+ *
+ * Picks the largest unit that still leaves the figure at 1 or above, which is
+ * how anyone writes a resistance out loud: 4700 Ω is "4.7 k", not "4700" and
+ * not "0.0047 M". Zero has no meaningful prefix, so it stays on the base unit.
+ */
+export function splitValueUnit(
+  value: number,
+  units: ReadonlyArray<{ label: string; mul: number }>,
+): ValueAndUnit {
+  const base = Math.max(0, units.findIndex((u) => u.mul === 1))
+  if (!Number.isFinite(value) || value === 0) return { text: String(value || 0), unitIndex: base }
+
+  const mag = Math.abs(value)
+  let best = base
+  for (let i = 0; i < units.length; i++) {
+    if (mag / units[i].mul >= 1 && units[i].mul >= units[best].mul) best = i
+  }
+  return { text: trimFigure(value / units[best].mul), unitIndex: best }
+}
+
+/**
+ * A figure a human would have typed.
+ *
+ * `toPrecision` rather than `toFixed`, because the error being avoided is
+ * floating-point litter: 0.47 µF stored and re-split through 1e-6 comes back as
+ * 0.46999999999999997, which in a text box a student is about to edit reads as
+ * a bug in the editor. Six significant figures is past anything they will type
+ * and short of where the litter starts.
+ */
+function trimFigure(n: number): string {
+  if (!Number.isFinite(n)) return '0'
+  if (Number.isInteger(n)) return String(n)
+  return String(Number(n.toPrecision(6)))
+}
+
+export type ParseResult =
+  | { ok: true; value: number }
+  | { ok: false; reason: string }
+
+/**
+ * Validate and scale a typed figure into a stored value.
+ *
+ * REJECTS rather than reinterprets, and that is not a style choice.
+ * `Resistor.stamp` THROWS on a negative or non-finite resistance — deliberately,
+ * because clamping a negative resistance silently turns it into a short and
+ * returns a plausible 0 V — and `Circuit.solve()` surfaces the throw as a dead
+ * simulation with a stack trace in it. The inspector is the last place that can
+ * stop a student reaching that, so it does.
+ *
+ * Out-of-RANGE is different from invalid and is treated differently: 5 GΩ typed
+ * into a field that tops out at 1 TΩ is a real value, so it is clamped and the
+ * clamp is reported, rather than the entry being thrown away.
+ */
+export function parseValueUnit(text: string, prop: PropSpec, unitIndex: number): ParseResult {
+  const units = prop.units ?? [{ label: prop.unit ?? '', mul: 1 }]
+  const unit = units[unitIndex] ?? units[0]
+  const trimmed = text.trim()
+
+  if (trimmed === '') return { ok: false, reason: 'Enter a number.' }
+  // Number('') is 0 and Number(' 12 ') is 12, so the emptiness check above has
+  // to come first. Number('1e5') is 100000, which is a legitimate way to type it.
+  const figure = Number(trimmed)
+  if (!Number.isFinite(figure)) return { ok: false, reason: `"${trimmed}" is not a number.` }
+
+  const value = figure * unit.mul
+  if (!Number.isFinite(value)) return { ok: false, reason: 'That value is too large.' }
+
+  const min = prop.min ?? -Infinity
+  const max = prop.max ?? Infinity
+  if (value < min) {
+    return min === 0 && value < 0
+      ? { ok: false, reason: `${prop.label} cannot be negative.` }
+      : { ok: true, value: min }
+  }
+  if (value > max) return { ok: true, value: max }
+  return { ok: true, value }
+}
+
+/** How a stored value reads in a sentence — "4.7 kΩ", "100 nF", "0 Ω". */
+export function formatValueUnit(
+  value: number,
+  units: ReadonlyArray<{ label: string; mul: number }>,
+): string {
+  const { text, unitIndex } = splitValueUnit(value, units)
+  return `${text} ${units[unitIndex]?.label ?? ''}`.trim()
+}
+
+// ─── Knob geometry ────────────────────────────────────────────────────────────
+
+/** Degrees clockwise from twelve o'clock for a prop value. */
+export function knobAngleFor(knob: KnobControl, prop: PropSpec, value: number): number {
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const span = max - min || 1
+  const t = Math.min(1, Math.max(0, (value - min) / span))
+  return knob.fromDeg + t * (knob.toDeg - knob.fromDeg)
+}
+
+/**
+ * The prop value a pointer at (dx, dy) from the knob centre asks for.
+ *
+ * `atan2(dx, -dy)` rather than the usual `atan2(dy, dx)`: the artwork measures
+ * from twelve o'clock going clockwise, and SVG's y axis points down.
+ *
+ * The dead zone at the bottom is what a real pot's end stops are. Without it,
+ * dragging past either stop wraps to the far end — the knob jumps from 0 % to
+ * 100 % as the pointer crosses six o'clock, which is worse than not moving at
+ * all. Anything outside the sweep is CLAMPED to the nearer stop instead, chosen
+ * by which end of the sweep the angle is closer to.
+ */
+export function knobValueFor(
+  knob: KnobControl,
+  prop: PropSpec,
+  dx: number,
+  dy: number,
+): number {
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const step = prop.step ?? 1
+
+  const deg = (Math.atan2(dx, -dy) * 180) / Math.PI // −180…180, 0 = up
+  const lo = Math.min(knob.fromDeg, knob.toDeg)
+  const hi = Math.max(knob.fromDeg, knob.toDeg)
+  const clampedDeg =
+    deg < lo || deg > hi ? (Math.abs(angleGap(deg, lo)) <= Math.abs(angleGap(deg, hi)) ? lo : hi) : deg
+
+  const t = (clampedDeg - knob.fromDeg) / (knob.toDeg - knob.fromDeg || 1)
+  const raw = min + t * (max - min)
+  const snapped = step > 0 ? Math.round(raw / step) * step : raw
+  return Math.min(max, Math.max(min, Number(snapped.toFixed(6))))
+}
+
+/** Shortest signed separation between two angles, degrees. */
+function angleGap(a: number, b: number): number {
+  return ((((a - b) % 360) + 540) % 360) - 180
+}
+
 // ─── Declaration self-check ───────────────────────────────────────────────────
 
 /**
  * Every declared prop that cannot be rendered honestly, as human-readable lines.
  *
- * Two failures, both of which have actually happened:
+ * The failures it catches, all of which have actually happened or are one typo
+ * away from happening:
  *
  *  1. NO `default`. The inspector then has nothing to show for a part whose
  *     document carries no value for the key — an authored starter, a restored
@@ -1327,6 +1809,16 @@ export function getPart(type: string): PartDefinition {
  *  2. A `select` whose `default` is not one of its `options`. A <select> handed
  *     a value with no matching <option> renders BLANK — so the control would
  *     show nothing at all while the simulation used the declared value.
+ *  3. A `choice` whose `default` is not one of its `choices` — the same blank
+ *     <select>, one type along.
+ *  4. A `number` with no `units`, no `mul: 1` entry, or no bounds. The stored
+ *     unit IS the entry with `mul: 1`; without one, every typed figure is scaled
+ *     by whatever the first row happens to be and the document silently holds a
+ *     value a thousand times off. Without bounds the field would pass a negative
+ *     resistance straight to `Resistor.stamp`, which throws.
+ *  5. A declared `knob` naming a prop that does not exist, or one whose type
+ *     cannot be dragged — the canvas would then render a control that moves
+ *     nothing.
  *
  * Exported so it can be asserted in a test, and also run once at module load
  * below, because a part declared wrongly should not have to wait for someone to
@@ -1343,11 +1835,75 @@ export function propDeclarationProblems(): string[] {
         )
         continue
       }
-      if (prop.type === 'select' && !(prop.options ?? []).includes(prop.default)) {
+
+      const wantsString = prop.type === 'choice'
+      if (wantsString !== (typeof prop.default === 'string')) {
+        out.push(
+          `${type}.${prop.key} is a \`${prop.type}\` prop with a ` +
+            `${typeof prop.default} default (${String(prop.default)}) — a \`choice\` stores ` +
+            `strings and everything else stores numbers.`,
+        )
+        continue
+      }
+
+      if (prop.type === 'select' && !(prop.options ?? []).includes(prop.default as number)) {
         out.push(
           `${type}.${prop.key} has default ${prop.default}, which is not in its options ` +
             `[${(prop.options ?? []).join(', ')}] — the <select> would render blank.`,
         )
+      }
+
+      if (prop.type === 'choice') {
+        const values = (prop.choices ?? []).map((c) => c.value)
+        if (values.length === 0) {
+          out.push(`${type}.${prop.key} is a \`choice\` prop with no \`choices\` to choose from.`)
+        } else if (!values.includes(prop.default as string)) {
+          out.push(
+            `${type}.${prop.key} has default "${prop.default}", which is not in its choices ` +
+              `[${values.join(', ')}] — the <select> would render blank.`,
+          )
+        }
+      }
+
+      if (prop.type === 'number') {
+        const units = prop.units ?? []
+        if (units.length === 0) {
+          out.push(`${type}.${prop.key} is a \`number\` prop with no \`units\`, so it has no unit dropdown.`)
+        } else if (!units.some((u) => u.mul === 1)) {
+          out.push(
+            `${type}.${prop.key} declares no unit with \`mul: 1\`, so nothing states which ` +
+              `unit the DOCUMENT holds — every typed figure would be scaled by the wrong factor.`,
+          )
+        }
+        if (prop.min === undefined || prop.max === undefined) {
+          out.push(
+            `${type}.${prop.key} is a \`number\` prop without both \`min\` and \`max\`, so a ` +
+              `typed value has nothing to be clamped against.`,
+          )
+        } else if (!(prop.min < prop.max)) {
+          out.push(`${type}.${prop.key} has min ${prop.min} >= max ${prop.max}.`)
+        } else if ((prop.default as number) < prop.min || (prop.default as number) > prop.max) {
+          out.push(
+            `${type}.${prop.key} has default ${prop.default}, outside its own ` +
+              `[${prop.min}, ${prop.max}] range.`,
+          )
+        }
+      }
+    }
+
+    const knob = def.knob
+    if (knob) {
+      const target = (def.props ?? []).find((p) => p.key === knob.key)
+      if (!target) {
+        out.push(`${type} declares a knob on "${knob.key}", which is not one of its props.`)
+      } else if (target.type !== 'range') {
+        out.push(
+          `${type}'s knob drives "${knob.key}", a \`${target.type}\` prop — a knob sweeps a ` +
+            `\`range\`, and the panel control has to be the same value.`,
+        )
+      }
+      if (knob.fromDeg === knob.toDeg) {
+        out.push(`${type}'s knob has a zero-degree sweep, so it can never change its value.`)
       }
     }
   }
