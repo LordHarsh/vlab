@@ -89,9 +89,29 @@ export interface PartDefinition {
      */
     | {
         kind: 'sensor'
-        protocol: 'dht11' | 'hc_sr04' | 'pir' | 'flow'
+        protocol: 'dht11' | 'hc_sr04' | 'pir' | 'flow' | 'ds18b20'
         drives: string[]
       }
+    /**
+     * A bank of open-collector Darlington sinks (a ULN2003). Each channel is a
+     * logic input and an output that either pulls DOWN or is not there at all —
+     * see DarlingtonSink in devices.ts for why "not there at all" is the
+     * load-bearing half of open-collector.
+     */
+    | { kind: 'darlington_array' }
+    /**
+     * A dual full-bridge motor driver (an L298N). Two transistors are in series
+     * with the load at all times, so the bridge eats ~2.5 V of the supply; that
+     * drop IS the lesson and the model keeps it (HBridgeParams in devices.ts).
+     */
+    | { kind: 'h_bridge' }
+    /**
+     * A unipolar stepper: four windings from a common tap. Electrically that is
+     * all it is — the shaft position is a property of the energisation SEQUENCE
+     * in time, which a DC operating point cannot hold, so it is reported by the
+     * behavioural StepperMonitor exactly as a buzzer's pitch is.
+     */
+    | { kind: 'stepper' }
     /**
      * Capacitor or inductor. The interactive engine is DC-only, so these are
      * solved at their DC limit — a cap is open, an inductor is a wire. That is
@@ -605,6 +625,272 @@ const dht11: PartDefinition = {
   `,
 }
 
+/**
+ * DS18B20 1-Wire digital thermometer, in the TO-92 package the kits ship.
+ *
+ * PINOUT, and it is the one thing worth getting right here: looking at the FLAT
+ * face with the leads pointing down, the order is GND, DQ, VDD (datasheet pin
+ * 1, 2, 3). Reversing GND and VDD is the classic way to cook one of these, and
+ * a part drawn the wrong way round would teach the mistake rather than catch it.
+ *
+ * GND is `passive`, not `gnd` — see GND_IS_A_REAL_WIRE. This part cares more
+ * than most: a DS18B20 with no ground has no return path for the open-drain
+ * pull-down, so it cannot answer, and "you forgot the ground wire" has to stay a
+ * real mistake with a real symptom.
+ *
+ * The 4.7 kΩ pull-up the experiment calls for is a SEPARATE part, deliberately.
+ * It is external on real hardware, the bus does not work without it, and the
+ * behavioural model reports `busIdleHigh: false` when it is missing.
+ */
+const ds18b20: PartDefinition = {
+  type: 'ds18b20',
+  label: 'DS18B20 temperature',
+  width: 36,
+  height: 50,
+  pins: [
+    { id: 'GND', name: 'GND', x: 8, y: 50, type: 'passive' },
+    { id: 'DQ', name: 'DQ', x: 18, y: 50, type: 'digital' },
+    { id: 'VDD', name: 'VDD', x: 28, y: 50, type: 'power' },
+  ],
+  electrical: { kind: 'sensor', protocol: 'ds18b20', drives: ['DQ'] },
+  props: [
+    {
+      key: 'temperature',
+      label: 'Probe temperature',
+      type: 'range',
+      // The datasheet's own −55…+125 °C measurement range. Values outside it
+      // are clamped by ds18b20Raw() rather than refused, but the slider should
+      // not offer a reading the part cannot represent.
+      min: -55,
+      max: 125,
+      step: 1,
+      unit: '°C',
+      default: 25,
+    },
+    {
+      key: 'resolution',
+      label: 'Resolution',
+      type: 'select',
+      unit: ' bit',
+      // 9/10/11/12 bits, the four settings of the configuration register. The
+      // slider owns this only until the student's program writes its own
+      // register — see applyResolutionProp() in behavioural.ts.
+      options: [9, 10, 11, 12],
+      default: 12,
+    },
+  ],
+  svg: `
+    <path d="M4 30 A14 14 0 0 1 32 30 L32 40 L4 40 Z" fill="#1f1f1f" stroke="#000"/>
+    <rect x="4" y="16" width="28" height="20" fill="#1f1f1f" stroke="#000"/>
+    <line x1="4" y1="34" x2="32" y2="34" stroke="#3a3a3a" stroke-width="1"/>
+    <text x="18" y="30" font-size="7" text-anchor="middle" fill="#c9c9c9" font-family="monospace">DS18</text>
+    <line x1="8" y1="50" x2="8" y2="40" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="18" y1="50" x2="18" y2="40" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="28" y1="50" x2="28" y2="40" stroke="#9a9a9a" stroke-width="2"/>
+  `,
+}
+
+// ─── Motor driver stages and the motor they drive ─────────────────────────────
+
+/**
+ * ULN2003A, as the 16-pin DIP.
+ *
+ * PIN NUMBERING IS THE REAL PART'S, walked the way a DIP is walked: pin 1 at
+ * the top left, down the left side to pin 8, then across to pin 9 at the bottom
+ * right and back UP to pin 16. So the inputs 1B…7B are the left column, E
+ * (ground) is pin 8, COM is pin 9, and the outputs 7C…1C run bottom to top on
+ * the right — which is why OUT1 sits opposite IN1 rather than beside it.
+ *
+ * Ids are IN1…IN7 / OUT1…OUT7 / COM / GND rather than the datasheet's 1B/1C/E,
+ * because IN1…IN4 is what the ULN2003 stepper BOARD silkscreens and what the
+ * experiment's own circuit table names.
+ *
+ * GND is `passive`. The chip's sinks and its input resistors all return to THIS
+ * pin, not to net 0 (see DarlingtonSink), so an unwired ground gives a chip that
+ * does nothing — exactly what happens on a bench.
+ */
+const ULN2003_CHANNELS = 7
+
+function makeULN2003(): PartDefinition {
+  const pins: PinGeometry[] = []
+  const leftX = 10
+  const rightX = 80
+  const topY = 15
+
+  for (let k = 1; k <= ULN2003_CHANNELS; k++) {
+    pins.push({ id: `IN${k}`, name: `IN${k}`, x: leftX, y: topY + (k - 1) * PITCH, type: 'digital' })
+  }
+  // Pin 8 (E) closes the left column; pin 9 (COM) opens the right one opposite it.
+  pins.push({ id: 'GND', name: 'GND', x: leftX, y: topY + 7 * PITCH, type: 'passive' })
+  pins.push({ id: 'COM', name: 'COM', x: rightX, y: topY + 7 * PITCH, type: 'power' })
+  for (let k = 1; k <= ULN2003_CHANNELS; k++) {
+    pins.push({ id: `OUT${k}`, name: `OUT${k}`, x: rightX, y: topY + (k - 1) * PITCH, type: 'passive' })
+  }
+
+  const pads = pins
+    .map(
+      (p) =>
+        `<rect x="${p.x - 3}" y="${p.y - 3}" width="6" height="6" rx="1" ` +
+        `fill="#c9c9c9" stroke="#8a8a8a" stroke-width="0.5"/>`,
+    )
+    .join('')
+
+  return {
+    type: 'uln2003',
+    label: 'ULN2003 Darlington array',
+    width: 90,
+    height: 100,
+    pins,
+    electrical: { kind: 'darlington_array' },
+    svg: `
+      <rect x="16" y="6" width="58" height="88" rx="3" fill="#1f1f1f" stroke="#000"/>
+      <circle cx="24" cy="16" r="3" fill="#3a3a3a"/>
+      <text x="45" y="46" font-size="8" text-anchor="middle" fill="#c9c9c9" font-family="monospace">ULN</text>
+      <text x="45" y="58" font-size="8" text-anchor="middle" fill="#c9c9c9" font-family="monospace">2003</text>
+      ${pads}
+    `,
+  }
+}
+
+/**
+ * L298N dual full-bridge, drawn as the RED BREAKOUT MODULE rather than as the
+ * bare Multiwatt15, because that is the object the experiment's bill of
+ * materials lists and the object a student has in front of them.
+ *
+ * Pin ids follow the module's silkscreen — OUT1…OUT4, ENA, IN1…IN4, ENB, and
+ * the three-way power terminal +12V / GND / +5V. The two supply pins are named
+ * VS and VSS for their datasheet roles instead, because that is the distinction
+ * that matters and the silkscreen actively obscures it:
+ *
+ *   VS  (the "+12V" screw) is the MOTOR supply, 2.5 V above a logic high at the
+ *       very least, and it is what the output stage draws from.
+ *   VSS (the "+5V" screw) is the LOGIC supply and is rated 4.5–7 V. Putting the
+ *       motor rail here destroys the chip, which HBridgeChannel.safety() says
+ *       out loud.
+ *
+ * GND is `passive`, as everywhere else, and it is genuinely load-bearing on this
+ * part: an L298N shares its ground with the MCU or neither of them agrees what a
+ * logic high is. A student who omits that wire gets a bridge that never enables.
+ */
+function makeL298N(): PartDefinition {
+  const W = 160
+  const H = 110
+  const pins: PinGeometry[] = [
+    // Motor terminals, one screw block per channel.
+    { id: 'OUT1', name: 'OUT1', x: 20, y: 10, type: 'passive' },
+    { id: 'OUT2', name: 'OUT2', x: 40, y: 10, type: 'passive' },
+    { id: 'OUT3', name: 'OUT3', x: 120, y: 10, type: 'passive' },
+    { id: 'OUT4', name: 'OUT4', x: 140, y: 10, type: 'passive' },
+    // Power terminal.
+    { id: 'VS', name: '+12V (VS)', x: 10, y: 40, type: 'power' },
+    { id: 'GND', name: 'GND', x: 10, y: 60, type: 'passive' },
+    { id: 'VSS', name: '+5V (VSS)', x: 10, y: 80, type: 'power' },
+    // Logic header.
+    { id: 'ENA', name: 'ENA', x: 40, y: 100, type: 'digital' },
+    { id: 'IN1', name: 'IN1', x: 50, y: 100, type: 'digital' },
+    { id: 'IN2', name: 'IN2', x: 60, y: 100, type: 'digital' },
+    { id: 'IN3', name: 'IN3', x: 70, y: 100, type: 'digital' },
+    { id: 'IN4', name: 'IN4', x: 80, y: 100, type: 'digital' },
+    { id: 'ENB', name: 'ENB', x: 90, y: 100, type: 'digital' },
+  ]
+
+  const terminals = pins
+    .filter((p) => p.id.startsWith('OUT') || p.id === 'VS' || p.id === 'GND' || p.id === 'VSS')
+    .map(
+      (p) =>
+        `<rect x="${p.x - 6}" y="${p.y - 6}" width="12" height="12" rx="2" ` +
+        `fill="#2b6cb0" stroke="#1a4a80"/><circle cx="${p.x}" cy="${p.y}" r="3" fill="#d8d8d8"/>`,
+    )
+    .join('')
+  const header = pins
+    .filter((p) => p.type === 'digital')
+    .map(
+      (p) =>
+        `<rect x="${p.x - 3}" y="${p.y - 4}" width="6" height="8" rx="1" ` +
+        `fill="#c9a227" stroke="#8a6d14" stroke-width="0.5"/>`,
+    )
+    .join('')
+
+  return {
+    type: 'l298n',
+    label: 'L298N motor driver',
+    width: W,
+    height: H,
+    pins,
+    electrical: { kind: 'h_bridge' },
+    svg: `
+      <rect x="0" y="0" width="${W}" height="${H}" rx="4" fill="#b03a2e" stroke="#7d2820"/>
+      <rect x="58" y="26" width="44" height="44" rx="3" fill="#3a3f45" stroke="#22262b"/>
+      <text x="80" y="44" font-size="9" text-anchor="middle" fill="#e8e8e8" font-family="monospace">L298</text>
+      <text x="80" y="56" font-size="9" text-anchor="middle" fill="#e8e8e8" font-family="monospace">N</text>
+      <rect x="108" y="34" width="18" height="28" rx="2" fill="#8a8f96"/>
+      ${terminals}
+      ${header}
+    `,
+  }
+}
+
+/**
+ * 28BYJ-48 unipolar stepper, five wires.
+ *
+ * HAND-DRAWN, AND THE HARVESTED ART IS NOT A SUBSTITUTE. wokwi-art.generated.json
+ * does carry a `stepper-motor`, but its pins are A-/A+/B+/B- — a four-wire
+ * BIPOLAR motor with no common tap. A 28BYJ-48 has five wires because its two
+ * windings are centre-tapped and both taps are joined to the red lead; that
+ * common tap is the entire reason it can be driven by seven open-collector sinks
+ * instead of by two H-bridges. Reusing the bipolar art would put a student's
+ * wire on a pin the real part does not have, and would hide the one structural
+ * fact this experiment is about.
+ *
+ * Ids are COM / A / B / C / D. A…D are the four phase leads in HALF_STEP_SEQUENCE
+ * order (bit 3 is A), so wiring IN1→A, IN2→B, IN3→C, IN4→D through a ULN2003
+ * reproduces the ring the datasheet prints. The human-facing names carry the
+ * lead COLOURS, because on a real motor that is all the student can see.
+ */
+function makeStepper28BYJ48(): PartDefinition {
+  const W = 90
+  const H = 100
+  const pins: PinGeometry[] = [
+    { id: 'COM', name: 'COM (red)', x: 25, y: 100, type: 'power' },
+    { id: 'A', name: 'A (orange)', x: 35, y: 100, type: 'passive' },
+    { id: 'B', name: 'B (yellow)', x: 45, y: 100, type: 'passive' },
+    { id: 'C', name: 'C (pink)', x: 55, y: 100, type: 'passive' },
+    { id: 'D', name: 'D (blue)', x: 65, y: 100, type: 'passive' },
+  ]
+  const leadColour: Record<string, string> = {
+    COM: '#e04a4a',
+    A: '#e07b2e',
+    B: '#eab308',
+    C: '#e29ec0',
+    D: '#3b6fd4',
+  }
+  const leads = pins
+    .map(
+      (p) =>
+        `<line x1="${p.x}" y1="100" x2="${p.x}" y2="84" stroke="${leadColour[p.id]}" stroke-width="2"/>`,
+    )
+    .join('')
+
+  return {
+    type: 'stepper_28byj48',
+    label: '28BYJ-48 stepper',
+    width: W,
+    height: H,
+    pins,
+    electrical: { kind: 'stepper' },
+    svg: `
+      <circle cx="45" cy="42" r="34" fill="#c8ccd1" stroke="#8f959c"/>
+      <circle cx="45" cy="42" r="26" fill="#aeb4bb" stroke="#8f959c"/>
+      <rect x="30" y="18" width="30" height="10" rx="2" fill="#8f959c"/>
+      <circle cx="45" cy="42" r="7" fill="#6d757e"/>
+      <circle cx="45" cy="42" r="3" fill="#e8e8e8"/>
+      <rect x="18" y="72" width="54" height="14" rx="2" fill="#e8e2d0" stroke="#b8b09a"/>
+      <text x="45" y="83" font-size="7" text-anchor="middle" fill="#5a5346" font-family="monospace">28BYJ-48</text>
+      ${leads}
+    `,
+  }
+}
+
 // ─── Reactive parts — present, but honest about what they do ──────────────────
 
 const capacitor: PartDefinition = {
@@ -644,9 +930,13 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   dc_motor: dcMotor,
   diode,
   dht11,
+  ds18b20,
   hc_sr04: hcsr04,
   pir_motion: pirMotion,
   flow_sensor: flowSensor,
+  l298n: makeL298N(),
+  uln2003: makeULN2003(),
+  stepper_28byj48: makeStepper28BYJ48(),
   capacitor,
 }
 
@@ -663,7 +953,14 @@ export const PALETTE: string[] = [
   'diode',
   'buzzer',
   'dc_motor',
+  // The two driver stages sit next to the motor they drive, and the stepper next
+  // to the array that sinks its coils — a student reaching for one reaches for
+  // the other in the same breath.
+  'l298n',
+  'uln2003',
+  'stepper_28byj48',
   'dht11',
+  'ds18b20',
   'hc_sr04',
   'pir_motion',
   'flow_sensor',

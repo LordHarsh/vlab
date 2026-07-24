@@ -14,8 +14,13 @@ import {
   Inductor,
   NortonPort,
   Resistor,
+  STEPPER_28BYJ48,
+  ULN2003,
+  UnipolarStepper,
   VoltageSource,
+  createL298N,
   createLED,
+  createULN2003,
   type Diode,
 } from '../devices'
 import type { NetId } from '../types'
@@ -348,6 +353,99 @@ export function compile(doc: CircuitDoc): CompileResult {
           'the inductive spike when it is switched off all need transient simulation, ' +
           'which the interactive engine does not run yet.',
       )
+    } else if (el.kind === 'darlington_array') {
+      /**
+       * Everything a ULN2003 does returns to its OWN ground pin, never to net 0
+       * — the input resistors and the open-collector sinks alike (see
+       * DarlingtonSink in devices.ts). So an unwired GND is not a detail to
+       * paper over: the chip contributes nothing and does nothing, which is what
+       * a bench does. GND is typed `passive` on the part for exactly this.
+       */
+      const gnd = net({ partId: part.id, pinId: 'GND' })
+      if (gnd === undefined) continue
+      const ins: Array<NetId | undefined> = []
+      const outs: Array<NetId | undefined> = []
+      for (let k = 1; k <= ULN2003.channels; k++) {
+        ins.push(net({ partId: part.id, pinId: `IN${k}` }))
+        outs.push(net({ partId: part.id, pinId: `OUT${k}` }))
+      }
+      // A channel whose input is unwired is not instantiated at all, so seven
+      // unused channels cost nothing; and a COM that never reached a net gets no
+      // flyback diode, which is also what the hardware does.
+      const com = net({ partId: part.id, pinId: 'COM' })
+      const { devices } = createULN2003(part.id, { in: ins, out: outs, com, gnd })
+      if (devices.length === 0) continue
+      circuit.add(...devices)
+    } else if (el.kind === 'h_bridge') {
+      const gnd = net({ partId: part.id, pinId: 'GND' })
+      if (gnd === undefined) continue
+      /**
+       * An unwired logic input is handed the chip's OWN ground net rather than a
+       * node of its own.
+       *
+       * Both give the same answer — HBridgeChannel stamps the input resistor to
+       * gnd, so an unconnected pin solves to 0 V and reads LOW — but a fresh net
+       * would spend a matrix unknown to prove it, six times over on a part where
+       * half the pins are routinely unused. Handing over `gnd` makes the
+       * conductance a self-loop the stamp discards, and the level comparison
+       * v(gnd) − v(gnd) = 0 is exactly the LOW the real pin would read.
+       */
+      const logic = (pinId: string): NetId => net({ partId: part.id, pinId }) ?? gnd
+      const out = (pinId: string) => net({ partId: part.id, pinId })
+      const { devices } = createL298N(part.id, {
+        in1: logic('IN1'),
+        in2: logic('IN2'),
+        ena: logic('ENA'),
+        in3: logic('IN3'),
+        in4: logic('IN4'),
+        enb: logic('ENB'),
+        out1: out('OUT1'),
+        out2: out('OUT2'),
+        out3: out('OUT3'),
+        out4: out('OUT4'),
+        vs: out('VS'),
+        vss: out('VSS'),
+        gnd,
+      })
+      circuit.add(...devices)
+      limitations.push(
+        'The motor driver is solved at a DC operating point. Its ~2.5 V transistor drop is ' +
+          'modelled, but switching a motor off produces no inductive kick, so the flyback ' +
+          'diodes never conduct and the bridge is never seen doing the job it is there for. ' +
+          'That needs transient simulation, which the interactive engine does not run yet.',
+      )
+    } else if (el.kind === 'stepper') {
+      const com = net({ partId: part.id, pinId: 'COM' })
+      // No common tap on a net means no winding has a return path, so there is
+      // nothing to stamp and no position to report.
+      if (com === undefined) continue
+      const phases = ['A', 'B', 'C', 'D'].map((p) => net({ partId: part.id, pinId: p }))
+      const st = new UnipolarStepper(part.id, com, phases, STEPPER_28BYJ48)
+      circuit.add(st)
+      // The total current out of the common tap. The four coil currents are not
+      // separately metered: they are what the driver's channels sink, and the
+      // shaft position the monitor reports is the reading that matters.
+      meters.set(part.id, st)
+      /**
+       * A MONITOR, with `ports: {}`. The stepper never drives its own net — it
+       * watches the four solved coil voltages and turns the energisation
+       * sequence into a shaft position, exactly as BuzzerMonitor turns a drive
+       * waveform into a pitch. Giving it a port would let it fight the driver
+       * that is supposed to own the wire.
+       */
+      const stepperNets: Record<string, NetId> = {}
+      for (const pin of def.pins) {
+        const n = net({ partId: part.id, pinId: pin.id })
+        if (n !== undefined) stepperNets[pin.id] = n
+      }
+      behavioural.push({ partId: part.id, protocol: 'stepper', nets: stepperNets, ports: {} })
+      limitations.push(
+        'The stepper is solved at a DC operating point: the angle reported is the one the ' +
+          'coil sequence commands. Winding inductance is not modelled, so there is no coil ' +
+          'rise time, no torque falling away as the step rate climbs, and no inductive kick ' +
+          'when a phase switches off — a real 28BYJ-48 starts losing steps long before this ' +
+          'model would.',
+      )
     } else if (el.kind === 'sensor') {
       // Every pin that reached a real net, so the model can read its own supply
       // as well as its signal lines.
@@ -547,6 +645,20 @@ export function compile(doc: CircuitDoc): CompileResult {
         // a dead-end leg is not reported per-pin. A pot wired to NOTHING still
         // gets the whole-part message below via liveCount === 0.
         continue
+      } else if (kind === 'darlington_array' || kind === 'h_bridge') {
+        /**
+         * A multi-channel driver IC legitimately leaves channels unused, and the
+         * experiments that ship these do exactly that: a 28BYJ-48 needs four of a
+         * ULN2003's seven sinks, and one DC motor uses one of an L298N's two
+         * bridges. Reporting each spare pin as a dangling lead would put eleven
+         * "wired to nothing" notices on a CORRECTLY built exp 9 — noise that
+         * would train a student to ignore the Checks panel.
+         *
+         * So the same rule the MCU header gets, for the same reason: a pin the
+         * student never touched is unused, not broken. A pin they DID wire and
+         * that still reaches nothing is a genuine mistake and is still reported.
+         */
+        if (!wiredKeys.has(pinKeyOf({ partId: part.id, pinId: pin.id }))) continue
       }
 
       const coords: DeadLead['coords'] = []

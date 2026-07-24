@@ -24,17 +24,19 @@ import type { SolveFault } from '../types'
 import {
   BuzzerMonitor,
   DHT11,
+  DS18B20Sensor,
   FlowSensor,
   G_RELEASED,
   HCSR04,
   PIRSensor,
   R_PULLDOWN,
+  StepperMonitor,
   type BehaviouralContext,
   type BehaviouralDevice,
   type DeviceState,
   type DriveLevel,
 } from '../behavioural'
-import { BUZZER_5V, MIN_RESISTANCE } from '../devices'
+import { BUZZER_5V, MIN_RESISTANCE, STEPPER_28BYJ48 } from '../devices'
 import { PICO_ADC_PINS, PICO_ONBOARD_LED_GPIO, adcChannelOf, gpioIndexOf } from './board'
 import { PicoBehaviouralClock } from './clock-shim'
 import type { PicoFirmware } from './firmware'
@@ -779,9 +781,13 @@ export class PicoSimulationEngine {
 /**
  * Protocol name → behavioural model.
  *
- * The SAME table as ../engine.ts's, and deliberately a duplicate of four lines
- * rather than a shared export: the two engines instantiate the same classes,
- * and if they ever stop agreeing that is a fact worth seeing in a diff.
+ * The SAME table as ../engine.ts's, and deliberately a duplicate of a handful of
+ * lines rather than a shared export: the two engines instantiate the same
+ * classes, and if they ever stop agreeing that is a fact worth seeing in a diff.
+ *
+ * `ds18b20` and `stepper` matter more here than on the AVR side: the DS18B20's
+ * only real client is MicroPython's frozen `onewire`/`ds18x20` pair, and the
+ * 28BYJ-48 is stepped by a Pico in the experiment that ships it.
  *
  * An unknown protocol returns null rather than throwing — a document authored
  * against a newer part library should degrade to an inert part, not take the
@@ -795,6 +801,8 @@ function makeBehavioural(
   switch (protocol) {
     case 'dht11':
       return new DHT11(partId, ctx)
+    case 'ds18b20':
+      return new DS18B20Sensor(partId, ctx)
     case 'hc_sr04':
       return new HCSR04(partId, ctx)
     case 'pir':
@@ -803,6 +811,8 @@ function makeBehavioural(
       return new FlowSensor(partId, ctx)
     case 'buzzer':
       return new BuzzerMonitor(partId, ctx, BUZZER_5V)
+    case 'stepper':
+      return new StepperMonitor(partId, ctx, STEPPER_28BYJ48)
     default:
       return null
   }

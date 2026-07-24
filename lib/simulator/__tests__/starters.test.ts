@@ -165,10 +165,12 @@ function solveDoc(
 
 console.log('\n1. Structure')
 
-eq('1.1 exactly seven experiments have authored starters', Object.keys(EXPERIMENT_STARTERS).sort(), [
+eq('1.1 exactly nine experiments have authored starters', Object.keys(EXPERIMENT_STARTERS).sort(), [
   'dht11-rpi',
+  'ds18b20-rpi',
   'led-button-rpi',
   'led-dht11-arduino',
+  'motor-control-rpi',
   'pir-alarm-arduino',
   'traffic-light-arduino',
   'ultrasonic-pir-arduino',
@@ -1017,6 +1019,11 @@ console.log('\n6. Migrations 020, 021 and 022 agree with the TypeScript')
     {
       file: '022_native_experiments_5_7.sql',
       slugs: ['dht11-rpi', 'led-button-rpi'],
+      board: BOARDS.raspberry_pi_pico.dbBoard,
+    },
+    {
+      file: '023_native_experiments_8_9.sql',
+      slugs: ['ds18b20-rpi', 'motor-control-rpi'],
       board: BOARDS.raspberry_pi_pico.dbBoard,
     },
   ]

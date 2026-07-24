@@ -407,6 +407,39 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
     if (el.protocol === 'dht11') {
       return { headline: `${num('temperature')} °C · ${num('humidity')}% RH` }
     }
+
+    if (el.protocol === 'ds18b20') {
+      if (s.powered !== true) {
+        return { headline: 'no power', detail: 'VDD is not on a 3.0–5.5 V rail — the sensor cannot answer' }
+      }
+      // A 1-Wire bus that never rises is the single commonest way to get
+      // nothing at all out of this part, and it has exactly one cause worth
+      // naming: no pull-up. The model reports it rather than letting the
+      // student's driver just time out.
+      if (s.busIdleHigh !== true) {
+        return {
+          headline: 'bus held low',
+          detail: 'nothing is pulling DQ up — a DS18B20 is open-drain and needs the 4.7 kΩ to 3.3 V',
+        }
+      }
+      const detail =
+        `${num('resolution')}-bit · ROM ${String(s.rom ?? '')}` +
+        (s.converting === true ? ' · converting…' : '')
+      return { headline: `${num('celsius').toFixed(4)} °C`, detail }
+    }
+  }
+
+  if (el.kind === 'stepper') {
+    const errors = num('sequenceErrors')
+    // The 85 °C-equivalent teaching moment for a stepper: a coil pattern that
+    // is not on the half-step ring, or a jump the rotor could not have followed.
+    // The model refuses to credit those, so saying so is the whole point.
+    const detail =
+      `${Math.round(num('halfSteps'))} half-steps · ${num('revolutions').toFixed(3)} rev · ` +
+      `${Math.abs(num('rpm')).toFixed(1)} rpm · coils ${String(s.pattern ?? '····')}` +
+      (errors > 0 ? ` · ${Math.round(errors)} refused pattern${errors === 1 ? '' : 's'}` : '')
+    if (s.holding !== true) return { headline: 'coils off', detail }
+    return { headline: `${num('shaftDegrees').toFixed(1)}°`, detail }
   }
 
   // A part whose model reports a shape this panel has never seen still gets its
@@ -418,7 +451,7 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
 }
 
 /** Part kinds that publish reported state into the snapshot. */
-const REPORTS_STATE = new Set(['buzzer', 'motor', 'sensor'])
+const REPORTS_STATE = new Set(['buzzer', 'motor', 'sensor', 'stepper'])
 
 /**
  * How far the Pico has got with the student's script, in words.

@@ -30,17 +30,19 @@ import { compile, type CompileResult } from './model/compile'
 import {
   BuzzerMonitor,
   DHT11,
+  DS18B20Sensor,
   FlowSensor,
   G_RELEASED,
   HCSR04,
   PIRSensor,
   R_PULLDOWN,
+  StepperMonitor,
   type BehaviouralContext,
   type BehaviouralDevice,
   type DeviceState,
   type DriveLevel,
 } from './behavioural'
-import { BUZZER_5V, MIN_RESISTANCE, type NortonPort } from './devices'
+import { BUZZER_5V, MIN_RESISTANCE, STEPPER_28BYJ48, type NortonPort } from './devices'
 import type { CircuitDoc, PlacedPart } from './model/document'
 import type { SolveFault } from './types'
 
@@ -762,6 +764,8 @@ function makeBehavioural(
   switch (protocol) {
     case 'dht11':
       return new DHT11(partId, ctx)
+    case 'ds18b20':
+      return new DS18B20Sensor(partId, ctx)
     case 'hc_sr04':
       return new HCSR04(partId, ctx)
     case 'pir':
@@ -770,6 +774,8 @@ function makeBehavioural(
       return new FlowSensor(partId, ctx)
     case 'buzzer':
       return new BuzzerMonitor(partId, ctx, BUZZER_5V)
+    case 'stepper':
+      return new StepperMonitor(partId, ctx, STEPPER_28BYJ48)
     default:
       return null
   }

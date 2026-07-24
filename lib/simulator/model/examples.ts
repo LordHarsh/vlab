@@ -368,6 +368,90 @@ export const STARTER_DHT11_PICO: CircuitDoc = {
 }
 
 /**
+ * Experiment 08 — "DS18B20 Temperature Sensor with RPi" (slug `ds18b20-rpi`).
+ * A PICO circuit.
+ *
+ * Bill of materials from the experiment's own Components section: board,
+ * DS18B20 (waterproof probe), 4.7 kΩ resistor, connecting wires. The Circuit
+ * section asks for the red lead (VDD) → 3.3 V, the black (GND) → GND and the
+ * yellow (Data) → GPIO4 with a 4.7 kΩ pull-up to 3.3 V.
+ *
+ * 4.7 kΩ IS THE VALUE, and it is not interchangeable with the DHT11's 10 kΩ next
+ * door. A 1-Wire bus is open-drain and the master reads a bit ~15 µs after the
+ * falling edge, so the pull-up has to charge the line's capacitance back up
+ * inside a slot; Maxim's own application notes specify 4.7 kΩ for a short bus
+ * and the MicroPython `onewire` timings are written against it. The behavioural
+ * model reports `busIdleHigh: false` when nothing is pulling the line up at all,
+ * which is what a student who omits the resistor entirely will see.
+ *
+ * As with experiments 04 and 07, the bill of materials does not list a
+ * breadboard and one ships anyway: the pull-up needs a tie point where DQ and
+ * GP4 already meet, and pre-wired rails are the convention every other starter
+ * opens with.
+ */
+export const STARTER_DS18B20_PICO: CircuitDoc = {
+  parts: [
+    { id: 'pico', type: 'raspberry_pi_pico', x: 40, y: 20, rotation: 0, props: {} },
+    { id: 'bb', type: 'breadboard', x: 40, y: 260, rotation: 0, props: {} },
+    { id: 'ds', type: 'ds18b20', x: 60, y: 470, rotation: 0, props: { temperature: 25, resolution: 12 } },
+    { id: 'r4k7', type: 'resistor', x: 150, y: 490, rotation: 0, props: { ohms: 4700 } },
+  ],
+  wires: picoPowerRails(),
+}
+
+/**
+ * Experiment 09 — "DC & Stepper Motor Control with RPi"
+ * (slug `motor-control-rpi`). A PICO circuit, and the largest starter in the lab.
+ *
+ * Bill of materials from the experiment's own Components section: board, L298N
+ * motor driver, 5 V DC motor, 28BYJ-48 stepper, ULN2003 driver board, a 12 V
+ * supply and connecting wires. The Circuit section asks for ENA → GPIO18,
+ * IN1 → GPIO23, IN2 → GPIO24, the L298N's motor rail from an external supply
+ * with a common ground, and the stepper's ULN2003 IN1–IN4 on GPIO 17, 27, 22
+ * and 5.
+ *
+ * TWO THINGS IN THE PUBLISHED CIRCUIT DO NOT EXIST ON THIS BOARD, and both are
+ * recorded rather than quietly fudged:
+ *
+ *   GPIO23 AND GPIO24 ARE NOT ON A PICO'S HEADER. The published content targets
+ *   a Raspberry Pi SBC, whose BCM numbering runs past 22; on an RP2040, GP23,
+ *   GP24 and GP25 exist on the die but are wired to on-board functions and are
+ *   not brought out (see makePico() in parts.ts — the header stops at GP22 and
+ *   resumes at GP26). Experiments 05 and 07 ported their BCM numbers across
+ *   verbatim because 4, 17 and 27 happen to exist on both; these two do not, so
+ *   IN1 and IN2 move to GP19 and GP20 — the two header pads immediately after
+ *   GP18, so ENA/IN1/IN2 stay three consecutive pins on the real board. The
+ *   MicroPython in pico/experiments.ts uses the same three numbers.
+ *
+ *   THERE IS NO 12 V SUPPLY, and the starter does not pretend otherwise. The
+ *   part library has no bench supply; the only rail on this board above the
+ *   3.3 V logic rail is VBUS, the Pico's `5V` pad, which is USB power passed
+ *   straight through. That is enough — an L298N needs Vss in 4.5–7 V and Vs at
+ *   least VIH + 2.5 = 4.8 V, so 5 V clears both, by 0.2 V in the second case —
+ *   and it makes the part's real cost visible instead of hiding it: two
+ *   transistors in series drop about 2.55 V, so a motor fed from 5 V through the
+ *   bridge sees about 2.44 V. A student who wonders why their motor is limp has
+ *   met the L298N, not a bug.
+ *
+ * The pre-wired rails carry 3.3 V, the LOGIC rail, exactly as in every other
+ * Pico starter. Getting VBUS to the driver is therefore part of the exercise,
+ * and it is the right part to leave open: wiring a motor supply to Vss is how an
+ * L298N is destroyed, and HBridgeChannel.safety() says so in as many words.
+ */
+export const STARTER_MOTOR_CONTROL_PICO: CircuitDoc = {
+  parts: [
+    { id: 'pico', type: 'raspberry_pi_pico', x: 40, y: 20, rotation: 0, props: {} },
+    { id: 'bb', type: 'breadboard', x: 40, y: 260, rotation: 0, props: {} },
+    // Component tray, below the board. Four modules, so it runs the full width.
+    { id: 'l298n', type: 'l298n', x: 60, y: 470, rotation: 0, props: {} },
+    { id: 'motor', type: 'dc_motor', x: 240, y: 500, rotation: 0, props: { load: 0 } },
+    { id: 'uln', type: 'uln2003', x: 320, y: 470, rotation: 0, props: {} },
+    { id: 'stepper', type: 'stepper_28byj48', x: 430, y: 470, rotation: 0, props: {} },
+  ],
+  wires: picoPowerRails(),
+}
+
+/**
  * Every authored starter, keyed by EXPERIMENT SLUG.
  *
  * The slug is the key because that is what migrations 020, 021 and 022 look the
@@ -387,6 +471,8 @@ export const EXPERIMENT_STARTERS: Record<string, CircuitDoc> = {
   'pir-alarm-arduino': STARTER_PIR_ALARM,
   'led-button-rpi': STARTER_LED_BUTTON_PICO,
   'dht11-rpi': STARTER_DHT11_PICO,
+  'ds18b20-rpi': STARTER_DS18B20_PICO,
+  'motor-control-rpi': STARTER_MOTOR_CONTROL_PICO,
 }
 
 export const EXAMPLES: Record<string, { label: string; short: string; doc: CircuitDoc }> = {
@@ -400,5 +486,7 @@ export const EXAMPLES: Record<string, { label: string; short: string; doc: Circu
   starterPirAlarm: { label: 'Lab starter — PIR alarm', short: 'Starter 6', doc: STARTER_PIR_ALARM },
   starterPicoButton: { label: 'Lab starter — Pico LED & button', short: 'Starter 5', doc: STARTER_LED_BUTTON_PICO },
   starterPicoDht: { label: 'Lab starter — Pico DHT11', short: 'Starter 7', doc: STARTER_DHT11_PICO },
+  starterPicoDs18b20: { label: 'Lab starter — Pico DS18B20', short: 'Starter 8', doc: STARTER_DS18B20_PICO },
+  starterPicoMotors: { label: 'Lab starter — Pico motors', short: 'Starter 9', doc: STARTER_MOTOR_CONTROL_PICO },
   blank: { label: 'Blank board', short: 'Blank', doc: BLANK },
 }
