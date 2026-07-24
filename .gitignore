@@ -59,3 +59,6 @@ next-env.d.ts
 # wokwi-elements bundle: a dev-only input to the art harvest.
 # The harvested output (lib/simulator/model/wokwi-art.generated.json) IS committed.
 /public/vendor/
+
+# toolchain archives downloaded by scripts/build-avr-hex.mjs
+/.cache/
