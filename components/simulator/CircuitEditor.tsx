@@ -542,6 +542,57 @@ const REPORTS_STATE = new Set(['buzzer', 'motor', 'sensor', 'stepper', 'relay_mo
  * board is powered and doing nothing the student asked for. Saying which stage
  * it is at is the difference between "wait a moment" and "this is broken".
  */
+/* ── The student's source, and the one rule about it ──────────────────── */
+
+/**
+ * TWO copies of the program, and the distinction is the whole run model.
+ *
+ *  - `draft`  is what is in the editor. It changes on every keystroke, and it
+ *    is what gets AUTOSAVED, so a student who types a line and reloads gets
+ *    that line back whether or not they ever ran it.
+ *  - `loaded` is what the board was actually given. usePicoSimulator reboots
+ *    MicroPython whenever this changes (pico.worker's `setScript` case), so it
+ *    must change only when the student asks.
+ *
+ * Feeding the draft straight into the simulator would reboot the interpreter on
+ * every keystroke — the emulated board would spend its life in the ~1.8 s boot
+ * it takes MicroPython to reach a prompt and never run anything. Committing on
+ * Run is not a compromise; it is the only workable shape, and the UI says so out
+ * loud rather than letting the board silently disagree with the screen.
+ */
+interface CodeState {
+  draft: string
+  loaded: string
+}
+
+type CodeAction =
+  /** A keystroke, or Reset to starter. Never reaches the board on its own. */
+  | { type: 'edit'; source: string }
+  /** Autosave came back. Both copies move, so arrival is never "dirty". */
+  | { type: 'restore'; source: string }
+  /** The student pressed Run. THIS is what reboots the interpreter. */
+  | { type: 'load' }
+
+/**
+ * A reducer rather than two useStates, for one concrete reason: the restore
+ * lands inside an effect, and `dispatch` is the only way to move state from an
+ * effect without the cascading re-render that react-hooks/set-state-in-effect
+ * (correctly) rejects. The document beside it is already a reducer for the same
+ * reason.
+ */
+function codeReducer(state: CodeState, action: CodeAction): CodeState {
+  switch (action.type) {
+    case 'edit':
+      return action.source === state.draft ? state : { ...state, draft: action.source }
+    case 'restore':
+      return action.source === state.draft && action.source === state.loaded
+        ? state
+        : { draft: action.source, loaded: action.source }
+    case 'load':
+      return state.draft === state.loaded ? state : { ...state, loaded: state.draft }
+  }
+}
+
 const REPL_LABEL: Record<string, string> = {
   booting: 'booting…',
   pasting: 'sending script…',
@@ -612,24 +663,13 @@ export function CircuitEditor({
    */
   const starterScript = (experimentSlug && PICO_EXPERIMENTS[experimentSlug]?.script) || ''
 
-  /**
-   * TWO copies of the source, and the distinction is the whole run model.
-   *
-   *  - `draft`  is what is in the editor. It changes on every keystroke, and it
-   *    is what gets AUTOSAVED, so a student who types a line and reloads gets
-   *    that line back whether or not they ever ran it.
-   *  - `script` is what the board was actually given. The simulator hook reboots
-   *    MicroPython whenever this changes (usePicoSimulator, and pico.worker's
-   *    `setScript` case), so it must change only when the student asks.
-   *
-   * Feeding `draft` straight into the hook would reboot the interpreter on every
-   * keystroke — the emulated board would spend its life in the ~1.8 s boot it
-   * takes MicroPython to reach a prompt and never run anything. Committing on
-   * Run is not a compromise; it is the only workable shape, and the UI says so
-   * out loud rather than letting the board silently disagree with the screen.
-   */
-  const [draft, setDraft] = useState(starterScript)
-  const [script, setScript] = useState(starterScript)
+  /** Draft vs loaded — see codeReducer above, which is where the rule is stated. */
+  const [code, codeDispatch] = useReducer(codeReducer, starterScript, (s) => ({
+    draft: s,
+    loaded: s,
+  }))
+  const draft = code.draft
+  const script = code.loaded
   const [codeOpen, setCodeOpen] = useState(true)
   const [codeWidth, setCodeWidth] = useState(420)
 
@@ -700,10 +740,7 @@ export function CircuitEditor({
      * must get an empty editor back, not the starter script they deleted.
      */
     const saved = readCodeFile(restoredCode)
-    if (saved !== null) {
-      setDraft(saved)
-      setScript(saved)
-    }
+    if (saved !== null) codeDispatch({ type: 'restore', source: saved })
   }, [restoreChecked, restored, restoredCode])
 
   /**
@@ -760,13 +797,20 @@ export function CircuitEditor({
    * the hook's own `setScript` effect has posted the reboot — worker message
    * order is FIFO, so the interpreter reboots and is then started, in that
    * order.
+   *
+   * A ref rather than state because this is a one-shot intent, not something
+   * anything renders: it is set in an event handler and consumed by the next
+   * effect pass, and making it state would only add a render and trip
+   * react-hooks/set-state-in-effect on the way back down.
    */
-  const [autoStart, setAutoStart] = useState(false)
+  const pendingStart = useRef(false)
   useEffect(() => {
-    if (!autoStart || !ready) return
-    setAutoStart(false)
+    if (!pendingStart.current || !ready) return
+    pendingStart.current = false
     start()
-  }, [autoStart, ready, start])
+    // `start`'s identity changes with the script it will tag, which is exactly
+    // the render this needs to fire on.
+  }, [ready, start])
 
   /**
    * The ONE run control, shared by the toolbar and the code panel — Tinkercad
@@ -781,15 +825,20 @@ export function CircuitEditor({
    */
   const runCode = useCallback(() => {
     if (isPico && draft !== script) {
-      setScript(draft)
-      setAutoStart(true)
+      pendingStart.current = true
+      codeDispatch({ type: 'load' })
       return
     }
     start()
   }, [draft, isPico, script, start])
 
+  const editCode = useCallback((source: string) => codeDispatch({ type: 'edit', source }), [])
+
   /** Back to the authored script. Loads the editor only — Run still has to be pressed. */
-  const resetToStarter = useCallback(() => setDraft(starterScript), [starterScript])
+  const resetToStarter = useCallback(
+    () => codeDispatch({ type: 'edit', source: starterScript }),
+    [starterScript],
+  )
 
   /**
    * Pause while the editor is gated out of fullscreen, resume on the way back.
@@ -831,17 +880,23 @@ export function CircuitEditor({
    * The document compiled on the main thread, for the canvas (pin hover
    * highlighting). The authoritative electrical solve happens in the worker.
    *
-   * It also carries the Checks panel when there is NO board: no board means no
-   * worker, so no snapshot, and a document reporting nothing at all reads as a
+   * It also carries the Checks panel whenever NOTHING IS RUNNING: no worker
+   * means no snapshot, and a document reporting nothing at all reads as a
    * document with nothing wrong with it. This compile already had to happen, so
    * the fallback is free.
+   *
+   * Two cases reach it, not one. A document with no board (or with two) is the
+   * original. The second is an Arduino Mega, which HAS a board and no firmware
+   * to run on it — and its starter opens with twenty-eight parts still to wire,
+   * every one of them a line in the Checks panel. Gating the fallback on
+   * `track === 'none'` alone silently emptied that whole to-do list.
    */
   const compiled = useMemo(() => compile(doc), [doc])
   const netOf = compiled.netOf
-  const boardless = sim.track === 'none'
-  const problems = boardless ? compiled.problems : snapshot.problems
-  const limitations = boardless ? compiled.limitations : snapshot.limitations
-  const unknowns = boardless ? compiled.unknowns : snapshot.unknowns
+  const usingLocalCompile = sim.track === 'none' || (!ready && !running)
+  const problems = usingLocalCompile ? compiled.problems : snapshot.problems
+  const limitations = usingLocalCompile ? compiled.limitations : snapshot.limitations
+  const unknowns = usingLocalCompile ? compiled.unknowns : snapshot.unknowns
 
   const ledBrightness = useMemo(
     () => new Map(Object.entries(snapshot.ledBrightness)),
@@ -1159,7 +1214,7 @@ export function CircuitEditor({
                 boardLabel={sim.board.label}
                 boardId={mcuPartId}
                 source={draft}
-                onSourceChange={setDraft}
+                onSourceChange={editCode}
                 dirty={codeDirty}
                 status={!ready ? 'loading' : running ? 'running' : 'stopped'}
                 replLabel={REPL_LABEL[sim.snapshot.repl] ?? ''}
@@ -1487,7 +1542,13 @@ export function CircuitEditor({
             !snapshot.solveError &&
             snapshot.faults.length === 0 &&
             limitations.length === 0 &&
-            !boardless ? (
+            /*
+             * A board — any board — has had its document compiled, either in
+             * the worker or here. Only a document with NO board has been
+             * checked by nothing, and that is the one case where silence must
+             * not be read as a clean bill of health.
+             */
+            sim.track !== 'none' ? (
               <p className="text-xs text-green-700">No problems detected.</p>
             ) : (
               <ul className="space-y-1.5">
