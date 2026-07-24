@@ -55,7 +55,99 @@ export interface CircuitDoc {
 
 export const EMPTY_DOC: CircuitDoc = { parts: [], wires: [] }
 
-export const WIRE_COLORS = ['#e04a4a', '#111827', '#2f7d32', '#2563eb', '#eab308', '#7c3aed']
+// ─── Wire colour ──────────────────────────────────────────────────────────────
+
+export interface WireColor {
+  name: string
+  /** The bright shade, drawn 1.8 units wide. This is what a wire stores. */
+  core: string
+  /** The darker shade drawn 2.5 units wide underneath, showing as a rim. */
+  casing: string
+}
+
+/**
+ * Tinkercad's shipped wire palette, verbatim from `BreadboardWire.ColorMap` in
+ * its `circuits-compiled.js` bundle (WIRE_RENDERING_SPEC.md §5).
+ *
+ * The two shades are AUTHORED, not derived. Deriving the casing by scaling the
+ * core is what our renderer used to do, and no single factor works across a
+ * palette: red at ×0.55 came out `#821212`, a black outline, where Tinkercad's
+ * hand-picked `#C11F1F` reads as the wire's own shadow. Keep them paired.
+ */
+export const WIRE_PALETTE: readonly WireColor[] = [
+  { name: 'green', core: '#40B942', casing: '#369936' },
+  { name: 'blue', core: '#009ED9', casing: '#007EA5' },
+  { name: 'orange', core: '#F78300', casing: '#CC6600' },
+  { name: 'purple', core: '#7F3B9A', casing: '#522866' },
+  { name: 'pink', core: '#D9288C', casing: '#A52073' },
+  { name: 'turquoise', core: '#71CEDC', casing: '#58A1A8' },
+  { name: 'brown', core: '#AA7B4C', casing: '#755335' },
+  { name: 'yellow', core: '#FFDF01', casing: '#CCAE02' },
+  { name: 'red', core: '#EC2222', casing: '#C11F1F' },
+  { name: 'black', core: '#3C4042', casing: '#171919' },
+  { name: 'grey', core: '#999EA1', casing: '#63696B' },
+  { name: 'white', core: '#FFFFFF', casing: '#B8B8B8' },
+]
+
+/** Ground wires are black and supply wires are red, on a bench and here. */
+export const WIRE_COLOR_GND = '#3C4042'
+export const WIRE_COLOR_POWER = '#EC2222'
+
+/**
+ * Colours handed to NEW signal wires, in order.
+ *
+ * Only ever read at creation time: a wire stores the colour it was given, so
+ * editing this list re-tints nothing that already exists — saved circuits and
+ * the authored examples keep the exact hex they were written with.
+ *
+ * Tinkercad hands every new wire the LAST colour the student picked, defaulting
+ * to green. We have no picker yet, so this cycles instead — but it starts on
+ * that same green, and it excludes the two reserved rail colours above so that
+ * a black wire always means ground and a red one always means supply. Grey and
+ * white are held back too: both vanish against the board.
+ */
+export const WIRE_COLORS = [
+  '#40B942',
+  '#009ED9',
+  '#F78300',
+  '#7F3B9A',
+  '#D9288C',
+  '#71CEDC',
+  '#AA7B4C',
+  '#FFDF01',
+]
+
+/**
+ * The casing shade to draw under a wire of core colour `core`.
+ *
+ * Palette colours are looked up. Anything else — the six ad-hoc hexes wires
+ * were given before this palette existed, still sitting in saved documents and
+ * in the authored examples — is darkened by 0.83, which is the ratio Tinkercad's
+ * own pairs average (its green casing rgb(54,153,54) against core rgb(64,185,66)
+ * is 0.84/0.83/0.82 per channel). Those wires keep the colour they were saved
+ * with; only the shade beneath them is corrected.
+ */
+const LEGACY_CASING_SHADE = 0.83
+const casingCache = new Map<string, string>(
+  WIRE_PALETTE.flatMap((c) => [
+    [c.core.toLowerCase(), c.casing] as [string, string],
+    [c.core.toUpperCase(), c.casing] as [string, string],
+  ]),
+)
+
+export function wireCasing(core: string): string {
+  const hit = casingCache.get(core)
+  if (hit) return hit
+  const m = /^#([0-9a-f]{6})$/i.exec(core)
+  const n = m ? parseInt(m[1], 16) : null
+  const dim = (v: number) => Math.round(v * LEGACY_CASING_SHADE)
+  const out =
+    n === null
+      ? `rgba(17,24,39,${LEGACY_CASING_SHADE})`
+      : `rgb(${dim((n >> 16) & 255)},${dim((n >> 8) & 255)},${dim(n & 255)})`
+  casingCache.set(core, out)
+  return out
+}
 
 export function pinKeyOf(ref: PinRef): string {
   return `${ref.partId} ${ref.pinId}`

@@ -9,10 +9,13 @@ import {
 } from '@/lib/simulator/model/parts'
 import {
   WIRE_COLORS,
+  WIRE_COLOR_GND,
+  WIRE_COLOR_POWER,
   newId,
   pinPosition,
   samePin,
   snap,
+  wireCasing,
   type CircuitDoc,
   type DocAction,
   type DocWire,
@@ -20,6 +23,7 @@ import {
   type PlacedPart,
   type Point,
 } from '@/lib/simulator/model/document'
+import { wirePath } from '@/lib/simulator/model/wire-path'
 
 const ACCENT = '#1477d1'
 
@@ -76,10 +80,43 @@ interface WireGesture {
  */
 const DRAG_SLOP = 4
 
-/** Coloured core, darker casing beneath it, invisible grab band over both. */
-const WIRE_CORE = 2.6
-const WIRE_CASING = 5
-const WIRE_HIT = 9
+/**
+ * Blue halo, darker casing, coloured core, invisible grab band — bottom to top.
+ *
+ * Every number is Tinkercad's, taken from its shipped `drawBendableWire` and
+ * `BreadboardWire.prototype.draw` (WIRE_RENDERING_SPEC.md §3, §7). They
+ * transfer one-for-one because our units and theirs are the same size: their
+ * corner radius is 10 and so is our grid pitch.
+ *
+ * A 1.8 core inside a 2.5 casing leaves the casing showing as a 0.35-unit rim
+ * on each side — a keyline, not the 1.2-unit dark halo our old 2.6-in-5 drew.
+ * That restraint is most of why their wires look clean and ours did not.
+ */
+const WIRE_CORE = 1.8
+const WIRE_CASING = 2.5
+
+/**
+ * Hover, selection and net highlighting all draw the same soft blue glow
+ * UNDER the wire, and never touch the wire's own colour. The old highlight
+ * repainted the core blue, which lied about the wire at the exact moment a
+ * student was trying to trace it.
+ */
+const WIRE_HALO = 5
+const WIRE_HALO_COLOR = '#3b8ed7'
+const WIRE_HALO_OPACITY = 0.5
+
+/**
+ * Width of the invisible band that takes the pointer.
+ *
+ * Tinkercad uses 4.5 plus a 2-unit select margin. Ours is wider because this
+ * audience is phone-first and an accessibility pass already flagged small
+ * touch targets — a 1.8-unit stroke is not a target on a finger-driven screen.
+ * But 7 is the ceiling, not a free parameter: the band reaches 3.5 units to
+ * each side, so two wires running parallel one 10-unit pitch apart still have
+ * a clear 3 units between their bands and neither can steal the other's grab.
+ * The previous 9 overlapped the neighbouring row.
+ */
+const WIRE_HIT = 7
 
 export function CircuitCanvas({
   doc,
@@ -191,18 +228,16 @@ export function CircuitCanvas({
   /**
    * End every in-flight gesture.
    *
-   * `released` separates a real pointerup from the pointer simply leaving the
-   * canvas: only the former may fire click-to-delete, and only when the
-   * pointer never travelled far enough to count as a drag.
+   * A single click on a wire body used to delete it. That was already a sharp
+   * edge and became a hostile one once the same gesture, moved four units,
+   * bends the wire instead: a student aiming to shape a lead who slipped under
+   * the threshold destroyed it. Deleting now takes a double-click on the body
+   * (see `Wire`), which nothing else in the canvas can be mistaken for.
    */
-  function endGesture(released: boolean) {
-    const g = gesture.current
-    if (g) {
+  function endGesture() {
+    if (gesture.current) {
       gesture.current = null
       setShaping(null)
-      if (released && !g.moved && g.kind === 'body') {
-        dispatch({ type: 'removeWire', id: g.wireId })
-      }
     }
     setDrag(null)
     setPanning(null)
@@ -250,7 +285,7 @@ export function CircuitCanvas({
           id: newId('w'),
           from: wire.from,
           to: ref,
-          color: WIRE_COLORS[doc.wires.length % WIRE_COLORS.length],
+          color: wireColorFor(doc, wire.from, ref),
         },
       })
     }
@@ -285,8 +320,8 @@ export function CircuitCanvas({
         className="w-full h-full touch-none"
         data-testid="canvas"
         onPointerMove={onPointerMove}
-        onPointerUp={() => endGesture(true)}
-        onPointerLeave={() => endGesture(false)}
+        onPointerUp={() => endGesture()}
+        onPointerLeave={() => endGesture()}
         onWheel={onWheel}
         onPointerDown={(e) => {
           onSelect(null)
@@ -371,6 +406,7 @@ export function CircuitCanvas({
                   startWireGesture(e, { wireId: w.id, index, kind: 'handle', startX: at.x, startY: at.y })
                 }
                 onRemoveHandle={(index) => dispatch({ type: 'removeWaypoint', id: w.id, index })}
+                onRemove={() => dispatch({ type: 'removeWire', id: w.id })}
                 toWorld={toWorld}
               />
             ))}
@@ -428,7 +464,7 @@ export function CircuitCanvas({
                   d={wirePath(from, { x: wire.x, y: wire.y })}
                   fill="none"
                   stroke={ACCENT}
-                  strokeWidth={2.5}
+                  strokeWidth={WIRE_CASING}
                   strokeLinecap="round"
                   strokeDasharray="5 4"
                   pointerEvents="none"
@@ -446,63 +482,10 @@ function partTransform(part: PlacedPart, def: PartDefinition): string {
 }
 
 // ─── Wire geometry ────────────────────────────────────────────────────────────
-
-/** Two decimals is under a tenth of a pixel and keeps the DOM readable. */
-const f = (n: number) => Math.round(n * 100) / 100
-
-/**
- * A slack lead between two pins.
- *
- * Both control points sit a third of the way along the chord and sag
- * downwards, so the curve bows roughly 0.75 × sag below its middle while still
- * arriving dead on each pin: a jumper hanging under its own weight rather than
- * a PCB trace. The cap stops a long lead drooping over whatever is beneath it.
- */
-function droopPath(a: Point, b: Point): string {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const sag = Math.min(26, Math.hypot(dx, dy) * 0.15 + 3)
-  return (
-    `M ${f(a.x)} ${f(a.y)} ` +
-    `C ${f(a.x + dx / 3)} ${f(a.y + dy / 3 + sag)}, ` +
-    `${f(a.x + (dx * 2) / 3)} ${f(a.y + (dy * 2) / 3 + sag)}, ` +
-    `${f(b.x)} ${f(b.y)}`
-  )
-}
-
-/**
- * Uniform Catmull-Rom through every point, emitted as cubic béziers.
- *
- * Each segment begins and ends ON its own two points and only borrows the
- * neighbours for tangents, so the curve passes EXACTLY through every waypoint
- * — the handle a student is dragging is always on the wire, never beside it.
- * The two end tangents duplicate their endpoint, which stops the first and
- * last segments overshooting the pins they terminate on.
- */
-function splinePath(pts: Point[]): string {
-  let d = `M ${f(pts[0].x)} ${f(pts[0].y)}`
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] ?? pts[i]
-    const p1 = pts[i]
-    const p2 = pts[i + 1]
-    const p3 = pts[i + 2] ?? p2
-    d +=
-      ` C ${f(p1.x + (p2.x - p0.x) / 6)} ${f(p1.y + (p2.y - p0.y) / 6)},` +
-      ` ${f(p2.x - (p3.x - p1.x) / 6)} ${f(p2.y - (p3.y - p1.y) / 6)},` +
-      ` ${f(p2.x)} ${f(p2.y)}`
-  }
-  return d
-}
-
-/**
- * The drawn route of a wire.
- *
- * No waypoints — every document authored before they existed — falls through
- * to the plain slack curve, so an old circuit renders exactly as it always did.
- */
-export function wirePath(a: Point, b: Point, waypoints?: Point[]): string {
-  return waypoints && waypoints.length > 0 ? splinePath([a, ...waypoints, b]) : droopPath(a, b)
-}
+//
+// The path itself lives in lib/simulator/model/wire-path.ts, so it can be
+// asserted on without mounting React. What stays here is hit-testing: which
+// part of a wire the pointer landed on.
 
 function distToSegment(p: Point, a: Point, b: Point): number {
   const vx = b.x - a.x
@@ -517,9 +500,9 @@ function distToSegment(p: Point, a: Point, b: Point): number {
  * Which slot a bend grabbed at `p` belongs in.
  *
  * Segment i of [from, ...waypoints, to] runs from waypoint i-1 to waypoint i,
- * so the index of the nearest segment IS the insertion index. Measured against
- * the straight chords rather than the drawn curve: the two differ by a few
- * units at most, and never by enough to pick the wrong segment.
+ * so the index of the nearest segment IS the insertion index. The chords ARE
+ * the drawn route now — the only place the two part company is inside a
+ * corner fillet, where both adjoining segments are equally the right answer.
  */
 function grabIndex(pts: Point[], p: Point): number {
   let best = 0
@@ -534,19 +517,26 @@ function grabIndex(pts: Point[], p: Point): number {
   return best
 }
 
-/** The wire's own colour, darkened, for the casing drawn under the core. */
-const shadeCache = new Map<string, string>()
-function shade(hex: string): string {
-  const hit = shadeCache.get(hex)
-  if (hit) return hit
-  const m = /^#([0-9a-f]{6})$/i.exec(hex)
-  const n = m ? parseInt(m[1], 16) : null
-  const out =
-    n === null
-      ? 'rgba(17,24,39,0.55)'
-      : `rgb(${Math.round(((n >> 16) & 255) * 0.55)},${Math.round(((n >> 8) & 255) * 0.55)},${Math.round((n & 255) * 0.55)})`
-  shadeCache.set(hex, out)
-  return out
+/**
+ * The colour a new wire between these two pins is born with.
+ *
+ * Tinkercad hands out whichever colour the student last picked. We have no
+ * picker, so colour is the one thing left to carry meaning: a wire touching a
+ * ground pin is black and a wire touching a supply pin is red, the way a bench
+ * is wired, and everything else cycles so that two signal wires crossing are
+ * still tellable apart. The cycle counts only the wires already using it, so
+ * reserving a rail colour does not punch a hole in the sequence.
+ */
+function wireColorFor(doc: CircuitDoc, a: PinRef, b: PinRef): string {
+  const kinds = [a, b].map((ref) => {
+    const part = doc.parts.find((p) => p.id === ref.partId)
+    if (!part) return undefined
+    return getPart(part.type).pins.find((pin) => pin.id === ref.pinId)?.type
+  })
+  if (kinds.includes('gnd')) return WIRE_COLOR_GND
+  if (kinds.includes('power')) return WIRE_COLOR_POWER
+  const used = doc.wires.filter((w) => WIRE_COLORS.includes(w.color)).length
+  return WIRE_COLORS[used % WIRE_COLORS.length]
 }
 
 // ─── Wire ─────────────────────────────────────────────────────────────────────
@@ -569,6 +559,7 @@ function Wire({
   onGrabBody,
   onGrabHandle,
   onRemoveHandle,
+  onRemove,
   toWorld,
 }: {
   wire: DocWire
@@ -580,6 +571,7 @@ function Wire({
   onGrabBody: (e: React.PointerEvent, at: Point, index: number) => void
   onGrabHandle: (e: React.PointerEvent, index: number, at: Point) => void
   onRemoveHandle: (index: number) => void
+  onRemove: () => void
   toWorld: (clientX: number, clientY: number) => Point
 }) {
   const [hover, setHover] = useState(false)
@@ -593,12 +585,28 @@ function Wire({
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
     >
+      {/* Halo, under everything. One state for hover, shaping and net
+          highlighting: all three mean "this wire", and none of them is a
+          reason to repaint it a colour it is not. */}
+      {(lit || show) && (
+        <path
+          d={d}
+          data-testid={`wire-halo-${wire.id}`}
+          fill="none"
+          stroke={WIRE_HALO_COLOR}
+          strokeWidth={WIRE_HALO}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={WIRE_HALO_OPACITY}
+          pointerEvents="none"
+        />
+      )}
       {/* Casing under core, so wires crossing each other stay legible. */}
       <path
         d={d}
         fill="none"
-        stroke={shade(wire.color)}
-        strokeWidth={lit ? WIRE_CASING + 1 : WIRE_CASING}
+        stroke={wireCasing(wire.color)}
+        strokeWidth={WIRE_CASING}
         strokeLinecap="round"
         strokeLinejoin="round"
         pointerEvents="none"
@@ -607,16 +615,16 @@ function Wire({
         d={d}
         data-testid={`wire-core-${wire.id}`}
         fill="none"
-        stroke={lit ? ACCENT : wire.color}
-        strokeWidth={lit ? 3.5 : WIRE_CORE}
+        stroke={wire.color}
+        strokeWidth={WIRE_CORE}
         strokeLinecap="round"
         strokeLinejoin="round"
         pointerEvents="none"
       />
       {/* The only part of a wire that takes a pointer: a band along the stroke.
-          `fill="none"` plus pointer-events on the stroke matters — a drooping
-          wire encloses a large area, and filling it would swallow every click
-          on the board underneath. */}
+          `fill="none"` plus pointer-events on the stroke matters — a bent wire
+          encloses the area between its bends, and filling it would swallow
+          every click on the board underneath. */}
       <path
         d={d}
         fill="none"
@@ -630,7 +638,13 @@ function Wire({
           const at = toWorld(e.clientX, e.clientY)
           onGrabBody(e, at, grabIndex([a, ...points, b], at))
         }}
-      />
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          onRemove()
+        }}
+      >
+        <title>Drag to bend · double-click to remove</title>
+      </path>
 
       {show &&
         points.map((p, i) => (
