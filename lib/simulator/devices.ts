@@ -892,3 +892,832 @@ export class DCMotor implements Device {
     return null
   }
 }
+
+// ─── Motor driver stages ──────────────────────────────────────────────────────
+
+/**
+ * Why a driver stage is a SWITCHED LINEAR element and not a nonlinear one.
+ *
+ * A Darlington sink and an H-bridge leg are both "a transistor in saturation or
+ * fully off". In saturation a bipolar device is very nearly a fixed voltage
+ * offset in series with a small bulk resistance — a Thevenin source — which is
+ * exactly a Norton stamp and costs no extra matrix unknown. What is genuinely
+ * discontinuous is only the ON/OFF decision, and that decision is a function of
+ * the LOGIC INPUT voltage alone: nothing on the output side feeds back to it.
+ *
+ * That one-directional dependence is what makes the switch safe inside the
+ * Newton loop, where a general kink would not be (see the DCMotor note on why a
+ * constant-torque load was rejected: Newton ping-pongs across a kink forever).
+ * The switch state cannot oscillate because the node that decides it is solved
+ * independently of anything the switch does. Both classes below therefore
+ * declare `nonlinear = true` — not because their I/V curve is nonlinear, but
+ * because the solver must be made to run a SECOND iteration: with only one, the
+ * stamp would be built from the zero initial guess and every driver in the
+ * circuit would read its input as 0 V and stay off. They also drive `settled`
+ * exactly as the diode does, so the solver cannot accept a solution taken while
+ * the switch was still moving.
+ */
+
+export interface DarlingtonParams {
+  /**
+   * VCE(sat) at the LOWER of the two collector currents the datasheet
+   * characterises. Two points is the whole reason this pair exists: a
+   * saturated Darlington is an offset plus a resistance, and one point cannot
+   * separate them.
+   */
+  satVolts1: number
+  satAmps1: number
+  /** VCE(sat) at the higher characterised collector current. */
+  satVolts2: number
+  satAmps2: number
+  /** Input characteristic: II(on) at VI. Fixes the load the driving pin sees. */
+  inputTestVolts: number
+  inputTestAmps: number
+  /** Input voltage at which the datasheet GUARANTEES the channel is on. */
+  vih: number
+  /** Two base-emitter drops. Below this no base current flows at all. */
+  vil: number
+  /** Highest collector current the datasheet characterises, amps. */
+  ratedAmps: number
+  /** Absolute maximum output current per channel, amps. */
+  maxAmps: number
+  /** Channels in the package. */
+  channels: number
+}
+
+/**
+ * ULN2003A — seven NPN Darlington sinks with common flyback diodes.
+ *
+ * Every number is from the TI ULN2003A datasheet (SLRS027, Ta = 25 °C):
+ *
+ *   VCE(sat)  0.9 V typ at IC = 100 mA (VI = 2.7 V)
+ *             1.1 V typ at IC = 200 mA (VI = 3.0 V)
+ *             1.3 V typ at IC = 350 mA (VI = 3.0 V)
+ *   II(on)    0.93 mA typ at VI = 3.85 V
+ *   VI(on)    2.4 V max — guaranteed on at IC = 200 mA
+ *   IC        500 mA absolute maximum per channel
+ *
+ * The two saturation points are what the model is built from; the third
+ * (350 mA) is a free check, and the derivation reproduces it: R_on comes out at
+ * (1.1 − 0.9)/(0.2 − 0.1) = 2 Ω and the zero-current offset at
+ * 0.9 − 0.1 × 2 = 0.7 V, so 350 mA predicts 0.7 + 0.35 × 2 = 1.40 V against the
+ * datasheet's 1.3 V typ — 0.1 V high at 1.75x the highest fitted current.
+ *
+ * The 1.4 V of VI below which nothing happens is not a datasheet line but a
+ * physical one: the input drives the base of a Darlington through a 2.7 kΩ
+ * resistor, and two base-emitter junctions in series need two Vbe (~0.7 V each)
+ * before any base current flows at all.
+ */
+export const ULN2003: DarlingtonParams = {
+  satVolts1: 0.9,
+  satAmps1: 0.1,
+  satVolts2: 1.1,
+  satAmps2: 0.2,
+  inputTestVolts: 3.85,
+  inputTestAmps: 0.93e-3,
+  vih: 2.4,
+  vil: 1.4,
+  ratedAmps: 0.35,
+  maxAmps: 0.5,
+  channels: 7,
+}
+
+/**
+ * One Darlington channel: a logic input, and an open-collector output that
+ * either sinks to the chip's own ground pin or is not there at all.
+ *
+ * "Or is not there at all" is the load-bearing half. An off Darlington stamps
+ * NOTHING on the output, which is what open-collector means — the pin is
+ * released to whatever else is on it, exactly as the behavioural devices'
+ * 'release' does. Stamping a large resistance instead would quietly drain a
+ * motor coil's pull-up.
+ *
+ * Note that the input resistor and the sink both return to `gnd`, the chip's
+ * OWN ground pin and not net 0. A student who forgets the ground wire gets a
+ * chip that does nothing, which is what happens on a bench.
+ */
+export class DarlingtonSink implements Device {
+  readonly nonlinear = true
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** True while the channel is conducting. Read by the UI and by tests. */
+  on = false
+  /** False on the iteration in which the switch flipped. See Device.settled. */
+  settled = true
+  /** Collector current sunk into OUT, amps. Positive means sinking. */
+  current = 0
+  /** Base current the driving pin has to supply, amps. */
+  inputCurrent = 0
+
+  constructor(
+    readonly id: string,
+    private inNet: NetId,
+    private outNet: NetId | undefined,
+    private gnd: NetId,
+    readonly params: DarlingtonParams = ULN2003,
+  ) {}
+
+  reset(): void {
+    this.on = false
+    this.settled = true
+  }
+
+  /** Incremental collector resistance in saturation, from the two test points. */
+  get onOhms(): number {
+    const p = this.params
+    return (p.satVolts2 - p.satVolts1) / (p.satAmps2 - p.satAmps1)
+  }
+
+  /** VCE(sat) extrapolated back to zero collector current, volts. */
+  get offsetVolts(): number {
+    const p = this.params
+    return p.satVolts1 - p.satAmps1 * this.onOhms
+  }
+
+  /** VCE(sat) this model predicts at a given collector current, volts. */
+  saturationVolts(amps: number): number {
+    return this.offsetVolts + amps * this.onOhms
+  }
+
+  /**
+   * Input resistance, ohms, straight from the datasheet's input characteristic.
+   *
+   * A plain resistance rather than "2.7 kΩ behind two Vbe" on purpose: the
+   * offset model would SOURCE current out of the input below 1.4 V, which no
+   * real input ever does, and the error the plain resistance carries instead is
+   * a fraction of a milliamp at the one end of the range where it matters least.
+   */
+  get inputOhms(): number {
+    return this.params.inputTestVolts / this.params.inputTestAmps
+  }
+
+  stamp(ctx: StampContext): void {
+    stampConductance(ctx, this.inNet, this.gnd, 1 / Math.max(this.inputOhms, MIN_RESISTANCE))
+
+    const vin = ctx.voltage(this.inNet) - ctx.voltage(this.gnd)
+    // Hysteresis across the datasheet's own undefined band. Inside it a real
+    // part may do either thing, and holding the previous state is both legal
+    // and the only choice that cannot chatter.
+    const on = this.on ? vin > this.params.vil : vin >= this.params.vih
+    this.settled = on === this.on
+    this.on = on
+
+    if (!on || this.outNet === undefined) return
+    const g = 1 / Math.max(this.onOhms, MIN_RESISTANCE)
+    stampConductance(ctx, this.outNet, this.gnd, g)
+    // Push the output UP to the saturation offset at zero current: the KCL row
+    // then reads i(out→gnd) = g·(V_out − V_offset), which is the Thevenin
+    // source the class note describes. Reverse these two and the output sits at
+    // −0.7 V and sinks nothing.
+    stampCurrent(ctx, this.gnd, this.outNet, g * this.offsetVolts)
+  }
+
+  readback(ctx: StampContext): void {
+    this.inputCurrent =
+      (ctx.voltage(this.inNet) - ctx.voltage(this.gnd)) / Math.max(this.inputOhms, MIN_RESISTANCE)
+    if (!this.on || this.outNet === undefined) {
+      this.current = 0
+      return
+    }
+    const vce = ctx.voltage(this.outNet) - ctx.voltage(this.gnd)
+    this.current = (vce - this.offsetVolts) / Math.max(this.onOhms, MIN_RESISTANCE)
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    this.readback(ctx)
+    const i = this.current
+    if (i <= this.params.ratedAmps) return null
+    const mA = (i * 1000).toFixed(0)
+    if (i <= this.params.maxAmps) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: i,
+        message:
+          `${mA} mA through a Darlington channel the datasheet only characterises to ` +
+          `${(this.params.ratedAmps * 1000).toFixed(0)} mA. It conducts, but hot — the ` +
+          `package cannot carry this on every channel at once.`,
+      }
+    }
+    return {
+      kind: 'over_current',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: i,
+      message:
+        `${mA} mA through a channel rated for ${(this.params.maxAmps * 1000).toFixed(0)} mA. ` +
+        `On real hardware this channel is destroyed.`,
+    }
+  }
+}
+
+/**
+ * A whole ULN2003: seven channels plus the flyback diodes to COM.
+ *
+ * The diodes are real silicon on the die — that is the entire reason this part
+ * is used to drive coils rather than seven discrete transistors — so they are
+ * stamped. At a DC operating point every one of them is reverse-biased (an
+ * output can only be pulled DOWN, so it is never above COM) and contributes
+ * nothing, which is honest: their job is to absorb the inductive kick when a
+ * coil is switched OFF, and that is a transient, not an operating point. What
+ * they DO catch at DC is a student who wires an output above COM.
+ *
+ * A channel with no COM net gets no diode, which is also what the hardware
+ * does: the diodes share one cathode and an unwired COM leaves them floating.
+ */
+export function createULN2003(
+  id: string,
+  nets: {
+    in: Array<NetId | undefined>
+    out: Array<NetId | undefined>
+    com: NetId | undefined
+    gnd: NetId
+  },
+  params: DarlingtonParams = ULN2003,
+): { devices: Device[]; channels: DarlingtonSink[] } {
+  const devices: Device[] = []
+  const channels: DarlingtonSink[] = []
+  for (let k = 0; k < params.channels; k++) {
+    const inNet = nets.in[k]
+    if (inNet === undefined) continue
+    const ch = new DarlingtonSink(`${id}.ch${k + 1}`, inNet, nets.out[k], nets.gnd, params)
+    devices.push(ch)
+    channels.push(ch)
+    if (nets.out[k] !== undefined && nets.com !== undefined) {
+      // Anode on the output, cathode on COM: it conducts only when the output
+      // is dragged above the common rail.
+      devices.push(new Diode(`${id}.d${k + 1}`, nets.out[k]!, nets.com, DIODE_1N4148))
+    }
+  }
+  return { devices, channels }
+}
+
+export interface HBridgeParams {
+  /** VCEsat(H), the upper (source) transistor, volts at satTestAmps. */
+  sourceSatVolts: number
+  /** VCEsat(L), the lower (sink) transistor, volts at satTestAmps. */
+  sinkSatVolts: number
+  /** The single current at which the datasheet characterises both. */
+  satTestAmps: number
+  /** Bulk resistance per transistor, ohms. Not a datasheet line — see L298N. */
+  onOhms: number
+  /** Logic input thresholds, volts. */
+  vil: number
+  vih: number
+  /** Input characteristic Iin(H) at inputTestVolts, for the load on the pin. */
+  inputTestVolts: number
+  inputTestAmps: number
+  /** Logic supply window, volts. */
+  minLogicVolts: number
+  maxLogicVolts: number
+  /**
+   * How far the motor supply must sit above a logic high before the output
+   * stage works. The datasheet writes the lower bound of Vs as "VIH + 2.5 V".
+   */
+  supplyHeadroomVolts: number
+  /** Io per channel: continuous, and non-repetitive peak, amps. */
+  ratedAmps: number
+  peakAmps: number
+}
+
+/**
+ * L298N dual full-bridge, from the ST L298 datasheet.
+ *
+ *   VCEsat(H) source   0.95 min / 1.35 typ / 1.7 max V, at I = 1 A
+ *   VCEsat(L) sink     0.85 min / 1.2  typ / 1.6 max V, at I = 1 A
+ *   VCEsat total drop  1.80 min /            3.2 max V, at I = 1 A
+ *   VIL −0.3 to 1.5 V, VIH 2.3 V to Vss
+ *   Iin(H) 30 µA typ, 100 µA max
+ *   Vss (logic) 4.5 to 7 V ; Vs (motor) VIH + 2.5 V to 46 V
+ *   Io 2 A DC per channel, 3 A non-repetitive peak
+ *
+ * THE DROP IS THE LESSON. Two transistors are in series with the motor at all
+ * times, so a bridge fed from 5 V delivers about 5 − 1.35 − 1.2 = 2.45 V to the
+ * load. Students who wire an L298N to a 5 V rail and find their motor limp have
+ * not made a mistake; they have met the part. Modelling the bridge as an ideal
+ * switch would delete that entirely.
+ *
+ * `onOhms` is the one number here that is NOT off the datasheet, because the
+ * datasheet characterises saturation at a single current (1 A) and one point
+ * cannot separate an offset from a resistance. A saturated bipolar is offset-
+ * dominated, so the model takes the typical saturation voltages as constant
+ * offsets and adds 0.15 Ω per transistor of bulk. The consequence is bounded
+ * and checkable: the total drop runs from 2.55 V at no load to 3.15 V at the
+ * 2 A rating, and the datasheet's own window for the total drop is 1.80–3.2 V,
+ * so the model stays inside it across the entire permitted operating range.
+ */
+export const L298N: HBridgeParams = {
+  sourceSatVolts: 1.35,
+  sinkSatVolts: 1.2,
+  satTestAmps: 1,
+  onOhms: 0.15,
+  vil: 1.5,
+  vih: 2.3,
+  inputTestVolts: 5,
+  inputTestAmps: 30e-6,
+  minLogicVolts: 4.5,
+  maxLogicVolts: 7,
+  supplyHeadroomVolts: 2.5,
+  ratedAmps: 2,
+  peakAmps: 3,
+}
+
+/**
+ * What one bridge channel is doing, straight off the datasheet's truth table:
+ *
+ *   Ven = H, C = H, D = L   Forward
+ *   Ven = H, C = L, D = H   Reverse
+ *   Ven = H, C = D          Fast Motor Stop   (both outputs on the same rail)
+ *   Ven = L, C = X, D = X   Free Running Motor Stop
+ *
+ * `coast` is the enable being low: both legs are off and the motor is left to
+ * spin down on its own. `brake` is both legs on the same rail, which shorts the
+ * motor through the bridge and stops it hard. Those two are different things on
+ * a bench and the model keeps them different.
+ */
+export type BridgeMode = 'coast' | 'forward' | 'reverse' | 'brake'
+
+/**
+ * One half of an L298N: IN1/IN2, an enable, and OUT1/OUT2.
+ *
+ * Each output leg is a totem pole of its own controlled by its own input and
+ * gated by the enable — which is what the silicon is — so forward, reverse and
+ * both flavours of brake fall out of two independent legs rather than out of a
+ * four-way case analysis that could disagree with the truth table.
+ */
+export class HBridgeChannel implements Device {
+  readonly nonlinear = true
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  settled = true
+  /** Current out of OUT_A into the load, amps. Signed: negative is reverse. */
+  current = 0
+  mode: BridgeMode = 'coast'
+  /** False when Vss is missing or outside 4.5–7 V: the chip's logic is dead. */
+  logicOk = false
+  /** False when Vs is not far enough above a logic high to run the outputs. */
+  supplyOk = false
+
+  private sourceA = false
+  private sourceB = false
+  private driving = false
+
+  constructor(
+    readonly id: string,
+    private nets: {
+      in1: NetId
+      in2: NetId
+      en: NetId
+      outA: NetId | undefined
+      outB: NetId | undefined
+      vs: NetId | undefined
+      vss: NetId | undefined
+      gnd: NetId
+    },
+    readonly params: HBridgeParams = L298N,
+  ) {}
+
+  reset(): void {
+    this.driving = false
+    this.mode = 'coast'
+    this.settled = true
+  }
+
+  /** Load the chip puts on each driving pin, ohms. */
+  get inputOhms(): number {
+    return this.params.inputTestVolts / this.params.inputTestAmps
+  }
+
+  /** Lowest motor supply at which the output stage can work, volts. */
+  get minSupplyVolts(): number {
+    return this.params.vih + this.params.supplyHeadroomVolts
+  }
+
+  /** Total transistor drop at a given load current, volts — the L298N tax. */
+  totalDropVolts(amps: number): number {
+    const a = Math.abs(amps)
+    return (
+      this.params.sourceSatVolts +
+      this.params.sinkSatVolts +
+      2 * a * Math.max(this.params.onOhms, MIN_RESISTANCE)
+    )
+  }
+
+  private levelOf(ctx: StampContext, net: NetId, was: boolean): boolean {
+    const v = ctx.voltage(net) - ctx.voltage(this.nets.gnd)
+    return was ? v > this.params.vil : v >= this.params.vih
+  }
+
+  /** Stamp one output leg as a Thevenin source in Norton form. */
+  private stampLeg(ctx: StampContext, out: NetId, source: boolean): void {
+    const g = 1 / Math.max(this.params.onOhms, MIN_RESISTANCE)
+    if (source) {
+      if (this.nets.vs === undefined) return
+      stampConductance(ctx, this.nets.vs, out, g)
+      // i(vs→out) = g·(V_vs − V_out − VCEsat(H)): the transistor conducts only
+      // what is left after its own saturation drop.
+      stampCurrent(ctx, out, this.nets.vs, g * this.params.sourceSatVolts)
+    } else {
+      stampConductance(ctx, out, this.nets.gnd, g)
+      // i(out→gnd) = g·(V_out − VCEsat(L)).
+      stampCurrent(ctx, this.nets.gnd, out, g * this.params.sinkSatVolts)
+    }
+  }
+
+  stamp(ctx: StampContext): void {
+    const gin = 1 / Math.max(this.inputOhms, MIN_RESISTANCE)
+    stampConductance(ctx, this.nets.in1, this.nets.gnd, gin)
+    stampConductance(ctx, this.nets.in2, this.nets.gnd, gin)
+    stampConductance(ctx, this.nets.en, this.nets.gnd, gin)
+
+    const vss =
+      this.nets.vss === undefined ? 0 : ctx.voltage(this.nets.vss) - ctx.voltage(this.nets.gnd)
+    const vs =
+      this.nets.vs === undefined ? 0 : ctx.voltage(this.nets.vs) - ctx.voltage(this.nets.gnd)
+    this.logicOk = vss >= this.params.minLogicVolts && vss <= this.params.maxLogicVolts
+    this.supplyOk = vs >= this.minSupplyVolts
+
+    const enabled =
+      this.logicOk && this.supplyOk && this.levelOf(ctx, this.nets.en, this.driving)
+    const a = this.levelOf(ctx, this.nets.in1, this.sourceA)
+    const b = this.levelOf(ctx, this.nets.in2, this.sourceB)
+
+    // Everything that decides the switch is on the input side, so comparing the
+    // whole decision against last iteration's is exactly Device.settled's job.
+    this.settled = enabled === this.driving && a === this.sourceA && b === this.sourceB
+    this.driving = enabled
+    this.sourceA = a
+    this.sourceB = b
+    this.mode = !enabled ? 'coast' : a === b ? 'brake' : a ? 'forward' : 'reverse'
+
+    if (!enabled) return
+    if (this.nets.outA !== undefined) this.stampLeg(ctx, this.nets.outA, a)
+    if (this.nets.outB !== undefined) this.stampLeg(ctx, this.nets.outB, b)
+  }
+
+  /** Voltage the load actually sees, OUT_A − OUT_B. */
+  outputVolts(ctx: StampContext): number {
+    if (this.nets.outA === undefined || this.nets.outB === undefined) return 0
+    return ctx.voltage(this.nets.outA) - ctx.voltage(this.nets.outB)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = 0
+    if (!this.driving || this.nets.outA === undefined) return
+    const g = 1 / Math.max(this.params.onOhms, MIN_RESISTANCE)
+    const va = ctx.voltage(this.nets.outA) - ctx.voltage(this.nets.gnd)
+    if (this.sourceA) {
+      if (this.nets.vs === undefined) return
+      const vsv = ctx.voltage(this.nets.vs) - ctx.voltage(this.nets.gnd)
+      this.current = g * (vsv - va - this.params.sourceSatVolts)
+    } else {
+      this.current = -g * (va - this.params.sinkSatVolts)
+    }
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const vss =
+      this.nets.vss === undefined ? 0 : ctx.voltage(this.nets.vss) - ctx.voltage(this.nets.gnd)
+    if (vss > this.params.maxLogicVolts) {
+      return {
+        kind: 'over_power',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: vss,
+        message:
+          `${vss.toFixed(1)} V on the logic supply of an L298, which is rated ` +
+          `${this.params.minLogicVolts}–${this.params.maxLogicVolts} V. The motor supply ` +
+          `goes on Vs, not on Vss — on real hardware this destroys the chip.`,
+      }
+    }
+
+    this.readback(ctx)
+    const i = Math.abs(this.current)
+    if (i <= this.params.ratedAmps) return null
+    if (i <= this.params.peakAmps) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: i,
+        message:
+          `${i.toFixed(2)} A through a bridge rated for ${this.params.ratedAmps} A continuous. ` +
+          `The part allows ${this.params.peakAmps} A as a non-repetitive peak only — held here ` +
+          `it overheats.`,
+      }
+    }
+    return {
+      kind: 'over_current',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: i,
+      message:
+        `${i.toFixed(2)} A through a bridge whose absolute peak is ${this.params.peakAmps} A. ` +
+        `On real hardware this channel is destroyed.`,
+    }
+  }
+}
+
+/** Both halves of an L298N, wired from one part's pins. */
+export function createL298N(
+  id: string,
+  nets: {
+    in1: NetId
+    in2: NetId
+    ena: NetId
+    in3: NetId
+    in4: NetId
+    enb: NetId
+    out1?: NetId
+    out2?: NetId
+    out3?: NetId
+    out4?: NetId
+    vs?: NetId
+    vss?: NetId
+    gnd: NetId
+  },
+  params: HBridgeParams = L298N,
+): { devices: Device[]; channels: HBridgeChannel[] } {
+  const a = new HBridgeChannel(
+    `${id}.A`,
+    {
+      in1: nets.in1,
+      in2: nets.in2,
+      en: nets.ena,
+      outA: nets.out1,
+      outB: nets.out2,
+      vs: nets.vs,
+      vss: nets.vss,
+      gnd: nets.gnd,
+    },
+    params,
+  )
+  const b = new HBridgeChannel(
+    `${id}.B`,
+    {
+      in1: nets.in3,
+      in2: nets.in4,
+      en: nets.enb,
+      outA: nets.out3,
+      outB: nets.out4,
+      vs: nets.vs,
+      vss: nets.vss,
+      gnd: nets.gnd,
+    },
+    params,
+  )
+  return { devices: [a, b], channels: [a, b] }
+}
+
+// ─── Unipolar stepper ─────────────────────────────────────────────────────────
+
+export interface StepperParams {
+  /** Rated winding voltage, volts. */
+  ratedVolts: number
+  /** DC resistance of ONE phase, COM to a phase lead, ohms. */
+  phaseOhms: number
+  /** Stride angle at the MOTOR shaft, degrees per half-step. */
+  strideDegrees: number
+  /** Internal gear reduction between motor shaft and output shaft. */
+  gearRatio: number
+  /** Absolute maximum continuous winding voltage, volts. */
+  maxVolts: number
+}
+
+/**
+ * 28BYJ-48, 5 V — the geared unipolar stepper in every Arduino/Pi kit.
+ *
+ * Datasheet:
+ *   Rated voltage            5 V DC
+ *   Number of phases         4
+ *   Speed variation ratio    1/64
+ *   Stride angle             5.625° / 64
+ *   DC resistance            50 Ω ± 7 % (25 °C)
+ *
+ * "Stride angle 5.625°/64" is the whole geometry in one line: 5.625° is what
+ * the MOTOR shaft turns per half-step, so 360/5.625 = 64 half-steps per motor
+ * revolution, and the 1/64 gearbox makes 64 × 64 = 4096 half-steps per OUTPUT
+ * revolution. Nothing below hardcodes 4096; it is derived, and the test derives
+ * it independently.
+ *
+ * HONEST LIMITATIONS:
+ *
+ *   - The real gear train is 63.68395:1, not 64:1 — the datasheet's own 1/64 is
+ *     a round number, and over one commanded revolution the true output shaft
+ *     falls about 0.5 % short (it takes ~4076 half-steps, not 4096). The model
+ *     follows the datasheet, so a student's "step(4096) = one turn" arithmetic
+ *     works out exactly here and would be half a degree out on the bench.
+ *   - Windings are modelled by their DC resistance only. The ~300 mH of phase
+ *     inductance is what limits the top step rate on real hardware; with no
+ *     transient loop there is no rise time, so this model will happily follow a
+ *     step sequence far faster than the part can, and it does not model the
+ *     torque falling away with speed.
+ *   - Torque, holding torque and losing steps under load are not modelled. The
+ *     model reports the position the COIL SEQUENCE commands.
+ *
+ * `maxVolts` is 1.5x rated, the same convention DCMotor uses for a winding, and
+ * is a judgement call rather than a datasheet line — the datasheet gives no
+ * absolute maximum.
+ */
+export const STEPPER_28BYJ48: StepperParams = {
+  ratedVolts: 5,
+  phaseOhms: 50,
+  strideDegrees: 5.625,
+  gearRatio: 64,
+  maxVolts: 7.5,
+}
+
+/** Half-steps per revolution of the OUTPUT shaft. 4096 for a 28BYJ-48. */
+export function halfStepsPerRevolution(p: StepperParams): number {
+  return (360 / p.strideDegrees) * p.gearRatio
+}
+
+/** Output-shaft degrees advanced by one half-step. */
+export function degreesPerHalfStep(p: StepperParams): number {
+  return p.strideDegrees / p.gearRatio
+}
+
+/**
+ * The eight-state half-step ring, as bit patterns over the four phases.
+ *
+ * Bit 3 is phase A (IN1), bit 2 is B, bit 1 is C, bit 0 is D — the order the
+ * ULN2003 board's IN1..IN4 are wired to the motor's four coils. Adjacent
+ * entries differ by energising or de-energising exactly one coil, which is what
+ * makes the ring a ring: the rotor's equilibrium moves one half-step at a time.
+ *
+ * A full-step drive is this same ring visited two at a time: the odd entries
+ * (one coil at a time) are wave drive, the even entries (two coils at a time)
+ * are the higher-torque two-phase-on drive. That is why the tracker credits a
+ * jump of two, and it is not a special case bolted on.
+ */
+export const HALF_STEP_SEQUENCE: readonly number[] = [
+  0b1000, 0b1100, 0b0100, 0b0110, 0b0010, 0b0011, 0b0001, 0b1001,
+]
+
+/** Ring position of an energisation pattern, or −1 if it is not in the ring. */
+export function stepPhaseIndex(pattern: number): number {
+  return HALF_STEP_SEQUENCE.indexOf(pattern & 0b1111)
+}
+
+/**
+ * Turns a stream of coil patterns into a shaft position.
+ *
+ * The rule is deliberately strict. A pattern that is not in the ring at all
+ * (0b1010 energises two coils wound in OPPOSITION, so the rotor feels no net
+ * field) and a jump of three or more ring positions are both refused: the
+ * counter does not move and the error is counted. A real motor pulled through a
+ * three-position jump may or may not follow depending on speed and load, and a
+ * simulator that guessed would be reporting a position the bench would not
+ * reproduce. Refusing is the same choice §2.3 makes everywhere else.
+ */
+export class StepTracker {
+  /** Signed cumulative half-steps since the first energisation. */
+  halfSteps = 0
+  /** Current ring position, or −1 before any valid pattern has been seen. */
+  index = -1
+  /** Patterns refused: not in the ring, or too big a jump. */
+  sequenceErrors = 0
+  /** Last pattern fed in. */
+  pattern = 0
+
+  reset(): void {
+    this.halfSteps = 0
+    this.index = -1
+    this.sequenceErrors = 0
+    this.pattern = 0
+  }
+
+  /**
+   * Feed the currently energised pattern. Returns the signed half-steps moved,
+   * which is 0 for a repeat, for all coils off, and for anything refused.
+   */
+  apply(pattern: number): number {
+    const p = pattern & 0b1111
+    this.pattern = p
+    // All coils off is not an error and not a step: the rotor is unheld, and
+    // where it ends up is friction's business, not the sequence's.
+    if (p === 0) return 0
+
+    const idx = stepPhaseIndex(p)
+    if (idx < 0) {
+      this.sequenceErrors++
+      return 0
+    }
+    if (this.index < 0) {
+      // The first energisation defines the origin. There is no earlier state to
+      // measure a step against, so it cannot be one.
+      this.index = idx
+      return 0
+    }
+    if (idx === this.index) return 0
+
+    const forward = (idx - this.index + 8) % 8
+    const delta = forward > 4 ? forward - 8 : forward
+    if (delta === 1 || delta === -1 || delta === 2 || delta === -2) {
+      this.index = idx
+      this.halfSteps += delta
+      return delta
+    }
+    // Three or more: the sequence is wrong, and where the shaft ends up is not
+    // something this model will invent. Resynchronise to the coils, credit
+    // nothing, and say so.
+    this.sequenceErrors++
+    this.index = idx
+    return 0
+  }
+}
+
+/**
+ * The motor's electrical half: four windings from the common tap to the four
+ * phase leads.
+ *
+ * That really is all a unipolar stepper is to the circuit — the position is a
+ * property of the SEQUENCE in time, which a DC operating point cannot hold, so
+ * it lives in the behavioural StepperMonitor exactly as a buzzer's pitch does.
+ */
+export class UnipolarStepper implements Device {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Per-phase currents, COM → phase lead, amps. */
+  readonly phaseCurrents: number[] = [0, 0, 0, 0]
+  /** Total current out of the common tap, amps. */
+  current = 0
+
+  constructor(
+    readonly id: string,
+    private com: NetId,
+    private phases: Array<NetId | undefined>,
+    readonly params: StepperParams = STEPPER_28BYJ48,
+  ) {}
+
+  /** Current one phase draws at its rated voltage, amps. */
+  get ratedPhaseAmps(): number {
+    return this.params.ratedVolts / Math.max(this.params.phaseOhms, MIN_RESISTANCE)
+  }
+
+  stamp(ctx: StampContext): void {
+    if (!Number.isFinite(this.params.phaseOhms) || this.params.phaseOhms <= 0) {
+      throw new Error(
+        `Stepper "${this.id}" has an invalid phase resistance (${this.params.phaseOhms}). ` +
+          `Winding resistance must be a finite, positive number.`,
+      )
+    }
+    const g = 1 / Math.max(this.params.phaseOhms, MIN_RESISTANCE)
+    for (const p of this.phases) {
+      if (p === undefined) continue
+      stampConductance(ctx, this.com, p, g)
+    }
+  }
+
+  /** Voltage across one winding, COM − phase. An open lead reads 0. */
+  phaseVolts(ctx: StampContext, k: number): number {
+    const p = this.phases[k]
+    if (p === undefined) return 0
+    return ctx.voltage(this.com) - ctx.voltage(p)
+  }
+
+  readback(ctx: StampContext): void {
+    const r = Math.max(this.params.phaseOhms, MIN_RESISTANCE)
+    let total = 0
+    for (let k = 0; k < this.phaseCurrents.length; k++) {
+      const i = this.phaseVolts(ctx, k) / r
+      this.phaseCurrents[k] = i
+      total += i
+    }
+    this.current = total
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    let worst = 0
+    for (let k = 0; k < this.phaseCurrents.length; k++) {
+      worst = Math.max(worst, Math.abs(this.phaseVolts(ctx, k)))
+    }
+    if (worst <= this.params.ratedVolts) return null
+    if (worst <= this.params.maxVolts) {
+      return {
+        kind: 'over_power',
+        severity: 'caution',
+        deviceId: this.id,
+        value: (worst * worst) / Math.max(this.params.phaseOhms, MIN_RESISTANCE),
+        message:
+          `${worst.toFixed(1)} V across a winding rated for ${this.params.ratedVolts} V. ` +
+          `It turns, but a stepper holds its coils energised continuously and this one is ` +
+          `now dissipating ${((worst * worst) / this.params.phaseOhms).toFixed(2)} W per phase.`,
+      }
+    }
+    return {
+      kind: 'over_power',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: (worst * worst) / Math.max(this.params.phaseOhms, MIN_RESISTANCE),
+      message:
+        `${worst.toFixed(1)} V across a ${this.params.ratedVolts} V winding. ` +
+        `On real hardware the insulation fails.`,
+    }
+  }
+}
