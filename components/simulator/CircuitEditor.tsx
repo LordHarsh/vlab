@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Minimize2 } from 'lucide-react'
 import { CircuitCanvas } from './CircuitCanvas'
+import { useFullscreenGate } from './FullscreenGate'
 import { compile } from '@/lib/simulator/model/compile'
 import { PALETTE, PART_LIBRARY, getPart, type PartDefinition } from '@/lib/simulator/model/parts'
 import type { DeviceState } from '@/lib/simulator/behavioural'
@@ -553,6 +555,42 @@ export function CircuitEditor({
   const snapshot: SharedSnapshot = sim.snapshot ?? NO_SNAPSHOT
 
   /**
+   * Pause while the editor is gated out of fullscreen, resume on the way back.
+   *
+   * Safe to do because `stop` does NOT reset anything: both workers handle it by
+   * setting their own `running` flag to false and posting one last snapshot —
+   * the SimulationEngine / PicoSimulationEngine instance, its SRAM, its
+   * registers and the solver's transient state all stay exactly as they were.
+   * (Resetting is `reset`, which rebuilds the engine, and is a separate button.)
+   * So this is a genuine pause, not a stop-and-restart, and a student who leaves
+   * fullscreen mid-run comes back to the same simulated second they left.
+   *
+   * ONLY if it was running. A simulation the student deliberately stopped must
+   * not spring back to life because they toggled fullscreen.
+   *
+   * Guarded on the TRANSITION rather than the value, so `running` changing for
+   * any other reason (the Stop button, a firmware swap) cannot be mistaken for a
+   * fullscreen event.
+   */
+  const gate = useFullscreenGate()
+  const gateActive = gate.active
+  const resumeOnReturn = useRef(false)
+  const wasGateActive = useRef(gateActive)
+  useEffect(() => {
+    if (wasGateActive.current === gateActive) return
+    wasGateActive.current = gateActive
+    if (!gateActive) {
+      if (running) {
+        resumeOnReturn.current = true
+        stop()
+      }
+    } else if (resumeOnReturn.current) {
+      resumeOnReturn.current = false
+      start()
+    }
+  }, [gateActive, running, start, stop])
+
+  /**
    * The document compiled on the main thread, for the canvas (pin hover
    * highlighting). The authoritative electrical solve happens in the worker.
    *
@@ -639,26 +677,43 @@ export function CircuitEditor({
             {doc.parts.length} parts · {doc.wires.length} wires · {unknowns} unknowns
           </p>
         </div>
-        <span
-          data-testid="save-state"
-          className={`text-[11px] shrink-0 ${
-            saveState === 'offline'
-              ? 'text-amber-600'
+        <div className="flex items-center gap-3 shrink-0">
+          <span
+            data-testid="save-state"
+            className={`text-[11px] shrink-0 ${
+              saveState === 'offline'
+                ? 'text-amber-600'
+                : saveState === 'saved'
+                  ? 'text-green-700'
+                  : 'text-[#566573]'
+            }`}
+          >
+            {saveState === 'saving'
+              ? 'saving…'
               : saveState === 'saved'
-                ? 'text-green-700'
-                : 'text-[#566573]'
-          }`}
-        >
-          {saveState === 'saving'
-            ? 'saving…'
-            : saveState === 'saved'
-              ? 'saved'
-              : saveState === 'offline'
-                ? 'saved locally (offline)'
-                : saveState === 'local'
-                  ? 'saved locally'
-                  : 'no changes'}
-        </span>
+                ? 'saved'
+                : saveState === 'offline'
+                  ? 'saved locally (offline)'
+                  : saveState === 'local'
+                    ? 'saved locally'
+                    : 'no changes'}
+          </span>
+
+          {/* Only when a gate is actually above this editor. An ungated editor —
+              the dev harness, a future embed — reports `gated: false` and gets
+              no button, rather than one that cannot do anything. */}
+          {gate.gated && gate.active && (
+            <button
+              type="button"
+              data-testid="exit-fullscreen"
+              onClick={gate.exit}
+              className="h-7 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-[11px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e]"
+            >
+              <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Exit fullscreen
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Toolbar strip. Below md it wraps onto as many rows as it needs so every

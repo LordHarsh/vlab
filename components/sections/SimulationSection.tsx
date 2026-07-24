@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay, AlertTriangle } from 'lucide-react'
 import { SIM_REGISTRY } from '@/components/simulations'
+import { FullscreenGate } from '@/components/simulator/FullscreenGate'
 
 export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | (string & {})
 
@@ -160,10 +161,17 @@ function NativeSimulation({
       data-testid="native-simulation"
       className="w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]"
     >
-      <NativeCircuitEditor
-        remote={{ simulationId, classId }}
-        experimentSlug={experimentSlug ?? undefined}
-      />
+      {/* The editor is gated behind fullscreen, and the gate keeps it MOUNTED
+          while it is blocked — see components/simulator/FullscreenGate.tsx. A
+          student who drops out of fullscreen to re-read the lab sheet comes back
+          to the same circuit, the same undo history and the same simulated
+          second; nothing is remounted, so nothing is restored over. */}
+      <FullscreenGate label="circuit simulator">
+        <NativeCircuitEditor
+          remote={{ simulationId, classId }}
+          experimentSlug={experimentSlug ?? undefined}
+        />
+      </FullscreenGate>
     </div>
   )
 }

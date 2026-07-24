@@ -1,4 +1,5 @@
 import { CircuitEditor } from '@/components/simulator/CircuitEditor'
+import { FullscreenGate } from '@/components/simulator/FullscreenGate'
 import { BLANK } from '@/lib/simulator/model/examples'
 
 /**
@@ -17,11 +18,18 @@ import { BLANK } from '@/lib/simulator/model/examples'
  * the viewport height, so the editor fills it with no second scrollbar; its own
  * side rail scrolls internally. The wrapper clips any sub-pixel overflow so the
  * shell's <main> never grows a scrollbar of its own.
+ *
+ * Gated behind fullscreen the same way a lesson's Simulation section is, and by
+ * the same component — one wrapper, one behaviour, so the sandbox and the
+ * experiment cannot drift apart. The gate keeps the editor mounted while it is
+ * blocked, so a sandbox circuit survives leaving and re-entering fullscreen.
  */
 export default function WorkspacePage() {
   return (
     <div className="h-[100dvh] overflow-hidden">
-      <CircuitEditor initial={BLANK} />
+      <FullscreenGate label="circuit workspace" className="h-full">
+        <CircuitEditor initial={BLANK} />
+      </FullscreenGate>
     </div>
   )
 }
