@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   PITCH,
   getPart,
@@ -9,10 +9,14 @@ import {
   ledBodyFill,
   ledColour,
   ledGlowFill,
+  sliderPointFor,
+  sliderValueFor,
   type KnobControl,
+  type MomentaryControl,
   type PartDefinition,
   type PinGeometry,
   type PropSpec,
+  type SliderControl,
 } from '@/lib/simulator/model/parts'
 import {
   WIRE_COLORS,
@@ -68,6 +72,34 @@ interface KnobDrag {
   cx: number
   cy: number
   /** The part's own rotation, subtracted so a rotated pot still tracks. */
+  rotation: number
+  /** Set once this gesture has landed its one undo entry. */
+  pushed: boolean
+}
+
+/**
+ * A pointer gesture dragging a handle along a track on a part's artwork.
+ *
+ * The same shape as `KnobDrag` and for the same reasons — held in state because
+ * the handle draws itself differently while it is moving, and the value comes
+ * from the pointer's absolute position rather than an accumulated delta.
+ *
+ * What differs is the frame: a knob resolves ONE world point (its centre) at
+ * pointerdown and works in offsets from it, but a track has two endpoints and a
+ * direction, so the pointer is taken all the way back into PART-LOCAL units
+ * instead. `ox`/`oy` is the part's origin in world units and `rotation` undoes
+ * its turn, which together are the inverse of `partTransform`.
+ */
+interface SliderDrag {
+  partId: string
+  slider: SliderControl
+  prop: PropSpec
+  /** The part's origin in WORLD units, resolved once at pointerdown. */
+  ox: number
+  oy: number
+  /** Half the part's bounding box — `partTransform`'s rotation pivot. */
+  px: number
+  py: number
   rotation: number
   /** Set once this gesture has landed its one undo entry. */
   pushed: boolean
@@ -146,6 +178,198 @@ const WIRE_HALO_OPACITY = 0.5
  */
 const WIRE_HIT = 7
 
+/**
+ * The view used for one frame, before the fit lands and for an empty document.
+ *
+ * The historic literal, kept exactly: a blank board is two parts near the origin
+ * and there is nothing to fit to, so this is still the right answer for it.
+ */
+const DEFAULT_VIEW = { x: 40, y: 30, z: 1.1 }
+
+/** Breathing room around a fitted document, in SCREEN pixels. */
+const FIT_PADDING = 24
+
+/**
+ * Zoom bounds for the initial fit.
+ *
+ * The ceiling is 1.1 — the historic zoom — because fitting UP is not wanted: a
+ * two-part blank board would otherwise open at 4x with an Uno filling the
+ * screen. The floor is 0.45 rather than the wheel's 0.3 because below about
+ * 0.45 a 0.1-inch pin is under 4 px and cannot be aimed at, so a document too
+ * big to fit is better left slightly cropped and pannable than shown whole and
+ * unusable.
+ */
+const FIT_MAX_Z = 1.1
+const FIT_MIN_Z = 0.45
+
+/**
+ * The bounding box of everything in the document, in world units.
+ *
+ * Parts only, not wires: a wire's waypoints are always between two pins, so the
+ * parts' boxes already contain them. Returns null for an empty document, which
+ * is what tells the caller there is nothing to fit to.
+ */
+function docBounds(doc: CircuitDoc): { x: number; y: number; w: number; h: number } | null {
+  if (doc.parts.length === 0) return null
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const part of doc.parts) {
+    const def = getPart(part.type)
+    /**
+     * The ROTATED box, not the declared one. A rotated part still occupies its
+     * own bounding box about its centre — `partTransform` rotates about
+     * (width/2, height/2) — so a 90°-turned breadboard is 170 wide and 325 tall
+     * where its declaration says the opposite, and fitting to the declaration
+     * would crop exactly the parts a student turned to make room.
+     */
+    const turned = Math.abs(part.rotation % 180) === 90
+    const w = turned ? def.height : def.width
+    const h = turned ? def.width : def.height
+    const cx = part.x + def.width / 2
+    const cy = part.y + def.height / 2
+    x0 = Math.min(x0, cx - w / 2)
+    y0 = Math.min(y0, cy - h / 2)
+    x1 = Math.max(x1, cx + w / 2)
+    y1 = Math.max(y1, cy + h / 2)
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/**
+ * Pan/zoom state, plus the identity of the document it was fitted to.
+ *
+ * `view: null` means "never fitted". `fitted` is a fingerprint of the parts the
+ * current view was framed around — see the `fit` case for what it is FOR.
+ */
+type ViewState = { view: { x: number; y: number; z: number } | null; fitted: string }
+
+/**
+ * Which parts a view was fitted to, as a comparable string.
+ *
+ * IDs only, and sorted: moving a part, drawing a wire or turning a knob must
+ * not read as a different document, because refitting under a student mid-edit
+ * is the thing this fingerprint exists to prevent.
+ */
+function partSignature(doc: CircuitDoc): string {
+  return doc.parts.map((p) => p.id).sort().join(',')
+}
+
+/**
+ * Whether every part is fully inside the viewport at this view.
+ *
+ * THIS IS THE ACTUAL RULE, and it took two goes to get right. The first version
+ * refitted only when the document was "a different circuit", judged by whether
+ * it shared any part id with the old one — which never fired, because every
+ * starter contains a breadboard called `bb`. The second temptation is a
+ * proportion-of-parts-changed heuristic, which is a number nobody can defend.
+ *
+ * So: refit exactly when something the student is supposed to see is off the
+ * screen. That is the defect in one sentence, it needs no threshold, and it has
+ * the right behaviour in every case — loading a starter refits, adding a part
+ * that lands out of view refits, and an edit that leaves everything visible
+ * (which is all of them, since a drag cannot move a part off-screen without the
+ * student watching it go) does not move the canvas at all.
+ */
+function allVisible(
+  doc: CircuitDoc,
+  view: { x: number; y: number; z: number },
+  width: number,
+  height: number,
+): boolean {
+  const b = docBounds(doc)
+  if (!b) return true
+  const left = b.x * view.z + view.x
+  const top = b.y * view.z + view.y
+  return left >= 0 && top >= 0 && left + b.w * view.z <= width && top + b.h * view.z <= height
+}
+
+type ViewAction =
+  /** First paint, once the canvas has a size. Ignored if a view already exists. */
+  | { type: 'fit'; doc: CircuitDoc; width: number; height: number }
+  | { type: 'pan'; dx: number; dy: number }
+  | { type: 'zoom'; factor: number; cx: number; cy: number }
+
+/**
+ * A REDUCER rather than a `useState` setter, for one concrete reason: the fit
+ * has to happen in a layout effect (it needs the measured canvas, and it must
+ * land before the browser paints or the student sees the un-fitted view flash),
+ * and `dispatch` is the only way to move state from an effect without the
+ * cascading re-render that react-hooks/set-state-in-effect correctly rejects.
+ * The document beside it is already a reducer for exactly the same reason.
+ *
+ * The "only fit once" guard lives HERE, in the `fit` case, rather than in the
+ * effect — so the effect can dispatch unconditionally and there is exactly one
+ * place that decides whether an existing view may be replaced. It may not: a
+ * student who has panned somewhere deliberately must never have the canvas
+ * yanked back under them, and `doc` changes on every wire they draw.
+ */
+function viewReducer(state: ViewState, action: ViewAction): ViewState {
+  switch (action.type) {
+    case 'fit': {
+      /**
+       * Fit on first paint, and again whenever the set of parts has changed and
+       * some part is no longer on screen. See allVisible() for why that is the
+       * rule rather than "the document was replaced".
+       */
+      const sig = partSignature(action.doc)
+      if (
+        state.view !== null &&
+        (sig === state.fitted || allVisible(action.doc, state.view, action.width, action.height))
+      ) {
+        // Keep the view. Record the signature anyway, so the next document is
+        // compared against what is actually on screen rather than against a
+        // stale one.
+        return sig === state.fitted ? state : { ...state, fitted: sig }
+      }
+      return {
+        view: fitView(action.doc, action.width, action.height),
+        fitted: partSignature(action.doc),
+      }
+    }
+    case 'pan': {
+      const cur = state.view ?? DEFAULT_VIEW
+      return { ...state, view: { ...cur, x: cur.x + action.dx, y: cur.y + action.dy } }
+    }
+    case 'zoom': {
+      const cur = state.view ?? DEFAULT_VIEW
+      const z = Math.min(4, Math.max(0.3, cur.z * action.factor))
+      // Keep the point under the cursor fixed while zooming.
+      return {
+        ...state,
+        view: {
+          z,
+          x: action.cx - ((action.cx - cur.x) * z) / cur.z,
+          y: action.cy - ((action.cy - cur.y) * z) / cur.z,
+        },
+      }
+    }
+  }
+}
+
+/**
+ * The view that frames the whole document inside a canvas of this size.
+ *
+ * Falls back to the historic fixed view when there is nothing to fit to, which
+ * is the right answer for a blank board rather than a special case.
+ */
+function fitView(doc: CircuitDoc, width: number, height: number): { x: number; y: number; z: number } {
+  const b = docBounds(doc)
+  if (!b || b.w <= 0 || b.h <= 0) return DEFAULT_VIEW
+  const z = Math.min(
+    FIT_MAX_Z,
+    Math.max(
+      FIT_MIN_Z,
+      Math.min((width - FIT_PADDING * 2) / b.w, (height - FIT_PADDING * 2) / b.h),
+    ),
+  )
+  // Centre what fits. When the document is bigger than the viewport at the zoom
+  // floor this puts the overflow equally on both sides rather than all of it off
+  // one edge, which is the kinder half to have to pan across.
+  return { x: (width - b.w * z) / 2 - b.x * z, y: (height - b.h * z) / 2 - b.y * z, z }
+}
+
 export function CircuitCanvas({
   doc,
   dispatch,
@@ -155,7 +379,24 @@ export function CircuitCanvas({
   onSelect,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [view, setView] = useState({ x: 40, y: 30, z: 1.1 })
+  /**
+   * The view, which starts UNSET and is fitted to the document on first paint.
+   *
+   * It used to be the literal `{ x: 40, y: 30, z: 1.1 }` — a view that happens
+   * to frame experiment 01 and silently crops everything laid out below it. A
+   * QA sweep measured parts off-screen on open in six experiments
+   * (ultrasonic-pir, pir-alarm, motor-control, home-automation, health-monitoring
+   * and smart-traffic), and in every one the missing parts were the COMPONENT
+   * TRAY: the unwired components the student has to reach for. Opening a lab and
+   * not being able to see the parts you are told to wire is the worst possible
+   * first impression, and there is nothing on screen to suggest scrolling down.
+   */
+  const [viewState, dispatchView] = useReducer(viewReducer, { view: null, fitted: '' })
+  /**
+   * What the readers below use. The fallback covers the single frame between
+   * mount and the layout effect, so nothing ever renders at the origin.
+   */
+  const v = viewState.view ?? DEFAULT_VIEW
   const [drag, setDrag] = useState<Drag | null>(null)
   const [wire, setWire] = useState<WireDraft | null>(null)
   const [hoverNet, setHoverNet] = useState<number | null>(null)
@@ -164,6 +405,26 @@ export function CircuitCanvas({
   /** Which wire a gesture is on, purely so its handles stay visible. */
   const [shaping, setShaping] = useState<string | null>(null)
   const [knobDrag, setKnobDrag] = useState<KnobDrag | null>(null)
+  const [sliderDrag, setSliderDrag] = useState<SliderDrag | null>(null)
+  /** The part whose momentary control is being held down, if any. */
+  const [holding, setHolding] = useState<string | null>(null)
+
+  /**
+   * Frame the whole document the first time the canvas has a size.
+   *
+   * A LAYOUT effect, not an ordinary one: it runs before the browser paints, so
+   * the un-fitted view is never visible. An ordinary effect would paint the old
+   * fixed view for one frame and then jump.
+   *
+   * Dispatched unconditionally — the reducer's `fit` case is the one place that
+   * decides whether an existing view may be replaced, so this cannot disagree
+   * with it.
+   */
+  useLayoutEffect(() => {
+    const rect = svgRef.current?.getBoundingClientRect()
+    if (!rect || rect.width === 0 || rect.height === 0) return
+    dispatchView({ type: 'fit', doc, width: rect.width, height: rect.height })
+  }, [doc])
 
   /** Client coords → world coords. All interaction maths happens in world space. */
   const toWorld = useCallback(
@@ -171,11 +432,11 @@ export function CircuitCanvas({
       const rect = svgRef.current?.getBoundingClientRect()
       if (!rect) return { x: 0, y: 0 }
       return {
-        x: (clientX - rect.left - view.x) / view.z,
-        y: (clientY - rect.top - view.y) / view.z,
+        x: (clientX - rect.left - v.x) / v.z,
+        y: (clientY - rect.top - v.y) / v.z,
       }
     },
-    [view],
+    [v],
   )
 
   const partById = useMemo(() => new Map(doc.parts.map((p) => [p.id, p])), [doc.parts])
@@ -237,8 +498,43 @@ export function CircuitCanvas({
       return
     }
 
+    /**
+     * Dragging a handle along a track, and it outranks everything below for the
+     * same reason turning a knob does.
+     *
+     * The pointer is taken all the way back into PART-LOCAL units — undo the
+     * translate, undo the rotation about the bounding box's centre — because a
+     * track has a direction and `sliderValueFor` projects onto it. Doing the
+     * projection in world units would work only for an unrotated part.
+     */
+    if (sliderDrag) {
+      const t = (-sliderDrag.rotation * Math.PI) / 180
+      const dx = w.x - sliderDrag.ox - sliderDrag.px
+      const dy = w.y - sliderDrag.oy - sliderDrag.py
+      const lx = dx * Math.cos(t) - dy * Math.sin(t) + sliderDrag.px
+      const ly = dx * Math.sin(t) + dy * Math.cos(t) + sliderDrag.py
+      const next = sliderValueFor(sliderDrag.slider, sliderDrag.prop, lx, ly)
+
+      const current = Number(
+        partById.get(sliderDrag.partId)?.props[sliderDrag.slider.key] ??
+          sliderDrag.prop.default ??
+          0,
+      )
+      if (next === current) return
+
+      dispatch({
+        type: 'setProp',
+        id: sliderDrag.partId,
+        key: sliderDrag.slider.key,
+        value: next,
+        transient: sliderDrag.pushed,
+      })
+      if (!sliderDrag.pushed) setSliderDrag({ ...sliderDrag, pushed: true })
+      return
+    }
+
     if (panning) {
-      setView((v) => ({ ...v, x: v.x + (e.clientX - panning.x), y: v.y + (e.clientY - panning.y) }))
+      dispatchView({ type: 'pan', dx: e.clientX - panning.x, dy: e.clientY - panning.y })
       setPanning({ x: e.clientX, y: e.clientY })
       return
     }
@@ -308,6 +604,23 @@ export function CircuitCanvas({
     setDrag(null)
     setPanning(null)
     setKnobDrag(null)
+    setSliderDrag(null)
+    /**
+     * RELEASING A HELD BUTTON IS PART OF ENDING EVERY GESTURE, not just of
+     * lifting the pointer over the button itself.
+     *
+     * This runs on pointerup AND on the pointer leaving the canvas. A press
+     * whose release landed outside — the pointer dragged off the board, the
+     * window lost focus mid-press — would otherwise leave the contacts closed
+     * with nothing on screen holding them, which is a button stuck down that
+     * only a second click could free.
+     */
+    if (holding) {
+      const part = partById.get(holding)
+      const key = part && getPart(part.type).momentary?.key
+      if (key) dispatch({ type: 'setProp', id: holding, key, value: 0 })
+      setHolding(null)
+    }
     // A wire released over empty space is abandoned, not left dangling.
     setWire(null)
   }
@@ -336,6 +649,55 @@ export function CircuitCanvas({
       rotation: part.rotation,
       pushed: false,
     })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  /**
+   * Grab a slider handle. The part's ORIGIN is resolved to world units once,
+   * here, for the reason the knob's centre is: the part can be dragged out from
+   * under a live gesture, and re-deriving the frame every frame would make the
+   * handle track the part rather than the finger.
+   */
+  function startSliderDrag(
+    e: React.PointerEvent,
+    part: PlacedPart,
+    def: PartDefinition,
+    slider: SliderControl,
+    prop: PropSpec,
+  ) {
+    e.stopPropagation()
+    onSelect(part.id)
+    setSliderDrag({
+      partId: part.id,
+      slider,
+      prop,
+      ox: part.x,
+      oy: part.y,
+      px: def.width / 2,
+      py: def.height / 2,
+      rotation: part.rotation,
+      pushed: false,
+    })
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  /**
+   * Press a momentary control. Writes 1 now; `endGesture` writes the 0.
+   *
+   * Both edges are ordinary undoable prop changes rather than a transient pair,
+   * deliberately: a press and a release are two things that HAPPENED to the
+   * circuit, and a student who presses a button to see what their sketch does
+   * should be able to undo back through it.
+   */
+  function pressMomentary(
+    e: React.PointerEvent,
+    part: PlacedPart,
+    momentary: MomentaryControl,
+  ) {
+    e.stopPropagation()
+    onSelect(part.id)
+    setHolding(part.id)
+    dispatch({ type: 'setProp', id: part.id, key: momentary.key, value: 1 })
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
   }
 
@@ -392,11 +754,7 @@ export function CircuitCanvas({
     if (!rect) return
     const cx = e.clientX - rect.left
     const cy = e.clientY - rect.top
-    setView((v) => {
-      const z = Math.min(4, Math.max(0.3, v.z * factor))
-      // Keep the point under the cursor fixed while zooming.
-      return { z, x: cx - ((cx - v.x) * z) / v.z, y: cy - ((cy - v.y) * z) / v.z }
-    })
+    dispatchView({ type: 'zoom', factor, cx, cy })
   }
 
   // ─── Rendering ──────────────────────────────────────────────────────────────
@@ -406,7 +764,7 @@ export function CircuitCanvas({
       {/* Zoom readout. The parts palette now lives in the right rail — floating
           it over the artwork hid the very circuit it was there to build. */}
       <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#566573] font-mono">
-        {Math.round(view.z * 100)}% · scroll to zoom · drag background to pan
+        {Math.round(v.z * 100)}% · scroll to zoom · drag background to pan
       </div>
 
       <svg
@@ -428,7 +786,7 @@ export function CircuitCanvas({
           </pattern>
         </defs>
 
-        <g transform={`translate(${view.x} ${view.y}) scale(${view.z})`}>
+        <g transform={`translate(${v.x} ${v.y}) scale(${v.z})`}>
           <rect x={-400} y={-300} width={2600} height={1800} fill="url(#grid)" />
 
           {/* Part bodies. Painted first: a jumper lies ON the board, and a wire
@@ -458,6 +816,23 @@ export function CircuitCanvas({
             if (def.knob?.angleVar && knobProp) {
               const value = Number(part.props[def.knob.key] ?? knobProp.default ?? 0)
               vars[def.knob.angleVar] = `${knobAngleFor(def.knob, knobProp, value)}deg`
+            }
+            const sliderProp = def.slider
+              ? def.props?.find((p) => p.key === def.slider!.key)
+              : undefined
+            const momentaryProp = def.momentary
+              ? def.props?.find((p) => p.key === def.momentary!.key)
+              : undefined
+            /**
+             * The pressed cap, from the DOCUMENT rather than from `holding`.
+             *
+             * So the artwork follows the value however it was set — the panel
+             * checkbox, an undo, a starter that ships a button already held —
+             * and not just a pointer that happens to be down on this canvas.
+             */
+            if (def.momentary?.pressedVar && momentaryProp) {
+              const down = Number(part.props[def.momentary.key] ?? momentaryProp.default ?? 0) >= 0.5
+              vars[def.momentary.pressedVar] = down ? '1' : '0'
             }
 
             return (
@@ -494,6 +869,35 @@ export function CircuitCanvas({
                     onGrab={(e) => startKnobDrag(e, part, def, def.knob!, knobProp)}
                     onSet={(value) =>
                       dispatch({ type: 'setProp', id: part.id, key: def.knob!.key, value })
+                    }
+                    onFocus={() => onSelect(part.id)}
+                  />
+                )}
+
+                {def.slider && sliderProp && (
+                  <Slider
+                    part={part}
+                    def={def}
+                    slider={def.slider}
+                    prop={sliderProp}
+                    sliding={sliderDrag?.partId === part.id}
+                    onGrab={(e) => startSliderDrag(e, part, def, def.slider!, sliderProp)}
+                    onSet={(value) =>
+                      dispatch({ type: 'setProp', id: part.id, key: def.slider!.key, value })
+                    }
+                    onFocus={() => onSelect(part.id)}
+                  />
+                )}
+
+                {def.momentary && momentaryProp && (
+                  <Momentary
+                    part={part}
+                    def={def}
+                    momentary={def.momentary}
+                    prop={momentaryProp}
+                    onPress={(e) => pressMomentary(e, part, def.momentary!)}
+                    onSet={(value) =>
+                      dispatch({ type: 'setProp', id: part.id, key: def.momentary!.key, value })
                     }
                     onFocus={() => onSelect(part.id)}
                   />
@@ -554,7 +958,7 @@ export function CircuitCanvas({
                 data-testid={`pins-${part.id}`}
               >
                 {def.pins
-                  .filter((pin) => !pin.subtle || view.z > 0.55)
+                  .filter((pin) => !pin.subtle || v.z > 0.55)
                   .map((pin) => (
                     <Pin
                       key={pin.id}
@@ -738,6 +1142,243 @@ function Knob({
         />
       )}
       <title>{`${label}: ${reading} — drag to turn, or use the arrow keys`}</title>
+    </g>
+  )
+}
+
+// ─── Slider ───────────────────────────────────────────────────────────────────
+
+/**
+ * A handle on a track drawn on a part's artwork: drag it, or use the arrow keys.
+ *
+ * The photoresistor's light level is the case this exists for. Tinkercad has no
+ * slider in its INSPECTOR (DEVICE_CONTROLS_AUDIT.md §2) because a continuously
+ * variable physical thing is adjusted where it lives — but an LDR has no shaft
+ * to turn, so the affordance is a track rather than a knob.
+ *
+ * Everything the knob does about accessibility applies here unchanged, and for
+ * the same reason: a pointer drag on a 3.6-unit handle is unavailable to a
+ * keyboard, switch or screen-reader user, so this is a real `role="slider"` with
+ * a name, a range, a live value and arrow-key handling — and the panel slider
+ * stays, writing the same document value.
+ */
+function Slider({
+  part,
+  def,
+  slider,
+  prop,
+  sliding,
+  onGrab,
+  onSet,
+  onFocus,
+}: {
+  part: PlacedPart
+  def: PartDefinition
+  slider: SliderControl
+  prop: PropSpec
+  sliding: boolean
+  onGrab: (e: React.PointerEvent) => void
+  onSet: (value: number) => void
+  onFocus: () => void
+}) {
+  const [focused, setFocused] = useState(false)
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const step = prop.step ?? 1
+  const value = Number(part.props[slider.key] ?? prop.default ?? 0)
+  const label = `${def.label} ${prop.label.toLowerCase()}`
+  const reading = `${value}${prop.unit ?? ''}`
+  const at = sliderPointFor(slider, prop, value)
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    const big = Math.max(step, (max - min) / 10)
+    const next =
+      e.key === 'ArrowRight' || e.key === 'ArrowUp'
+        ? value + step
+        : e.key === 'ArrowLeft' || e.key === 'ArrowDown'
+          ? value - step
+          : e.key === 'PageUp'
+            ? value + big
+            : e.key === 'PageDown'
+              ? value - big
+              : e.key === 'Home'
+                ? min
+                : e.key === 'End'
+                  ? max
+                  : null
+    if (next === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    onSet(Math.min(max, Math.max(min, next)))
+  }
+
+  return (
+    <g
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={reading}
+      data-testid={`slider-${part.id}`}
+      onPointerDown={onGrab}
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        setFocused(true)
+        onFocus()
+      }}
+      onBlur={() => setFocused(false)}
+      className={sliding ? 'cursor-grabbing outline-none' : 'cursor-grab outline-none'}
+    >
+      {/* The whole track takes the pointer, not just the handle: clicking the
+          track jumps the handle there, which is what every slider does and is
+          the only way to reach an end on a 26-unit run without a careful drag.
+          A wide transparent band under the visible line is the hit area. */}
+      <line
+        x1={slider.x1}
+        y1={slider.y1}
+        x2={slider.x2}
+        y2={slider.y2}
+        stroke="transparent"
+        strokeWidth={slider.r * 2.4}
+        strokeLinecap="round"
+      />
+      <line
+        x1={slider.x1}
+        y1={slider.y1}
+        x2={slider.x2}
+        y2={slider.y2}
+        stroke="#b8bec5"
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        pointerEvents="none"
+      />
+      {/* The travelled part of the track, so the value reads at a glance
+          without a number beside it. */}
+      <line
+        x1={slider.x1}
+        y1={slider.y1}
+        x2={at.x}
+        y2={at.y}
+        stroke={ACCENT}
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        pointerEvents="none"
+      />
+      <circle
+        cx={at.x}
+        cy={at.y}
+        r={slider.r}
+        data-testid={`slider-handle-${part.id}`}
+        fill="#ffffff"
+        stroke={sliding || focused ? ACCENT : '#8f959c'}
+        strokeWidth={focused && !sliding ? 1.6 : 1}
+        pointerEvents="none"
+      />
+      {(sliding || focused) && (
+        <circle
+          cx={at.x}
+          cy={at.y}
+          r={slider.r + 2.5}
+          data-testid={`slider-ring-${part.id}`}
+          fill="none"
+          stroke={ACCENT}
+          strokeWidth={focused && !sliding ? 1.2 : 1}
+          strokeDasharray={focused && !sliding ? '2 2' : undefined}
+          opacity={0.85}
+          pointerEvents="none"
+        />
+      )}
+      <title>{`${label}: ${reading} — drag it, or use the arrow keys`}</title>
+    </g>
+  )
+}
+
+// ─── Momentary ────────────────────────────────────────────────────────────────
+
+/**
+ * A press-and-hold control on a part's artwork.
+ *
+ * `role="button"` and not `role="switch"`, deliberately: a switch has a state
+ * the user sets, and this has an action they perform. A screen reader announcing
+ * "switch, off" over a momentary pushbutton would be describing the panel
+ * checkbox, not this.
+ *
+ * KEYBOARD IS THE HARD CASE and it is why this cannot be a pointer-only control.
+ * A keyboard has no "held" — key-repeat fires press events at the OS's repeat
+ * rate with no reliable release — so Space and Enter TOGGLE instead, which is
+ * the honest equivalent and is what the panel checkbox does too. The tooltip and
+ * the accessible description both say which gesture does what, rather than
+ * leaving a keyboard user to discover that holding a key does nothing.
+ */
+function Momentary({
+  part,
+  def,
+  momentary,
+  prop,
+  onPress,
+  onSet,
+  onFocus,
+}: {
+  part: PlacedPart
+  def: PartDefinition
+  momentary: MomentaryControl
+  prop: PropSpec
+  onPress: (e: React.PointerEvent) => void
+  onSet: (value: number) => void
+  onFocus: () => void
+}) {
+  const [focused, setFocused] = useState(false)
+  const down = Number(part.props[momentary.key] ?? prop.default ?? 0) >= 0.5
+  const label = `${def.label} ${prop.label.replace(/\s*\(latched\)\s*/i, '').toLowerCase()}`
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== ' ' && e.key !== 'Enter') return
+    e.preventDefault()
+    e.stopPropagation()
+    // Only on the FIRST press, not on every repeat — holding Space down would
+    // otherwise chatter the contacts at the key-repeat rate.
+    if (e.repeat) return
+    onSet(down ? 0 : 1)
+  }
+
+  return (
+    <g
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      aria-pressed={down}
+      data-testid={`momentary-${part.id}`}
+      onPointerDown={onPress}
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        setFocused(true)
+        onFocus()
+      }}
+      onBlur={() => setFocused(false)}
+      className="cursor-pointer outline-none"
+    >
+      {/* Invisible grab target over the cap — `transparent`, not fill-less, or
+          it would take no pointer at all. */}
+      <circle cx={momentary.cx} cy={momentary.cy} r={momentary.r} fill="transparent" />
+      {focused && (
+        <circle
+          cx={momentary.cx}
+          cy={momentary.cy}
+          r={momentary.r + 2}
+          data-testid={`momentary-ring-${part.id}`}
+          fill="none"
+          stroke={ACCENT}
+          strokeWidth={2}
+          strokeDasharray="4 3"
+          opacity={0.85}
+          pointerEvents="none"
+        />
+      )}
+      <title>
+        {`${label}: ${down ? 'pressed' : 'released'} — hold to press, or Space to toggle`}
+      </title>
     </g>
   )
 }

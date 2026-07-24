@@ -27,7 +27,7 @@ import {
   type ReactiveDevice,
 } from '../devices'
 import type { NetId } from '../types'
-import { getPart, ledColour } from './parts'
+import { getPart, ledColour, potentiometerLegs, variableResistorOhms } from './parts'
 import { pinKeyOf, type CircuitDoc, type PinRef } from './document'
 
 export interface CompiledNet {
@@ -303,22 +303,34 @@ export function compile(doc: CircuitDoc): CompileResult {
       const a = net({ partId: part.id, pinId: '1' })
       const w = net({ partId: part.id, pinId: '2' })
       const b = net({ partId: part.id, pinId: '3' })
-      const pos = Math.min(100, Math.max(0, Number(part.props.position ?? 50))) / 100
-      // Never exactly zero: a 0 Ω leg would be a short, and the wiper of a real
-      // pot always has some track resistance either side.
-      const lo = Math.max(el.totalOhms * pos, 0.5)
-      const hi = Math.max(el.totalOhms * (1 - pos), 0.5)
-      if (a !== undefined && w !== undefined) circuit.add(new Resistor(part.id + '.a', a, w, lo))
-      if (w !== undefined && b !== undefined) circuit.add(new Resistor(part.id + '.b', w, b, hi))
+      /**
+       * The TRACK is a per-instance property now, not a library constant.
+       *
+       * It is genuinely electrical: the whole track sits permanently across
+       * whatever the pot is wired between, so a 1 kΩ pot on a 5 V rail burns
+       * 5 mA where a 100 kΩ one burns 50 µA — and the same figure is the source
+       * impedance the ADC's sample-and-hold has to charge through. A document
+       * that carries no `totalOhms` (every starter authored before this prop)
+       * falls back to the library value and compiles to exactly what it did.
+       *
+       * The arithmetic itself lives in parts.ts so the device readout can
+       * describe the same divider this stamps, rather than a second copy of it.
+       */
+      const { lower, upper } = potentiometerLegs(
+        Number(part.props.totalOhms ?? el.totalOhms),
+        Number(part.props.position ?? 50),
+      )
+      if (a !== undefined && w !== undefined) circuit.add(new Resistor(part.id + '.a', a, w, lower))
+      if (w !== undefined && b !== undefined) circuit.add(new Resistor(part.id + '.b', w, b, upper))
     } else if (el.kind === 'variable_resistor') {
       const a = net({ partId: part.id, pinId: '1' })
       const b = net({ partId: part.id, pinId: '2' })
       if (a === undefined || b === undefined) continue
       // LDR response is roughly logarithmic in illumination, so interpolate
       // geometrically rather than linearly — a linear map makes the mid-range
-      // behave nothing like a real sensor.
-      const t = Math.min(100, Math.max(0, Number(part.props.light ?? 60))) / 100
-      const ohms = el.minOhms * Math.pow(el.maxOhms / el.minOhms, 1 - t)
+      // behave nothing like a real sensor. The curve lives in parts.ts so the
+      // device readout reports the resistance this actually stamped.
+      const ohms = variableResistorOhms(el.minOhms, el.maxOhms, Number(part.props.light ?? 60))
       const r = new Resistor(part.id, a, b, ohms)
       circuit.add(r)
       meters.set(part.id, r)

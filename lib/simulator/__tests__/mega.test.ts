@@ -1162,13 +1162,29 @@ group('K. The experiment 11 starter, and whether a student can finish it')
     const lane = LANE_PINS.findIndex((l) => l.includes(pin))
     return `led${lane + 1}_${COLOURS[LANE_PINS[lane].indexOf(pin)]}`
   })
+  /**
+   * PER COLOUR, and that is the point of this block now.
+   *
+   * It used to assert a flat ~12.4 mA for every lit lamp and passed — because
+   * all twelve LEDs in the starter carried `props: {}` and were solved as RED,
+   * including the eight named `*_yellow` and `*_green`. The test was encoding
+   * the bug that migration 027 fixes.
+   *
+   * The three figures are parts.ts's own, measured through the compiler on a
+   * 5 V pad through 220 Ω, and they differ because the forward drops do:
+   * red ~2.0 V, yellow 2.1 V, green 3.2 V (Kingbright WP7113 family). A green
+   * lamp really does run at 60 % of a red one's current on the same resistor.
+   */
+  const EXPECTED_MA: Record<string, number> = { red: 12.39, yellow: 11.84, green: 7.47 }
   for (const id of lit) {
     const led = c.leds.get(id)!
+    const colour = id.split('_')[1]
+    const want = EXPECTED_MA[colour]
     truth(
-      `${id} draws ~12.4 mA through its 220 Ω`,
-      Math.abs(led.current - 0.0124) < 0.0015,
-      '12.4 mA +/- 1.5',
-      `${(led.current * 1000).toFixed(1)} mA`,
+      `${id} draws ~${want} mA through its 220 Ω — the ${colour} figure, not red's`,
+      Math.abs(led.current * 1000 - want) < 0.15,
+      `${want} mA +/- 0.15`,
+      `${(led.current * 1000).toFixed(2)} mA`,
     )
   }
   const darkCurrent = [...c.leds.entries()]

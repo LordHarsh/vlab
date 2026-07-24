@@ -11,6 +11,8 @@
  */
 
 import { CPU, avrInstruction, AVRTimer, AVRIOPort, AVRUSART, AVRADC } from 'avr8js'
+import { analogDeviceStates } from './analog-state'
+import { SerialTextDecoder } from './serial-text'
 import { chipForDoc, type AvrChip } from './avr/chip'
 import { compile, type CompileResult } from './model/compile'
 import {
@@ -384,6 +386,17 @@ export class SimulationEngine {
   private adc!: AVRADC
   /** Node voltages from the most recent solve, for the ADC to sample. */
   private voltages: Float64Array = new Float64Array(0)
+  /**
+   * UTF-8 decoder for the USART stream, one per engine.
+   *
+   * Not reset when `serial` is truncated below: that drops old TEXT the student
+   * has already scrolled past, while the decoder's pending bytes are the START
+   * of the next character. Resetting there would corrupt the very character the
+   * truncation happened to land inside. The worker resets an MCU by rebuilding
+   * the engine, which is where a genuinely discontinuous stream gets a fresh
+   * decoder.
+   */
+  private readonly serialText = new SerialTextDecoder()
   serial = ''
 
   /**
@@ -410,7 +423,15 @@ export class SimulationEngine {
      */
     const usart = new AVRUSART(this.cpu, chip.usart0, CLOCK_HZ)
     usart.onByteTransmit = (b) => {
-      this.serial += String.fromCharCode(b)
+      /**
+       * ONE BYTE IS NOT ONE CHARACTER. This used to be
+       * `String.fromCharCode(b)`, a Latin-1 decode, so a sketch printing an em
+       * dash — three bytes of UTF-8, `e2 80 94` — arrived as three characters
+       * of mojibake. The decoder is streaming and lives for the engine's
+       * lifetime because the USART delivers exactly one byte per call, so
+       * EVERY multi-byte character is split across writes. See serial-text.ts.
+       */
+      this.serial += this.serialText.byte(b)
       if (this.serial.length > 4000) this.serial = this.serial.slice(-4000)
     }
 
@@ -1079,7 +1100,24 @@ export class SimulationEngine {
     // chance to notice — solves only happen on pin edges, and silence has none.
     for (let i = 0; i < this.devices.length; i++) this.devices[i].refresh?.()
 
-    const out: Record<string, DeviceState> = { ...this.deviceStates }
+    /**
+     * The purely ANALOG parts, which have no behavioural model to report
+     * through — a capacitor's voltage, a pot's wiper, an LDR's resistance. Read
+     * out of the solve that has already happened; see analog-state.ts. Spread
+     * FIRST so that a part which somehow had both would be reported by its own
+     * model, which is the more specific answer.
+     */
+    const out: Record<string, DeviceState> = {
+      ...analogDeviceStates({
+        doc: this.doc,
+        netOf: this.compiled.netOf,
+        nets: this.compiled.nets,
+        voltages: this.voltages,
+        reactive: this.compiled.reactive,
+        transient: this.transient,
+      }),
+      ...this.deviceStates,
+    }
     for (const [partId, motor] of this.compiled.motors) {
       const amps = averaged[partId] ?? motor.current
       const rpm = motor.rpmFor(amps)

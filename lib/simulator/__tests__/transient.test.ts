@@ -1100,6 +1100,185 @@ group('10. the timestep is derived from the circuit, and clamped')
     '> 0 cache hits', String(sp.cacheHits))
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+group('11. a capacitor REPORTS its charge, and an inductor its current')
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// The transient engine has genuinely charged capacitors for a while, and the
+// Device-state panel had no branch for one — a student building an RC could
+// watch the current decay in Measurements and had no way at all to read the
+// VOLTAGE that current was building, which is the number the exercise is about.
+//
+// Everything asserted here is measured through the REAL engine and checked
+// against the same closed-form backward-Euler oracle group 3.1 derived by hand,
+// so a reported voltage that drifted from the solved one would fail on the
+// arithmetic rather than on its own output.
+{
+  const R = 1000
+  const C = 1e-6
+  const gLeak = G_FLOAT + GMIN
+  const rTh = 1 / (1 / R + gLeak)
+  const tau = rTh * C
+  const vFinal = (VCC * (1 / gLeak)) / (1 / gLeak + R)
+  const h = stepFor(tau)
+
+  const doc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('r', 'resistor', { ohms: R }),
+      placeP('c', 'capacitor', { microfarads: 1 })],
+    wires: [
+      w(['uno', '5V'], ['r', '1']),
+      w(['r', '2'], ['c', '1']),
+      w(['c', '2'], ['uno', 'GND.1']),
+      w(['c', '1'], ['uno', 'A0']),
+    ],
+  }
+
+  const eng = new SimulationEngine(firmware('blink.hex'), doc)
+  const s0 = eng.snapshot().deviceStates.c
+
+  truth('the capacitor reports at all', s0 !== undefined, 'a state', String(s0 !== undefined))
+  truth('it names itself a capacitor', s0?.element === 'capacitor', 'capacitor', String(s0?.element))
+  truth('and says it is being integrated in time', s0?.transient === true, 'true', String(s0?.transient))
+  truth('its declared value comes from the document, in µF',
+    Number(s0?.value) === 1, '1 µF', String(s0?.value))
+  truth('an uncharged capacitor is charging, not steady',
+    s0?.trend === 'charging', 'charging', String(s0?.trend))
+  // i(0⁺) = V/R exactly: the cap is a short at t = 0, so the resistor sets it.
+  near('the initial current is V/R = 5 mA', Number(s0?.amps) * 1e3, (VCC / R) * 1e3, 0.02, 'mA')
+
+  // t = τ. The SAME closed form group 3.1 uses, and the same 0.58 % BE bias.
+  eng.run(1000)
+  const s1 = eng.snapshot().deviceStates.c
+  near('v_C(τ) as REPORTED matches the backward-Euler recurrence',
+    Number(s1?.volts), beCharge(1e-3, h, tau, vFinal), 5e-3)
+  near('... i.e. within 1 % of the continuous 3.1606 V',
+    Number(s1?.volts), vFinal * (1 - Math.exp(-1)), 0.05)
+  /**
+   * The current has to be the DERIVATIVE of the voltage that was reported
+   * beside it, not an independent number: i = C·dv/dt = C·(V∞ − v)/τ. This is
+   * the assertion that would catch a reported voltage and a reported current
+   * coming from different instants — the exact class of bug the snapshot's
+   * "step to now" comment exists to prevent, checked here on the pair.
+   */
+  near('the reported current is C·dv/dt of the reported voltage',
+    Number(s1?.amps) * 1e3, ((C * (vFinal - Number(s1?.volts))) / tau) * 1e3, 0.02, 'mA')
+  truth('and it is still charging at t = τ', s1?.trend === 'charging', 'charging', String(s1?.trend))
+
+  eng.run(4000)
+  const s5 = eng.snapshot().deviceStates.c
+  near('v_C(5τ) as reported is 99.3 % of the rail',
+    Number(s5?.volts), beCharge(5e-3, h, tau, vFinal), 5e-3)
+  truth('the reported voltage rose monotonically',
+    Number(s5?.volts) > Number(s1?.volts) && Number(s1?.volts) > Number(s0?.volts),
+    'v(0) < v(τ) < v(5τ)',
+    `${Number(s0?.volts).toFixed(3)} < ${Number(s1?.volts).toFixed(3)} < ${Number(s5?.volts).toFixed(3)}`)
+  truth('and the current fell as it did',
+    Math.abs(Number(s5?.amps)) < Math.abs(Number(s1?.amps)),
+    'i(5τ) < i(τ)',
+    `${(Number(s5?.amps) * 1e3).toFixed(4)} < ${(Number(s1?.amps) * 1e3).toFixed(4)} mA`)
+
+  /**
+   * A capacitor whose leads reach nothing must say so rather than silently
+   * reporting 0 V, which is indistinguishable from a discharged one that IS in
+   * the circuit — and "you forgot a wire" is the mistake this panel exists for.
+   */
+  const loose: CircuitDoc = { parts: doc.parts, wires: [] }
+  const engLoose = new SimulationEngine(firmware('blink.hex'), loose)
+  const sl = engLoose.snapshot().deviceStates.c
+  truth('an unwired capacitor reports itself disconnected',
+    sl?.connected === false, 'false', String(sl?.connected))
+}
+
+{
+  /**
+   * The inductor, which until now had no palette part at all — so none of the
+   * `Inductor` device, none of `timeConstant()`'s reciprocal-in-R handling and
+   * none of the RL branch of the engine could be reached by a student.
+   *
+   * 10 mH through 100 Ω: τ = L/R = 100 µs, i(∞) = 5/100 = 50 mA. The 20 µs floor
+   * means h = τ/5 rather than τ/50, so backward Euler is a good deal coarser
+   * here than in the RC case — which is why every figure below is checked
+   * against the BE recurrence at THIS h, and only loosely against the
+   * continuous curve.
+   */
+  const R = 100
+  const L = 10e-3
+  const tau = L / R
+  const iFinal = VCC / R
+  const h = stepFor(tau)
+
+  const doc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('r', 'resistor', { ohms: R }),
+      placeP('l', 'inductor', { millihenries: 10 })],
+    wires: [
+      w(['uno', '5V'], ['r', '1']),
+      w(['r', '2'], ['l', '1']),
+      w(['l', '2'], ['uno', 'GND.1']),
+      w(['l', '1'], ['uno', 'A0']),
+    ],
+  }
+
+  const eng = new SimulationEngine(firmware('blink.hex'), doc)
+  const s0 = eng.snapshot().deviceStates.l
+  truth('the inductor part reaches the engine at all', s0 !== undefined, 'a state', String(s0 !== undefined))
+  truth('it names itself an inductor', s0?.element === 'inductor', 'inductor', String(s0?.element))
+  truth('the circuit is in transient mode because of it',
+    (eng.snapshot().transientStep ?? 0) > 0, '> 0 s', String(eng.snapshot().transientStep))
+  near('h is derived from L/R, floored at 20 µs',
+    (eng.snapshot().transientStep ?? 0) * 1e6, h * 1e6, 0.1, 'µs')
+
+  /**
+   * An inductor is an OPEN at t = 0 — it holds its current at zero — so the
+   * whole rail appears across it. That is the mirror of the capacitor's
+   * "short at t = 0", and getting it backwards is the sign error group 3.3
+   * exists to catch, here on the REPORTED pair.
+   */
+  near('at t = 0 the whole 5 V is across it', Number(s0?.volts), VCC, 1e-3)
+  near('... and no current flows yet', Number(s0?.amps) * 1e3, 0, 0.01, 'mA')
+  truth('its current is rising', s0?.trend === 'rising', 'rising', String(s0?.trend))
+
+  eng.run(100) // t = τ
+  const s1 = eng.snapshot().deviceStates.l
+  // i(k) = iFinal·(1 − ρ^k), ρ = 1/(1 + h/τ) — the same recurrence, one dual along.
+  const beRise = (t: number) => iFinal * (1 - Math.pow(1 / (1 + h / tau), t / h))
+  near('i_L(τ) as REPORTED matches the backward-Euler recurrence',
+    Number(s1?.amps) * 1e3, beRise(1e-4) * 1e3, 0.05, 'mA')
+  // v_L = L·di/dt, which for this recurrence is exactly the rail minus i·R.
+  near('the reported voltage is the rail minus i·R — Kirchhoff on the pair',
+    Number(s1?.volts), VCC - Number(s1?.amps) * R, 2e-3)
+
+  eng.run(900) // t = 10τ
+  const s10 = eng.snapshot().deviceStates.l
+  near('i_L(10τ) has reached the DC limit V/R = 50 mA',
+    Number(s10?.amps) * 1e3, iFinal * 1e3, 0.05, 'mA')
+  truth('an inductor at DC is a wire — almost nothing across it',
+    Math.abs(Number(s10?.volts)) < 5e-3, '< 5 mV', `${(Number(s10?.volts) * 1e3).toFixed(3)} mV`)
+  truth('the reported current rose monotonically',
+    Number(s10?.amps) > Number(s1?.amps) && Number(s1?.amps) > Number(s0?.amps),
+    'i(0) < i(τ) < i(10τ)',
+    `${(Number(s0?.amps) * 1e3).toFixed(4)} < ${(Number(s1?.amps) * 1e3).toFixed(4)} < ${(Number(s10?.amps) * 1e3).toFixed(4)} mA`)
+
+  /**
+   * THE PROP REACHES THE SOLVER. Ten times the inductance is ten times the time
+   * constant, so at a fixed 200 µs the two circuits must be at genuinely
+   * different points on their curves — 2τ against 0.2τ.
+   */
+  const engBig = new SimulationEngine(firmware('blink.hex'), {
+    parts: doc.parts.map((p) => (p.id === 'l' ? { ...p, props: { millihenries: 100 } } : p)),
+    wires: doc.wires,
+  })
+  engBig.run(200)
+  const engSmall = new SimulationEngine(firmware('blink.hex'), doc)
+  engSmall.run(200)
+  const iBig = Number(engBig.snapshot().deviceStates.l?.amps)
+  const iSmall = Number(engSmall.snapshot().deviceStates.l?.amps)
+  truth('a 100 mH choke is far behind a 10 mH one at the same instant',
+    iBig < iSmall / 3, 'i(100 mH) < i(10 mH)/3',
+    `${(iBig * 1e3).toFixed(3)} mA vs ${(iSmall * 1e3).toFixed(3)} mA`)
+  near('and the 10 mH one is at 2τ on its own curve',
+    iSmall * 1e3, beRise(2e-4) * 1e3, 0.05, 'mA')
+}
+
 // ─── Report ───────────────────────────────────────────────────────────────────
 
 const nameW = Math.max(50, ...rows.map((r) => r.name.length))

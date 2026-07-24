@@ -18,6 +18,8 @@
 
 import { Simulator, USBCDC, GPIOPinState, type Logger, type RP2040 } from 'rp2040js'
 import type { CPU } from 'avr8js'
+import { analogDeviceStates } from '../analog-state'
+import { SerialTextDecoder } from '../serial-text'
 import { compile, type CompileResult } from '../model/compile'
 import type { CircuitDoc, PlacedPart } from '../model/document'
 import type { NetId, SolveFault, SolveResult } from '../types'
@@ -156,6 +158,13 @@ const SILENT_LOGGER: Logger = {
   warn: () => {},
   error: () => {},
 }
+
+/**
+ * The student's source, on its way INTO the REPL. Shared and stateless — unlike
+ * the decoder coming the other way, an encoder has nothing to carry between
+ * calls because a string is always a whole sequence of characters. See queue().
+ */
+const SCRIPT_ENCODER = new TextEncoder()
 
 /**
  * A Pico pad can pull DOWN as well as up, which an ATmega cannot. Modelling it
@@ -395,6 +404,12 @@ export class PicoSimulationEngine {
    */
   private nextReplCheckNanos = 0
   private onboardLedOn = false
+  /**
+   * UTF-8 decoder for the CDC stream, one per engine — see ../serial-text.ts.
+   * Constructed as a field initialiser so it exists before attachSerial() is
+   * called in the constructor body.
+   */
+  private readonly serialText = new SerialTextDecoder()
 
   serial = ''
 
@@ -408,7 +423,7 @@ export class PicoSimulationEngine {
     // Entry point is the start of XIP flash: the bootrom's stage-2 handoff.
     this.mcu.core.PC = firmware.flashBase
 
-    this.cdc = attachSerial(this.mcu, (text) => {
+    this.cdc = attachSerial(this.mcu, this.serialText, (text) => {
       this.serial += text
       if (this.serial.length > 8000) this.serial = this.serial.slice(-8000)
       // Only the tail can contain a prompt we have not already acted on, and
@@ -1007,8 +1022,19 @@ export class PicoSimulationEngine {
     this.pumpScript()
   }
 
+  /**
+   * Queue text for the REPL, ENCODED AS UTF-8.
+   *
+   * This used to push `charCodeAt(i)`, the mirror image of the Latin-1 bug on
+   * the way out: a script containing `print("25.0 °C")` put a single 0xB0 byte
+   * on the wire, which MicroPython's tokeniser reads as an invalid UTF-8 start
+   * byte and rejects — so the student's own source was corrupted before it
+   * reached the interpreter. Every control byte this method sends (0x03, 0x04,
+   * 0x05) is ASCII and encodes to itself, so nothing else changes.
+   */
   private queue(s: string): void {
-    for (let i = 0; i < s.length; i++) this.pending.push(s.charCodeAt(i))
+    const bytes = SCRIPT_ENCODER.encode(s)
+    for (let i = 0; i < bytes.length; i++) this.pending.push(bytes[i])
   }
 
   /**
@@ -1119,7 +1145,22 @@ export class PicoSimulationEngine {
     // chance to notice — solves only happen on pin edges, and silence has none.
     for (let i = 0; i < this.devices.length; i++) this.devices[i].refresh?.()
 
-    const out: Record<string, DeviceState> = { ...this.deviceStates }
+    /**
+     * The purely ANALOG parts, exactly as ../engine.ts reports them and from
+     * the same shared function — a capacitor that reports its voltage on an Uno
+     * and not on a Pico is precisely the drift a second copy would have caused.
+     */
+    const out: Record<string, DeviceState> = {
+      ...analogDeviceStates({
+        doc: this.doc,
+        netOf: this.compiled.netOf,
+        nets: this.compiled.nets,
+        voltages: this.voltages,
+        reactive: this.compiled.reactive,
+        transient: this.transient,
+      }),
+      ...this.deviceStates,
+    }
     for (const [partId, motor] of this.compiled.motors) {
       const amps = averaged[partId] ?? motor.current
       const rpm = motor.rpmFor(amps)
@@ -1233,12 +1274,25 @@ function makeBehavioural(
  * print a prompt to a port nobody has opened. This is the one place the Pico
  * track depends on rp2040js emulating a whole USB device stack, and it works.
  */
-function attachSerial(mcu: RP2040, onText: (text: string) => void): USBCDC {
+function attachSerial(
+  mcu: RP2040,
+  decoder: SerialTextDecoder,
+  onText: (text: string) => void,
+): USBCDC {
   const cdc = new USBCDC(mcu.usbCtrl)
+  /**
+   * DECODED AS UTF-8, STREAMING, and both halves of that matter.
+   *
+   * This used to be a per-byte `String.fromCharCode`, i.e. Latin-1, so every
+   * non-ASCII character MicroPython printed arrived as one mojibake character
+   * per byte. And the packet boundary is not a character boundary: the CDC
+   * hands over whatever fitted in the last USB transfer, so a `print("°C")` can
+   * and does put `c2` at the end of one packet and `b0` at the start of the
+   * next. The decoder is owned by the engine so its half-finished sequence
+   * survives that join. See ../serial-text.ts.
+   */
   cdc.onSerialData = (buf: Uint8Array) => {
-    let s = ''
-    for (let i = 0; i < buf.length; i++) s += String.fromCharCode(buf[i])
-    onText(s)
+    onText(decoder.bytes(buf))
   }
   cdc.onDeviceConnected = () => {
     // Nudge the REPL so it prints its banner and prompt.

@@ -399,8 +399,20 @@ group('D. ATmega2560 — experiment 11, the sketch the lab actually publishes')
     '> 0.5', (s.ledBrightness['led1_green'] ?? 0).toFixed(2))
   truth('the red LED is dark', (s.ledBrightness['led1_red'] ?? 0) < 0.01,
     '< 0.01', (s.ledBrightness['led1_red'] ?? 0).toFixed(2))
-  near('the green LED draws the same 12.39 mA as an Uno LED on the same 220 Ω',
-    (s.currents['led1_green'] ?? 0) * 1000, 12.39, 0.05)
+  /**
+   * 7.47 mA, and it is NOT the 12.39 mA a red LED draws on the same 220 Ω.
+   *
+   * This assertion used to read "the same 12.39 mA as an Uno LED" and passed —
+   * because every lamp in the experiment 11 starter carried `props: {}` and was
+   * therefore solved as RED, including the eight named `*_yellow` and
+   * `*_green`. The test was encoding the bug. A green LED's forward drop is
+   * 3.2 V against red's ~2.0 V (parts.ts LED_COLOURS, Kingbright WP7113 family),
+   * so on the same 5 V pad through the same resistor it passes 7.47 mA — which
+   * is the figure parts.ts documents and the reason a designer picks a
+   * different series resistor per colour.
+   */
+  near('the green LED draws 7.47 mA — a green LED, not a red one',
+    (s.currents['led1_green'] ?? 0) * 1000, 7.47, 0.05)
 
   /**
    * NEGATIVE CONTROL, and the reason mega.test.ts exists. avr8js's stock

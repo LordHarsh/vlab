@@ -30,10 +30,15 @@ import {
   CAPACITOR_MAX_UF,
   CAPACITOR_MIN_UF,
   FARAD_UNITS,
+  HENRY_UNITS,
+  INDUCTOR_DEFAULT_MH,
   LED_COLOURS,
   LED_DEFAULT_COLOUR,
   OHM_UNITS,
+  PALETTE,
   PART_LIBRARY,
+  POT_DEFAULT_OHMS,
+  POT_MIN_LEG_OHMS,
   RESISTOR_DEFAULT_OHMS,
   RESISTOR_MAX_OHMS,
   formatValueUnit,
@@ -44,13 +49,17 @@ import {
   ledGlowFill,
   ledSaturationCurrent,
   parseValueUnit,
+  potentiometerLegs,
   propDeclarationProblems,
+  sliderPointFor,
+  sliderValueFor,
   splitValueUnit,
+  variableResistorOhms,
   type PropSpec,
 } from '../model/parts'
 import { LED_RED } from '../devices'
 import { compile } from '../model/compile'
-import type { CircuitDoc } from '../model/document'
+import type { CircuitDoc, DocWire } from '../model/document'
 
 let passed = 0
 let failed = 0
@@ -76,6 +85,19 @@ function near(name: string, actual: number, expected: number, tol: number): void
     Math.abs(actual - expected) <= tol,
     `expected ${expected} ±${tol}, got ${actual}`,
   )
+}
+
+/**
+ * A wire literal, with the colour `DocWire` requires. The colour is irrelevant
+ * to every solve below; a helper is how it stays irrelevant to reading them too.
+ */
+function cw(id: string, fromPart: string, fromPin: string, toPart: string, toPin: string): DocWire {
+  return {
+    id,
+    from: { partId: fromPart, pinId: fromPin },
+    to: { partId: toPart, pinId: toPin },
+    color: '#111827',
+  }
 }
 
 /** The resistor's own declared prop — the real thing, not a stand-in. */
@@ -594,6 +616,404 @@ console.log('\n5. Declarations')
     '5.21 the LED declares a colour prop, so it is per-instance',
     (PART_LIBRARY.led.props ?? []).some((p) => p.key === 'color' && p.type === 'choice'),
   )
+}
+
+// ─── 6. The slider on the artwork ─────────────────────────────────────────────
+//
+// A photoresistor has no shaft to turn, so §2's "adjust it where it lives" needs
+// a track and a handle rather than a knob. The geometry is pure, so it is
+// asserted here rather than through a mounted canvas.
+
+console.log('\n6. Canvas slider')
+
+{
+  const LIGHT = PART_LIBRARY.photoresistor.props!.find((p) => p.key === 'light')!
+  const LDR_SLIDER = PART_LIBRARY.photoresistor.slider!
+
+  eq('6.1 the photoresistor declares a slider on its light level', LDR_SLIDER.key, 'light')
+  check(
+    '6.2 ... whose prop is the same one the panel slider drives',
+    LIGHT.type === 'range' && LIGHT.min === 0 && LIGHT.max === 100,
+  )
+
+  // The two ends, and the middle. `min` at (x1,y1) and `max` at (x2,y2) is the
+  // declaration's whole contract with the canvas.
+  eq('6.3 the handle sits at the track start for min', sliderPointFor(LDR_SLIDER, LIGHT, 0), {
+    x: LDR_SLIDER.x1,
+    y: LDR_SLIDER.y1,
+  })
+  eq('6.4 ... and at the far end for max', sliderPointFor(LDR_SLIDER, LIGHT, 100), {
+    x: LDR_SLIDER.x2,
+    y: LDR_SLIDER.y2,
+  })
+  near('6.5 ... and halfway along for the midpoint', sliderPointFor(LDR_SLIDER, LIGHT, 50).x, (LDR_SLIDER.x1 + LDR_SLIDER.x2) / 2, 1e-9)
+
+  // A value outside the declared range cannot put the handle off the track.
+  eq('6.6 a value below min is clamped onto the track', sliderPointFor(LDR_SLIDER, LIGHT, -40), {
+    x: LDR_SLIDER.x1,
+    y: LDR_SLIDER.y1,
+  })
+  eq('6.7 ... and one above max', sliderPointFor(LDR_SLIDER, LIGHT, 400), {
+    x: LDR_SLIDER.x2,
+    y: LDR_SLIDER.y2,
+  })
+
+  // Round trip: a pointer dropped exactly on the handle asks for the value the
+  // handle was drawn for. This is the property that makes the control feel
+  // attached to the finger rather than lagging it.
+  let roundTrip = true
+  for (let v = 0; v <= 100; v += 5) {
+    const at = sliderPointFor(LDR_SLIDER, LIGHT, v)
+    if (sliderValueFor(LDR_SLIDER, LIGHT, at.x, at.y) !== v) roundTrip = false
+  }
+  check('6.8 every value round-trips through the handle position', roundTrip)
+
+  /**
+   * THE END STOPS, which are the slider's version of the knob's dead zone and
+   * exist for the same reason: dragging past the end must HOLD at the end. A
+   * projection that ran off the segment would send the light level negative,
+   * and `variableResistorOhms` would then report a resistance outside the
+   * cell's own range.
+   */
+  eq('6.9 dragging past the low end holds at min', sliderValueFor(LDR_SLIDER, LIGHT, LDR_SLIDER.x1 - 500, LDR_SLIDER.y1), 0)
+  eq('6.10 dragging past the high end holds at max', sliderValueFor(LDR_SLIDER, LIGHT, LDR_SLIDER.x2 + 500, LDR_SLIDER.y2), 100)
+  check(
+    '6.11 ... and never wraps from one end to the other',
+    sliderValueFor(LDR_SLIDER, LIGHT, LDR_SLIDER.x1 - 500, LDR_SLIDER.y1) === 0 &&
+      sliderValueFor(LDR_SLIDER, LIGHT, LDR_SLIDER.x2 + 1e6, LDR_SLIDER.y2) === 100,
+  )
+
+  /**
+   * PROJECTED, not measured on one axis. A pointer that drifts off the line
+   * keeps driving the control — without this a slight vertical wander would
+   * make the handle stick, which reads as a broken control rather than as a
+   * shaky hand.
+   */
+  const mid = sliderPointFor(LDR_SLIDER, LIGHT, 50)
+  eq('6.12 a pointer well off the track still drives it', sliderValueFor(LDR_SLIDER, LIGHT, mid.x, mid.y + 60), 50)
+
+  eq('6.13 the value snaps to the declared step', sliderValueFor(LDR_SLIDER, LIGHT, LDR_SLIDER.x1 + (LDR_SLIDER.x2 - LDR_SLIDER.x1) * 0.333, LDR_SLIDER.y1), 33)
+
+  /**
+   * THE CONTROL HAS TO BE INSIDE THE DECLARED BOX. `def.width x def.height` is
+   * what freeSpot() uses for collision, what the selection outline is drawn
+   * from, and what the palette tile letterboxes into — a control outside it is
+   * one another part can be dropped on top of. A QA sweep measured exactly that
+   * when the track sat above the part.
+   */
+  const LDR = PART_LIBRARY.photoresistor
+  check(
+    '6.14 the whole control lies inside the declared box',
+    LDR_SLIDER.y1 - LDR_SLIDER.r >= 0 &&
+      LDR_SLIDER.y2 + LDR_SLIDER.r <= LDR.height &&
+      LDR_SLIDER.x1 - LDR_SLIDER.r >= 0 &&
+      LDR_SLIDER.x2 + LDR_SLIDER.r <= LDR.width,
+    `track (${LDR_SLIDER.x1},${LDR_SLIDER.y1})-(${LDR_SLIDER.x2},${LDR_SLIDER.y2}) r${LDR_SLIDER.r} in ${LDR.width}x${LDR.height}`,
+  )
+  // ...and clear of the cell it is adjusting, so the handle never covers it.
+  check(
+    '6.15 the track clears the top of the cell body',
+    LDR_SLIDER.y1 + LDR_SLIDER.r < LDR.height - 40 + 5,
+    `track at y=${LDR_SLIDER.y1}, dome crown at y=${LDR.height - 40 + 5}`,
+  )
+  // The leads still arrive at the bottom edge, which is what a part looks like.
+  check(
+    '6.16 the pins are still on the bottom edge after the box grew',
+    LDR.pins.every((p) => p.y === LDR.height),
+    JSON.stringify(LDR.pins.map((p) => [p.id, p.y])),
+  )
+}
+
+// ─── 7. The momentary control ─────────────────────────────────────────────────
+
+console.log('\n7. Momentary push button')
+
+{
+  const BUTTON = PART_LIBRARY.push_button
+  const PRESSED = BUTTON.props!.find((p) => p.key === 'pressed')!
+  const MOM = BUTTON.momentary!
+
+  eq('7.1 the push button declares a momentary control', MOM.key, 'pressed')
+  check(
+    '7.2 ... on a 0/1 range, which is the only shape a press can write',
+    PRESSED.type === 'range' && PRESSED.min === 0 && PRESSED.max === 1 && PRESSED.step === 1,
+  )
+  eq('7.3 the panel checkbox is still declared, so the value has two paths', PRESSED.default, 0)
+
+  /**
+   * The cap's geometry, derived from the harvested art rather than eyeballed.
+   * The element is 70.087 x 47.244 over a `-3 0 18 12` viewBox, so the cap at
+   * viewBox (6, 6) lands at the bounding box's exact centre — which is worth
+   * asserting, because it is what makes "press the button" mean "press the
+   * thing that looks like a button".
+   */
+  near('7.4 the press target is centred on the cap, horizontally', MOM.cx, BUTTON.width / 2, 1e-6)
+  near('7.5 ... and vertically', MOM.cy, BUTTON.height / 2, 1e-6)
+  near('7.6 with the cap\'s own radius', MOM.r, (BUTTON.width * 3.822) / 18, 1e-9)
+  check(
+    '7.7 the target stays clear of the pin row',
+    MOM.cx - MOM.r > 0 && MOM.cx + MOM.r < BUTTON.width,
+    `target spans x ${MOM.cx - MOM.r}..${MOM.cx + MOM.r} of ${BUTTON.width}`,
+  )
+
+  /**
+   * The pressed artwork. wokwi ships a `.button-active-circle` its own
+   * `button:active` rule reveals; there is no `<button>` here, so the rule is
+   * rewritten to read a variable. If a future @wokwi/elements bump reformats
+   * that declaration the substitution silently stops happening and the cap
+   * never looks pressed while the contacts really are closed.
+   */
+  eq('7.8 the press drives a CSS custom property', MOM.pressedVar, '--button-pressed')
+  check(
+    '7.9 ... which the shipped artwork actually reads',
+    BUTTON.svg.includes('opacity: var(--button-pressed, 0)'),
+  )
+  check(
+    '7.10 ... and the hardcoded `opacity: 0` it replaced is gone',
+    !BUTTON.svg.includes('.wk-pushbutton .button-active-circle{opacity: 0;}'),
+  )
+  check(
+    '7.11 the pressed artwork itself is still in the markup',
+    BUTTON.svg.includes('button-active-circle'),
+  )
+}
+
+// ─── 8. The inductor, and the props that reach the solver ─────────────────────
+//
+// The model existed and the PART did not: `Inductor` is in devices.ts and
+// compile.ts has stamped `{ kind: 'reactive', element: 'inductor' }` since
+// transient landed, but nothing in PALETTE could produce one.
+
+console.log('\n8. Inductor, pot track, LDR curve')
+
+{
+  const L = PART_LIBRARY.inductor
+  const MH = L.props!.find((p) => p.key === 'millihenries')!
+
+  check('8.1 the inductor is in the palette', PALETTE.includes('inductor'))
+  check('8.2 ... and in the library', PART_LIBRARY.inductor !== undefined)
+  eq('8.3 it is a reactive element', L.electrical.kind === 'reactive' && L.electrical.element, 'inductor')
+  eq('8.4 its value is free entry with a henry ladder', MH.type, 'number')
+  eq('8.5 ... whose stored unit is millihenries', HENRY_UNITS[MH.units!.findIndex((u) => u.mul === 1)].label, 'mH')
+
+  /**
+   * THE DEFAULT MUST EQUAL COMPILE'S OWN FALLBACK. compile.ts reads
+   * `Number(part.props.millihenries ?? 1)`, so a document carrying no value —
+   * an authored starter, a restored attempt — must be shown the same 1 mH the
+   * solver is about to use. This is the resistor's historic trap, one part on.
+   */
+  eq('8.6 the declared default is compile.ts\'s own fallback', MH.default, INDUCTOR_DEFAULT_MH)
+  eq('8.7 ... which is 1 mH', INDUCTOR_DEFAULT_MH, 1)
+
+  // 470 nH typed into a field stored in mH has to become 0.00047, not 470.
+  const NANO = HENRY_UNITS.findIndex((u) => u.label === 'nH')
+  eq('8.8 470 nH scales into the stored millihenries', parseValueUnit('470', MH, NANO), { ok: true, value: 0.00047 })
+  eq('8.9 a 100 µH choke reads back as "100 μH", not "0.1 mH"', formatValueUnit(0.1, HENRY_UNITS), '100 μH')
+  eq('8.10 and 1 H reads as "1 H"', formatValueUnit(1000, HENRY_UNITS), '1 H')
+  check('8.11 zero inductance is refused — Inductor.geq() divides by L', (MH.min ?? 0) > 0)
+
+  /**
+   * IT REACHES THE SOLVER, measured rather than asserted from the declaration.
+   * A 10 mH choke through 100 Ω has τ = L/R = 100 µs; a 1 mH one has 10 µs. The
+   * two circuits must therefore differ, and differ in the right direction.
+   */
+  function chokeCircuit(mh: number): CircuitDoc {
+    return {
+      parts: [
+        { id: 'uno', type: 'arduino_uno', x: 0, y: 0, rotation: 0, props: {} },
+        { id: 'r', type: 'resistor', x: 0, y: 0, rotation: 0, props: { ohms: 100 } },
+        { id: 'l', type: 'inductor', x: 0, y: 0, rotation: 0, props: { millihenries: mh } },
+      ],
+      wires: [
+        cw('w1', 'uno', '5V', 'r', '1'),
+        cw('w2', 'r', '2', 'l', '1'),
+        cw('w3', 'l', '2', 'uno', 'GND.1'),
+      ],
+    }
+  }
+  const c10 = compile(chokeCircuit(10))
+  check('8.12 the inductor part compiles into a reactive device', c10.reactive.has('l'))
+  check('8.13 ... which puts the circuit into transient mode', c10.circuit.hasReactive)
+  check('8.14 ... and is metered, so its current shows in Measurements', c10.meters.has('l'))
+  // τ = L/R, so ten times the inductance is ten times the time constant. The
+  // reciprocal-in-R trap ReactiveDevice.timeConstant() exists to avoid would
+  // show up here as the ratio going the other way.
+  // `smallestTimeConstant()` returns null for a circuit with no reactive
+  // element, which these both have — so a null here is itself a failure.
+  const t10 = c10.circuit.smallestTimeConstant() ?? 0
+  const t1 = compile(chokeCircuit(1)).circuit.smallestTimeConstant() ?? 0
+  near('8.15 ten times the inductance is ten times the time constant', t10 / t1, 10, 0.05)
+  near('8.16 ... and 10 mH through 100 Ω really is 100 µs', t10 * 1e6, 100, 1)
+}
+
+{
+  /**
+   * The potentiometer's TRACK is a per-instance property now. It is electrical:
+   * the whole track sits permanently across whatever the pot is wired between.
+   */
+  const TOTAL = PART_LIBRARY.potentiometer.props!.find((p) => p.key === 'totalOhms')!
+  const el = PART_LIBRARY.potentiometer.electrical
+
+  check(
+    '8.17 POT_DEFAULT_OHMS feeds the electrical default',
+    el.kind === 'potentiometer' && el.totalOhms === POT_DEFAULT_OHMS,
+  )
+  eq('8.18 ... and the prop default, from the same constant', TOTAL.default, POT_DEFAULT_OHMS)
+  eq('8.19 which is the 10 kΩ a starter kit ships', POT_DEFAULT_OHMS, 10000)
+  eq('8.20 the track is free entry with the ohm ladder', TOTAL.type, 'number')
+
+  // The legs, which compile.ts stamps and the readout describes — one function.
+  eq('8.21 at 50 % the track splits evenly', potentiometerLegs(10000, 50), { lower: 5000, upper: 5000 })
+  eq('8.22 at 0 % the wiper is on pin 1', potentiometerLegs(10000, 0), { lower: POT_MIN_LEG_OHMS, upper: 10000 })
+  eq('8.23 at 100 % it is on pin 3', potentiometerLegs(10000, 100), { lower: 10000, upper: POT_MIN_LEG_OHMS })
+  check(
+    '8.24 neither leg is ever exactly zero — that would be a dead short',
+    potentiometerLegs(10000, 0).lower > 0 && potentiometerLegs(10000, 100).upper > 0,
+  )
+  eq('8.25 a position outside 0–100 is clamped, not extrapolated', potentiometerLegs(10000, 500), { lower: 10000, upper: POT_MIN_LEG_OHMS })
+
+  /**
+   * IT REACHES THE SOLVER. 5 V through a 10 kΩ resistor into the pot's track:
+   * the current is 5/(10k + track), which is a different number for every
+   * track and is measured off the resistor rather than read off the pot.
+   */
+  function potCircuit(total: number): CircuitDoc {
+    return {
+      parts: [
+        { id: 'uno', type: 'arduino_uno', x: 0, y: 0, rotation: 0, props: {} },
+        { id: 'r', type: 'resistor', x: 0, y: 0, rotation: 0, props: { ohms: 10000 } },
+        { id: 'p', type: 'potentiometer', x: 0, y: 0, rotation: 0, props: { position: 50, totalOhms: total } },
+      ],
+      wires: [
+        cw('w1', 'uno', '5V', 'r', '1'),
+        cw('w2', 'r', '2', 'p', '1'),
+        cw('w3', 'p', '3', 'uno', 'GND.1'),
+      ],
+    }
+  }
+  for (const total of [1000, 10000, 100000]) {
+    const c = compile(potCircuit(total))
+    c.circuit.solve()
+    const amps = Math.abs(c.meters.get('r')!.current)
+    near(
+      `8.${26 + [1000, 10000, 100000].indexOf(total)} a ${total} Ω track draws 5/(10k+${total})`,
+      amps * 1e6,
+      (5 / (10000 + total)) * 1e6,
+      1,
+    )
+  }
+
+  /**
+   * A DOCUMENT WITH NO `totalOhms` COMPILES TO WHAT IT ALWAYS DID. Every
+   * starter authored before this prop carries only `position`, and the four
+   * pots in experiment 11 are exactly that case.
+   */
+  const bare: CircuitDoc = {
+    parts: potCircuit(POT_DEFAULT_OHMS).parts.map((p) =>
+      p.id === 'p' ? { ...p, props: { position: 50 } } : p,
+    ),
+    wires: potCircuit(POT_DEFAULT_OHMS).wires,
+  }
+  const cBare = compile(bare)
+  cBare.circuit.solve()
+  const cDeclared = compile(potCircuit(POT_DEFAULT_OHMS))
+  cDeclared.circuit.solve()
+  near(
+    '8.29 a pot carrying no track value solves exactly as before',
+    Math.abs(cBare.meters.get('r')!.current),
+    Math.abs(cDeclared.meters.get('r')!.current),
+    1e-12,
+  )
+}
+
+{
+  /**
+   * The LDR's curve, now one function shared by compile.ts and the readout.
+   * Two copies would be two chances for the panel to report a resistance the
+   * solver is not using.
+   */
+  const el = PART_LIBRARY.photoresistor.electrical
+  const lo = el.kind === 'variable_resistor' ? el.minOhms : 0
+  const hi = el.kind === 'variable_resistor' ? el.maxOhms : 0
+
+  eq('8.30 full light gives the cell its bright resistance', variableResistorOhms(lo, hi, 100), lo)
+  eq('8.31 darkness gives its dark resistance', variableResistorOhms(lo, hi, 0), hi)
+  // GEOMETRIC, not linear: the midpoint is the geometric mean, which for
+  // 200 Ω…200 kΩ is 6.32 kΩ rather than the 100 kΩ a straight line would give.
+  near('8.32 the midpoint is the geometric mean, not the arithmetic one', variableResistorOhms(lo, hi, 50), Math.sqrt(lo * hi), 1e-6)
+  check(
+    '8.33 ... which is nowhere near the linear midpoint',
+    Math.abs(variableResistorOhms(lo, hi, 50) - (lo + hi) / 2) > 90000,
+  )
+  check('8.34 the curve falls monotonically with light', (() => {
+    let prev = Infinity
+    for (let l = 0; l <= 100; l++) {
+      const r = variableResistorOhms(lo, hi, l)
+      if (r > prev) return false
+      prev = r
+    }
+    return true
+  })())
+
+  /** And it is the SAME number the compiler stamped. */
+  const doc: CircuitDoc = {
+    parts: [
+      { id: 'uno', type: 'arduino_uno', x: 0, y: 0, rotation: 0, props: {} },
+      { id: 'ldr', type: 'photoresistor', x: 0, y: 0, rotation: 0, props: { light: 20 } },
+      { id: 'r', type: 'resistor', x: 0, y: 0, rotation: 0, props: { ohms: 10000 } },
+    ],
+    wires: [
+      cw('w1', 'uno', '5V', 'ldr', '1'),
+      cw('w2', 'ldr', '2', 'r', '1'),
+      cw('w3', 'r', '2', 'uno', 'GND.1'),
+    ],
+  }
+  const c = compile(doc)
+  c.circuit.solve()
+  const iLdr = Math.abs(c.meters.get('ldr')!.current)
+  const expected = 5 / (variableResistorOhms(lo, hi, 20) + 10000)
+  near('8.35 the solved current matches the shared curve', iLdr * 1e6, expected * 1e6, 0.5)
+}
+
+// ─── 9. The slider and momentary halves of the declaration guard ──────────────
+
+console.log('\n9. Declaration guard, canvas controls')
+
+{
+  /**
+   * MUTATION CHECK, same contract as §5: a guard that cannot fail is
+   * decoration. Each break here is one a future part declaration could
+   * plausibly make.
+   */
+  const ldr = PART_LIBRARY.photoresistor
+  const realSlider = ldr.slider
+  ldr.slider = { ...realSlider!, key: 'nonexistent' }
+  check('9.1 a slider on a prop that does not exist is caught', propDeclarationProblems().some((p) => /declares a slider on "nonexistent"/.test(p)))
+  ldr.slider = { ...realSlider!, x2: realSlider!.x1, y2: realSlider!.y1 }
+  check('9.2 a zero-length track is caught', propDeclarationProblems().some((p) => /zero-length track/.test(p)))
+  ldr.slider = realSlider
+  eq('9.3 ... and the photoresistor is left as it was found', propDeclarationProblems(), [])
+
+  const btn = PART_LIBRARY.push_button
+  const realMom = btn.momentary
+  btn.momentary = { ...realMom!, key: 'nonexistent' }
+  check('9.4 a momentary on a prop that does not exist is caught', propDeclarationProblems().some((p) => /momentary control on "nonexistent"/.test(p)))
+  btn.momentary = { ...realMom!, r: 0 }
+  check('9.5 a momentary with no radius is caught', propDeclarationProblems().some((p) => /nothing to press/.test(p)))
+  btn.momentary = realMom
+  eq('9.6 ... and the button is left as it was found', propDeclarationProblems(), [])
+
+  /**
+   * The one check a momentary needs that the others do not: its prop must be
+   * the 0/1 shape. A momentary on a 0–100 range would jump a pot's wiper to
+   * 1 % on every click, which is a silently wrong value rather than a visibly
+   * broken control.
+   */
+  const realProps = btn.props
+  btn.props = [{ key: 'pressed', label: 'Pressed', type: 'range', min: 0, max: 100, step: 1, default: 0 }]
+  check('9.7 a momentary on a non-0/1 range is caught', propDeclarationProblems().some((p) => /not a 0\/1 `range`/.test(p)))
+  btn.props = realProps
+  eq('9.8 ... and the library is left exactly as it was found', propDeclarationProblems(), [])
 }
 
 console.log('\n' + '='.repeat(60))

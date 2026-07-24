@@ -33,6 +33,7 @@ import {
   BUZZER_5V,
   Buzzer,
   DCMotor,
+  DIODE_1N4148,
   HOBBY_MOTOR_6V,
   VoltageSource,
 } from '../devices'
@@ -1312,6 +1313,236 @@ group('8. Inside the running engine, on real firmware')
     held ? 'still high' : 'dropped immediately',
   )
   truth('and it falls once the hold window really has expired', released, 'low by 3 s', released ? 'low' : 'still high')
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('9. The ANALOG parts report too — pot, LDR, diode, button')
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// A part with a behavioural model publishes its own state. The purely analog
+// parts have none, so until now a potentiometer — the part that makes
+// analogRead() mean anything at all — reported nothing whatsoever: no current
+// (it registers no meter), no state, no row in the panel. Everything below is
+// read out of the SOLVE, and every number is checked against the circuit theory
+// for the same circuit rather than against the engine's own output.
+{
+  const program = parseIntelHex(
+    fs.readFileSync(path.join(process.cwd(), 'public', 'sim', 'blink.hex'), 'utf8'),
+  )
+
+  /**
+   * Pot as a divider: 5 V across the whole track, wiper on A0.
+   *
+   * The wiper is loaded by A0's floating input (G_FLOAT = 1e-8 S), so the
+   * unloaded 50 % answer of exactly 2.5 V is not quite right — the upper leg
+   * sits in parallel with 100 MΩ. That loading is REAL and is why the figures
+   * below are computed rather than typed: for a 100 kΩ track it moves the wiper
+   * by 0.6 mV, and for a 1 kΩ track by 6 µV.
+   */
+  const G_FLOAT_ADC = 1e-8
+  function dividerWiper(total: number, pos: number): number {
+    const lower = (total * pos) / 100
+    const upper = (total * (100 - pos)) / 100
+    const loaded = 1 / (1 / upper + G_FLOAT_ADC)
+    return (5 * loaded) / (lower + loaded)
+  }
+
+  for (const total of [1000, 10000, 100000]) {
+    const doc: CircuitDoc = {
+      parts: [place('uno', 'arduino_uno'), place('p', 'potentiometer', { position: 50, totalOhms: total })],
+      wires: [
+        wire(['uno', '5V'], ['p', '1']),
+        wire(['p', '3'], ['uno', 'GND.1']),
+        wire(['p', '2'], ['uno', 'A0']),
+      ],
+    }
+    const eng = new SimulationEngine(program, doc)
+    eng.run(20_000)
+    const s = eng.snapshot().deviceStates.p
+    truth(`a ${total} Ω pot reports at all`, s !== undefined, 'a state', String(s !== undefined))
+    near(`... its wiper voltage, loaded by the ADC input`, Number(s?.wiperVolts), dividerWiper(total, 50), 1e-4, 'V')
+    near(`... and the lower leg compile() actually stamped`, Number(s?.lowerOhms), total / 2, 1e-9, 'Ω')
+    truth(`... with both ends wired`, s?.endsWired === true, 'true', String(s?.endsWired))
+  }
+
+  /**
+   * The knob really moves the wiper. 25 % and 75 % on the same track must give
+   * genuinely different node voltages, or the pot is decorative.
+   */
+  {
+    const at = (pos: number) => {
+      const eng = new SimulationEngine(program, {
+        parts: [place('uno', 'arduino_uno'), place('p', 'potentiometer', { position: pos })],
+        wires: [
+          wire(['uno', '5V'], ['p', '1']),
+          wire(['p', '3'], ['uno', 'GND.1']),
+          wire(['p', '2'], ['uno', 'A0']),
+        ],
+      })
+      eng.run(20_000)
+      return eng.snapshot()
+    }
+    const lo = at(25)
+    const hi = at(75)
+    near('the wiper at 25 % sits at 3/4 of the rail (pin 1 is the 5 V end)',
+      Number(lo.deviceStates.p.wiperVolts), dividerWiper(10000, 25), 1e-4, 'V')
+    near('and at 75 % it sits at 1/4', Number(hi.deviceStates.p.wiperVolts), dividerWiper(10000, 75), 1e-4, 'V')
+    truth('which the ADC sees as a genuinely different reading',
+      Math.abs(lo.adc.A0 - hi.adc.A0) > 400, '> 400 counts apart',
+      `${lo.adc.A0} vs ${hi.adc.A0}`)
+  }
+
+  /**
+   * A pot with one end open is a RHEOSTAT — a legitimate way to wire one, and a
+   * wiper voltage that means something quite different. Reporting it as an
+   * ordinary divider would be the panel inventing a circuit.
+   */
+  {
+    const eng = new SimulationEngine(program, {
+      parts: [place('uno', 'arduino_uno'), place('p', 'potentiometer', { position: 50 })],
+      wires: [wire(['uno', '5V'], ['p', '1']), wire(['p', '2'], ['uno', 'A0'])],
+    })
+    eng.run(20_000)
+    const s = eng.snapshot().deviceStates.p
+    truth('a rheostat-wired pot says one end is open', s?.endsWired === false, 'false', String(s?.endsWired))
+    truth('... but its wiper is still connected', s?.connected === true, 'true', String(s?.connected))
+  }
+
+  /**
+   * The LDR: 5 V — cell — 10 kΩ — GND, with the junction on A0. The reported
+   * resistance has to be the one the compiler stamped, so the divider is
+   * checked against it rather than against a second copy of the curve.
+   */
+  for (const light of [10, 60, 95]) {
+    const doc: CircuitDoc = {
+      parts: [
+        place('uno', 'arduino_uno'),
+        place('ldr', 'photoresistor', { light }),
+        place('r', 'resistor', { ohms: 10000 }),
+      ],
+      wires: [
+        wire(['uno', '5V'], ['ldr', '1']),
+        wire(['ldr', '2'], ['r', '1']),
+        wire(['r', '2'], ['uno', 'GND.1']),
+        wire(['ldr', '2'], ['uno', 'A0']),
+      ],
+    }
+    const eng = new SimulationEngine(program, doc)
+    eng.run(20_000)
+    const s = eng.snapshot().deviceStates.ldr
+    const rCell = Number(s?.ohms)
+    // The divider the reported resistance implies, against the reported voltage
+    // across the cell. Ohm's law closing on the two numbers in the same row.
+    near(
+      `an LDR at ${light}% light reports a voltage consistent with its own resistance`,
+      Number(s?.volts),
+      (5 * rCell) / (rCell + 1 / (1 / 10000 + G_FLOAT_ADC)),
+      2e-3,
+      'V',
+    )
+    near(`... and a current of v/R`, Number(s?.amps) * 1e6, (Number(s?.volts) / rCell) * 1e6, 0.5, 'µA')
+  }
+  {
+    const at = (light: number) => {
+      const eng = new SimulationEngine(program, {
+        parts: [
+          place('uno', 'arduino_uno'),
+          place('ldr', 'photoresistor', { light }),
+          place('r', 'resistor', { ohms: 10000 }),
+        ],
+        wires: [
+          wire(['uno', '5V'], ['ldr', '1']),
+          wire(['ldr', '2'], ['r', '1']),
+          wire(['r', '2'], ['uno', 'GND.1']),
+          wire(['ldr', '2'], ['uno', 'A0']),
+        ],
+      })
+      eng.run(20_000)
+      return eng.snapshot()
+    }
+    const dark = at(10)
+    const bright = at(95)
+    truth('a dark cell is far more resistive than a lit one',
+      Number(dark.deviceStates.ldr.ohms) > Number(bright.deviceStates.ldr.ohms) * 100,
+      '>100x',
+      `${Number(dark.deviceStates.ldr.ohms).toFixed(0)} Ω vs ${Number(bright.deviceStates.ldr.ohms).toFixed(0)} Ω`)
+    truth('and the ADC sees the difference',
+      bright.adc.A0 - dark.adc.A0 > 500, '> 500 counts', `${dark.adc.A0} → ${bright.adc.A0}`)
+  }
+
+  /**
+   * The diode, and the mistake this readout exists to catch. Wired the right
+   * way round it drops the Shockley voltage for the current flowing; wired
+   * backwards it blocks, and the panel has to say which.
+   */
+  {
+    const diodeDoc = (flip: boolean): CircuitDoc => ({
+      parts: [place('uno', 'arduino_uno'), place('r', 'resistor', { ohms: 1000 }), place('d', 'diode')],
+      wires: flip
+        ? [wire(['uno', '5V'], ['r', '1']), wire(['r', '2'], ['d', 'C']), wire(['d', 'A'], ['uno', 'GND.1'])]
+        : [wire(['uno', '5V'], ['r', '1']), wire(['r', '2'], ['d', 'A']), wire(['d', 'C'], ['uno', 'GND.1'])],
+    })
+    const fwd = new SimulationEngine(program, diodeDoc(false))
+    fwd.run(20_000)
+    const sf = fwd.snapshot()
+    const vf = Number(sf.deviceStates.d.volts)
+    const iF = Math.abs(sf.currents.r)
+    truth('a forward-biased diode says so', sf.deviceStates.d.biased === 'forward', 'forward', String(sf.deviceStates.d.biased))
+    /**
+     * THE INDEPENDENT ORACLE: the Shockley equation on DIODE_1N4148's own
+     * published parameters, evaluated at the current the RESISTOR is passing.
+     * Vf = n·VT·ln(I/Is). Nothing here comes from the diode's own readout
+     * except the voltage being checked.
+     */
+    near('... and its drop is n·VT·ln(I/Is) for the current flowing',
+      vf, DIODE_1N4148.n * 0.025852 * Math.log(iF / DIODE_1N4148.is), 2e-3, 'V')
+    near('... which for a 1 kΩ from 5 V is about 0.65 V', vf, 0.65, 0.02, 'V')
+
+    const rev = new SimulationEngine(program, diodeDoc(true))
+    rev.run(20_000)
+    const sr = rev.snapshot()
+    truth('a diode wired backwards says REVERSE, not "0.00 mA"',
+      sr.deviceStates.d.biased === 'reverse', 'reverse', String(sr.deviceStates.d.biased))
+    near('... with essentially the whole rail across it', Number(sr.deviceStates.d.volts), -5, 1e-3, 'V')
+    truth('... and no current through the series resistor',
+      Math.abs(sr.currents.r) < 1e-8, '< 10 nA', `${(Math.abs(sr.currents.r) * 1e9).toFixed(2)} nA`)
+  }
+
+  /**
+   * The button, whose whole behaviour is a resistance the panel could not see.
+   * Open contacts are 1e12 Ω and closed ones 0.05 Ω, so the voltage across them
+   * is the readout that says whether pressing it did anything.
+   */
+  {
+    const btnDoc = (pressed: number): CircuitDoc => ({
+      parts: [
+        place('uno', 'arduino_uno'),
+        place('b', 'push_button', { pressed }),
+        place('r', 'resistor', { ohms: 10000 }),
+      ],
+      wires: [
+        wire(['uno', '5V'], ['b', '1a']),
+        wire(['b', '2a'], ['r', '1']),
+        wire(['r', '2'], ['uno', 'GND.1']),
+      ],
+    })
+    const open = new SimulationEngine(program, btnDoc(0))
+    open.run(20_000)
+    const so = open.snapshot().deviceStates.b
+    const closed = new SimulationEngine(program, btnDoc(1))
+    closed.run(20_000)
+    const sc = closed.snapshot().deviceStates.b
+
+    truth('an open button reports released', so?.pressed === false, 'false', String(so?.pressed))
+    near('... with the whole 5 V across its open contacts', Number(so?.volts), 5, 1e-3, 'V')
+    truth('a pressed button reports pressed', sc?.pressed === true, 'true', String(sc?.pressed))
+    truth('... with essentially nothing across the closed ones',
+      Math.abs(Number(sc?.volts)) < 1e-3, '< 1 mV', `${(Number(sc?.volts) * 1e6).toFixed(1)} µV`)
+    // 5 V through 0.05 Ω + 10 kΩ. The closed contact is not a perfect short and
+    // the model does not pretend it is.
+    near('and the current is set by the resistor, not the contact',
+      Math.abs(closed.snapshot().currents.r) * 1e6, (5 / 10000.05) * 1e6, 1, 'µA')
+  }
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────

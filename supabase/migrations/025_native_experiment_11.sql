@@ -111,7 +111,9 @@ declare
       "x": 40,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "red"
+      }
     },
     {
       "id": "led1_yellow",
@@ -119,7 +121,9 @@ declare
       "x": 88,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "yellow"
+      }
     },
     {
       "id": "led1_green",
@@ -127,7 +131,9 @@ declare
       "x": 136,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "green"
+      }
     },
     {
       "id": "led2_red",
@@ -135,7 +141,9 @@ declare
       "x": 184,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "red"
+      }
     },
     {
       "id": "led2_yellow",
@@ -143,7 +151,9 @@ declare
       "x": 232,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "yellow"
+      }
     },
     {
       "id": "led2_green",
@@ -151,7 +161,9 @@ declare
       "x": 280,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "green"
+      }
     },
     {
       "id": "led3_red",
@@ -159,7 +171,9 @@ declare
       "x": 328,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "red"
+      }
     },
     {
       "id": "led3_yellow",
@@ -167,7 +181,9 @@ declare
       "x": 376,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "yellow"
+      }
     },
     {
       "id": "led3_green",
@@ -175,7 +191,9 @@ declare
       "x": 424,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "green"
+      }
     },
     {
       "id": "led4_red",
@@ -183,7 +201,9 @@ declare
       "x": 472,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "red"
+      }
     },
     {
       "id": "led4_yellow",
@@ -191,7 +211,9 @@ declare
       "x": 520,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "yellow"
+      }
     },
     {
       "id": "led4_green",
@@ -199,7 +221,9 @@ declare
       "x": 568,
       "y": 445,
       "rotation": 0,
-      "props": {}
+      "props": {
+        "color": "green"
+      }
     },
     {
       "id": "r1_red",

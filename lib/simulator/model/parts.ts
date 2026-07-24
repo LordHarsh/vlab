@@ -152,6 +152,30 @@ export interface PartDefinition {
    * its slider and the two drive the same document value.
    */
   knob?: KnobControl
+  /**
+   * A linear control on the artwork, for a value that has no shaft to turn.
+   *
+   * A photoresistor is the case that forced this. Its value is an illumination,
+   * and there is nothing on the part to rotate — but "adjust it where it lives"
+   * is the whole point of §2's finding, so the affordance is a track and a
+   * handle rather than a knob. Same contract as `knob`: the declared `range`
+   * prop keeps its panel slider, and the two write the same document value.
+   */
+  slider?: SliderControl
+  /**
+   * A control that is only in its "on" state WHILE it is held.
+   *
+   * A push button is a momentary switch and a checkbox cannot express one: it
+   * has no press and no release, only a state that stays where it was put.
+   * DEVICE_CONTROLS_AUDIT.md §3 called that out as an interaction gap rather
+   * than a missing field, and it is — a student debouncing a button, or reading
+   * one inside a loop, needs to press and let go.
+   *
+   * The panel checkbox stays, and stays useful: press-and-hold is unavailable
+   * to anyone who cannot hold a pointer down, and a latched state is the only
+   * way to leave a button pressed while looking at something else.
+   */
+  momentary?: MomentaryControl
 }
 
 /**
@@ -234,6 +258,50 @@ export interface KnobControl {
 }
 
 /**
+ * A straight-line control drawn on a part's artwork.
+ *
+ * The track runs from (x1, y1) at the prop's `min` to (x2, y2) at its `max`, in
+ * part-local units, so the direction of travel is a property of the declaration
+ * rather than a convention the canvas has to remember. The photoresistor's runs
+ * left-to-right above the cell; a part that wanted a vertical one would only
+ * have to say so.
+ */
+export interface SliderControl {
+  /** The `range` prop this drives. Must be declared in `props`. */
+  key: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  /** Handle radius, in part-local units. Also the grab target. */
+  r: number
+}
+
+/**
+ * A press-and-hold control drawn on a part's artwork.
+ *
+ * Writes `1` on pointer-down and `0` on pointer-up. There is no "value" beyond
+ * that, which is exactly what makes a momentary switch different from a toggle.
+ */
+export interface MomentaryControl {
+  /** The 0/1 `range` prop this drives. Must be declared in `props`. */
+  key: string
+  cx: number
+  cy: number
+  r: number
+  /**
+   * CSS custom property the artwork's own pressed styling reads, if it has one.
+   *
+   * The harvested pushbutton ships a `.button-active-circle` that a real
+   * `button:active` would reveal. There is no `<button>` here — the markup is
+   * injected — so the rule is rewritten to read a variable and the canvas sets
+   * it, which turns wokwi's own pressed artwork on instead of drawing a second
+   * indicator over it.
+   */
+  pressedVar?: string
+}
+
+/**
  * The resistance a resistor has when its document carries no `ohms`.
  *
  * ONE constant feeding BOTH readers — `electrical.defaultOhms`, which compile.ts
@@ -279,6 +347,21 @@ export const FARAD_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
 ]
 
 /**
+ * The same ladder for inductance, and again note what `mul: 1` sits on.
+ *
+ * compile.ts reads `Number(part.props.millihenries ?? 1)` and hands the result
+ * to `new Inductor(..., millihenries * 1e-3)`, so the DOCUMENT stores
+ * millihenries and mH is the unit with `mul: 1`. A 100 µH choke — the commonest
+ * value in a buck converter or an RF filter — therefore stores 0.1.
+ */
+export const HENRY_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
+  { label: 'nH', mul: 1e-6 },
+  { label: 'μH', mul: 1e-3 },
+  { label: 'mH', mul: 1 },
+  { label: 'H', mul: 1e3 },
+]
+
+/**
  * Ceiling on a typed resistance, ohms.
  *
  * Not a physical limit — it is the top of the offered ladder (999 GΩ is under
@@ -303,6 +386,93 @@ export const CAPACITOR_MAX_UF = 1e6
  * good open.
  */
 export const CAPACITOR_MIN_UF = 1e-9
+
+/**
+ * The inductance an inductor has when its document carries no `millihenries`.
+ *
+ * 1 mH because that is compile.ts's own fallback
+ * (`Number(part.props.millihenries ?? 1)`), and the prop's `default` has to be
+ * the same number or the panel and the physics disagree — the resistor's trap,
+ * one part along.
+ */
+export const INDUCTOR_DEFAULT_MH = 1
+
+/** Ceiling on a typed inductance, millihenries — 1000 H, the top of the ladder. */
+export const INDUCTOR_MAX_MH = 1e6
+
+/**
+ * Floor on a typed inductance, millihenries — 1 nH, the bottom of the ladder.
+ *
+ * Zero is excluded for the mirror of the capacitor's reason. `Inductor.geq()`
+ * stamps `h/L`, so a 0 H inductor is a division by zero — an infinite
+ * conductance, i.e. a short with no branch equation — where a 1 nH inductor is
+ * merely a very good wire.
+ */
+export const INDUCTOR_MIN_MH = 1e-6
+
+/**
+ * Track resistance of the potentiometer a starter kit ships.
+ *
+ * 10 kΩ linear, the value on a Bourns 3386P-1-103 trimmer and on the ALPS RK09
+ * panel pot that every "Arduino starter kit" contains — `103` is 10 × 10³ Ω.
+ *
+ * ONE constant feeding BOTH readers, exactly as RESISTOR_DEFAULT_OHMS does:
+ * `electrical.totalOhms`, which compile.ts resolves at
+ * `part.props.totalOhms ?? el.totalOhms`, and the prop's `default`, which the
+ * inspector shows.
+ */
+export const POT_DEFAULT_OHMS = 10000
+
+/**
+ * The smallest resistance either leg of a pot may present, ohms.
+ *
+ * Never exactly zero: a 0 Ω leg would be a dead short from the wiper to a rail,
+ * and the wiper of a real pot always has some track resistance either side of
+ * it — the contact resistance alone is of this order.
+ */
+export const POT_MIN_LEG_OHMS = 0.5
+
+/**
+ * The two halves of a pot's track at a given wiper position, ohms.
+ *
+ * `lower` is pin 1 → wiper, `upper` is wiper → pin 3, so at 0 % the wiper sits
+ * on pin 1. Shared by compile.ts, which stamps them, and by the device readout,
+ * which reports them: two copies of this arithmetic would be two chances for
+ * the panel to describe a divider the solver is not solving.
+ */
+export function potentiometerLegs(
+  totalOhms: number,
+  position: number,
+): { lower: number; upper: number } {
+  const pos = Math.min(100, Math.max(0, Number.isFinite(position) ? position : 50)) / 100
+  const total = Number.isFinite(totalOhms) && totalOhms > 0 ? totalOhms : POT_DEFAULT_OHMS
+  return {
+    lower: Math.max(total * pos, POT_MIN_LEG_OHMS),
+    upper: Math.max(total * (1 - pos), POT_MIN_LEG_OHMS),
+  }
+}
+
+/**
+ * The resistance a light-dependent resistor presents at a given light level.
+ *
+ * GEOMETRIC, not linear, in the illumination: an LDR's resistance falls roughly
+ * as a power law in lux (the datasheet "gamma" of a GL55-series cell is ~0.6
+ * per decade), so a linear interpolation between the light and dark figures
+ * makes the whole middle of the range behave nothing like a real cell — it
+ * would sit near the dark value for the first 90 % of the slider and then
+ * collapse.
+ *
+ * Shared by compile.ts and the device readout for the same reason
+ * potentiometerLegs() is.
+ */
+export function variableResistorOhms(
+  minOhms: number,
+  maxOhms: number,
+  light: number,
+): number {
+  const t = Math.min(100, Math.max(0, Number.isFinite(light) ? light : 60)) / 100
+  return minOhms * Math.pow(maxOhms / minOhms, 1 - t)
+}
 
 // ─── Breadboard ───────────────────────────────────────────────────────────────
 
@@ -746,6 +916,31 @@ if (!ledArt.svg.includes(LED_DOME_FILL)) {
   )
 }
 
+/**
+ * The push button, with its pressed artwork driven by a per-instance variable.
+ *
+ * The harvested art already draws a pressed cap — `.button-active-circle`, a
+ * second gradient at `opacity: 0` that wokwi's own `button:active` rule reveals.
+ * There is no `<button>` here (the markup is injected as raw SVG), so that one
+ * declaration is rewritten to read a custom property and the canvas sets it.
+ * Same move as the LED's dome fill, and for the same reason: one piece of shared
+ * artwork, per-instance state.
+ */
+const buttonArt = wokwiGeometry('pushbutton', {
+  rename: { '1.l': '1a', '1.r': '1b', '2.l': '2a', '2.r': '2b' },
+})
+const BUTTON_ACTIVE_RULE = '.wk-pushbutton .button-active-circle{opacity: 0;}'
+
+/**
+ * The cap's radius in part-local units.
+ *
+ * Read off the art rather than eyeballed. The element is 70.087 × 47.244 over a
+ * `-3 0 18 12` viewBox with `xMidYMid meet`, so one viewBox unit is width/18 =
+ * 3.894 of ours; the cap is a circle of r 3.822 at viewBox (6, 6), which lands
+ * it at exactly the bounding box's centre with a radius of 14.88.
+ */
+const BUTTON_CAP_R = (buttonArt.width * 3.822) / 18
+
 const pushButton: PartDefinition = {
   type: 'push_button',
   label: 'Push button',
@@ -753,10 +948,45 @@ const pushButton: PartDefinition = {
   // a classic source of student confusion, and a real electrical fact.
   buses: [['1a', '1b'], ['2a', '2b']],
   electrical: { kind: 'button' },
-  props: [{ key: 'pressed', label: 'Pressed', type: 'range', min: 0, max: 1, step: 1, default: 0 }],
-  ...wokwiGeometry('pushbutton', {
-    rename: { '1.l': '1a', '1.r': '1b', '2.l': '2a', '2.r': '2b' },
-  }),
+  props: [
+    {
+      key: 'pressed',
+      label: 'Pressed (latched)',
+      type: 'range',
+      min: 0,
+      max: 1,
+      step: 1,
+      default: 0,
+      hint: 'Or press and hold the button itself on the canvas.',
+    },
+  ],
+  /** Hold the cap to close the contacts; let go and they open. */
+  momentary: {
+    key: 'pressed',
+    cx: buttonArt.width / 2,
+    cy: buttonArt.height / 2,
+    r: BUTTON_CAP_R,
+    pressedVar: '--button-pressed',
+  },
+  ...buttonArt,
+  svg: buttonArt.svg.replace(
+    BUTTON_ACTIVE_RULE,
+    '.wk-pushbutton .button-active-circle{opacity: var(--button-pressed, 0);}',
+  ),
+}
+
+/**
+ * Loud rather than silent, exactly as the LED's dome guard is: a future
+ * @wokwi/elements bump that reformats that rule leaves the button looking
+ * un-pressed while the contacts really are closed, and nothing else in the
+ * suite would notice.
+ */
+if (!buttonArt.svg.includes(BUTTON_ACTIVE_RULE)) {
+  console.error(
+    '[parts] the harvested pushbutton art no longer carries `' +
+      BUTTON_ACTIVE_RULE +
+      '`, so a press cannot reach the cap. Re-check wokwi-art.generated.json.',
+  )
 }
 
 
@@ -772,9 +1002,36 @@ const pushButton: PartDefinition = {
 const potentiometer: PartDefinition = {
   type: 'potentiometer',
   label: 'Potentiometer',
-  electrical: { kind: 'potentiometer', totalOhms: 10000 },
+  electrical: { kind: 'potentiometer', totalOhms: POT_DEFAULT_OHMS },
   props: [
     { key: 'position', label: 'Knob', type: 'range', min: 0, max: 100, step: 1, unit: '%', default: 50 },
+    {
+      key: 'totalOhms',
+      label: 'Track resistance',
+      /**
+       * FREE ENTRY, and it is electrical rather than cosmetic.
+       *
+       * The track is a permanent load across whatever it is wired between: a
+       * 1 kΩ pot on a 5 V rail draws 5 mA all the time, a 100 kΩ pot draws
+       * 50 µA. It is also the source impedance the ADC sees, and an ATmega's
+       * sample-and-hold wants under 10 kΩ to charge inside one conversion —
+       * which is precisely why 10 kΩ is the value in the kit.
+       *
+       * The suggestions are the standard panel-pot decades (1 k, 5 k, 10 k,
+       * 50 k, 100 k, 1 M); the field takes anything in between.
+       */
+      type: 'number',
+      unit: 'Ω',
+      units: OHM_UNITS,
+      // A pot with a 0 Ω track is a wire from pin 1 to pin 3, which is a short
+      // across whatever it is wired between rather than a component. The floor
+      // is the same figure the legs are clamped to.
+      min: POT_MIN_LEG_OHMS,
+      max: RESISTOR_MAX_OHMS,
+      options: [1000, 5000, 10000, 50000, 100000, 1000000],
+      hint: 'The whole track, end to end. The knob splits it.',
+      default: POT_DEFAULT_OHMS,
+    },
   ],
   /**
    * The knob turns. It is the reason this part exists.
@@ -805,25 +1062,57 @@ const potentiometer: PartDefinition = {
   }),
 }
 
+/**
+ * The light slider lives INSIDE the declared box, and the box grew to hold it.
+ *
+ * The first version put the track at y = −13, above the part. It worked, but it
+ * put a control outside `def.width × def.height` — which is the box `freeSpot`
+ * uses for collision, the box the selection outline is drawn from, and the box
+ * the palette tile letterboxes into. A control nothing knows about is a control
+ * another part can be dropped on top of.
+ *
+ * So the cell and its leads moved DOWN by this much and the height grew by the
+ * same, leaving the top 18 units for the track. Pin IDS are unchanged, so every
+ * wire in every saved document still lands on the same pin; only where that pin
+ * is drawn moves, and no authored starter contains a photoresistor.
+ */
+const LDR_HEADROOM = 18
+
 const photoresistor: PartDefinition = {
   type: 'photoresistor',
   label: 'Photoresistor',
   width: 30,
-  height: 40,
+  height: 40 + LDR_HEADROOM,
   pins: [
-    { id: '1', name: 'A', x: 8, y: 40, type: 'passive' },
-    { id: '2', name: 'B', x: 22, y: 40, type: 'passive' },
+    { id: '1', name: 'A', x: 8, y: 40 + LDR_HEADROOM, type: 'passive' },
+    { id: '2', name: 'B', x: 22, y: 40 + LDR_HEADROOM, type: 'passive' },
   ],
   // Bright light drops an LDR to a few hundred ohms; darkness is hundreds of k.
   electrical: { kind: 'variable_resistor', minOhms: 200, maxOhms: 200000 },
   props: [
     { key: 'light', label: 'Light level', type: 'range', min: 0, max: 100, step: 1, unit: '%', default: 60 },
   ],
+  /**
+   * The light is adjusted ON THE PART, above the cell where the light falls.
+   *
+   * A slider rather than a knob because there is nothing on an LDR to turn —
+   * see SliderControl. The track sits at y = 5, inside the box, clear of the
+   * dome (a circle at (15, 18 + 18) with r 13, so its crown is at y = 23) by
+   * more than the handle's radius. 0 % is at the left and 100 % at the right,
+   * the same direction the panel slider travels.
+   *
+   * The ends are inset by the HANDLE'S RADIUS rather than sitting on the box
+   * edge: the handle is centred on the track, so a track that ran 2..28 would
+   * put half the handle outside a 30-wide part at each end.
+   */
+  slider: { key: 'light', x1: 4, y1: 5, x2: 26, y2: 5, r: 3.6 },
   svg: `
-    <line x1="8" y1="40" x2="8" y2="28" stroke="#9a9a9a" stroke-width="2"/>
-    <line x1="22" y1="40" x2="22" y2="28" stroke="#9a9a9a" stroke-width="2"/>
-    <circle cx="15" cy="18" r="13" fill="#e8d9a0" stroke="#8a7a45"/>
-    <path d="M6 18 q4 -6 9 0 q4 6 9 0" fill="none" stroke="#7a4a2a" stroke-width="2"/>
+    <g transform="translate(0 ${LDR_HEADROOM})">
+      <line x1="8" y1="40" x2="8" y2="28" stroke="#9a9a9a" stroke-width="2"/>
+      <line x1="22" y1="40" x2="22" y2="28" stroke="#9a9a9a" stroke-width="2"/>
+      <circle cx="15" cy="18" r="13" fill="#e8d9a0" stroke="#8a7a45"/>
+      <path d="M6 18 q4 -6 9 0 q4 6 9 0" fill="none" stroke="#7a4a2a" stroke-width="2"/>
+    </g>
   `,
 }
 
@@ -1576,6 +1865,61 @@ const capacitor: PartDefinition = {
   `,
 }
 
+/**
+ * Axial inductor — an RF choke, the shape a kit ships.
+ *
+ * THE MODEL ALREADY EXISTED AND THE PART DID NOT. `Inductor` is in devices.ts,
+ * compile.ts has stamped `{ kind: 'reactive', element: 'inductor' }` since
+ * transient landed, and `Circuit.smallestTimeConstant()` sizes a timestep from
+ * L/R — but nothing in `PALETTE` could produce one, so no student could place
+ * an inductor and none of that ran outside a test. This is the missing row.
+ *
+ * HAND-DRAWN: wokwi-art.generated.json carries no inductor.
+ *
+ * The suggested values are the E-series decades a through-hole choke kit
+ * contains — 100 µH, 1 mH, 10 mH, 100 mH — plus 1 H for a relay-coil-sized
+ * winding. The default is 1 mH, which is compile.ts's own fallback.
+ *
+ * WORTH KNOWING about the numbers this part produces: an inductor's DC steady
+ * state is a 0.01 Ω short (Inductor.geq() in DC mode), so on its own it does
+ * very little. It earns its place in a TRANSIENT — the current through it rises
+ * with time constant L/R, and with a 10 mH choke in series with 100 Ω that is
+ * 100 µs, which the engine's step sizing resolves without being told.
+ */
+const inductor: PartDefinition = {
+  type: 'inductor',
+  label: 'Inductor',
+  width: 40,
+  height: 30,
+  pins: [
+    { id: '1', name: 'A', x: 0, y: 15, type: 'passive' },
+    { id: '2', name: 'B', x: 40, y: 15, type: 'passive' },
+  ],
+  electrical: { kind: 'reactive', element: 'inductor' },
+  props: [
+    {
+      key: 'millihenries',
+      label: 'Inductance',
+      type: 'number',
+      unit: 'H',
+      units: HENRY_UNITS,
+      min: INDUCTOR_MIN_MH,
+      max: INDUCTOR_MAX_MH,
+      options: [0.1, 1, 10, 100, 1000],
+      default: INDUCTOR_DEFAULT_MH,
+    },
+  ],
+  svg: `
+    <line x1="0" y1="15" x2="8" y2="15" stroke="#9a9a9a" stroke-width="2"/>
+    <line x1="32" y1="15" x2="40" y2="15" stroke="#9a9a9a" stroke-width="2"/>
+    <rect x="8" y="7" width="24" height="16" rx="7" fill="#3f3a34" stroke="#25211c"/>
+    <path d="M11 15 a3 3 0 0 1 6 0 a3 3 0 0 1 6 0 a3 3 0 0 1 6 0"
+          fill="none" stroke="#c9a227" stroke-width="1.6"/>
+    <rect x="11" y="9" width="2.5" height="12" fill="#8a5a2a"/>
+    <rect x="26.5" y="9" width="2.5" height="12" fill="#8a5a2a"/>
+  `,
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const PART_LIBRARY: Record<string, PartDefinition> = {
@@ -1603,6 +1947,7 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   pulse_sensor: pulseSensor,
   mcp3008: makeMCP3008(),
   capacitor,
+  inductor,
 }
 
 /** Palette order. Breadboard and board first — students place those first too. */
@@ -1637,7 +1982,10 @@ export const PALETTE: string[] = [
   // board without an ADC needs in order to read it.
   'pulse_sensor',
   'mcp3008',
+  // The two reactive elements together: they are the pair the transient engine
+  // exists for, and a student reaching for one is learning the same lesson.
   'capacitor',
+  'inductor',
 ]
 
 export function getPart(type: string): PartDefinition {
@@ -1833,6 +2181,64 @@ function angleGap(a: number, b: number): number {
   return ((((a - b) % 360) + 540) % 360) - 180
 }
 
+// ─── Slider geometry ──────────────────────────────────────────────────────────
+
+/** Where a slider's handle sits for a prop value, in part-local units. */
+export function sliderPointFor(
+  slider: SliderControl,
+  prop: PropSpec,
+  value: number,
+): { x: number; y: number } {
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const span = max - min || 1
+  const t = Math.min(1, Math.max(0, (value - min) / span))
+  return {
+    x: slider.x1 + t * (slider.x2 - slider.x1),
+    y: slider.y1 + t * (slider.y2 - slider.y1),
+  }
+}
+
+/**
+ * The prop value a pointer at part-local (px, py) asks for.
+ *
+ * PROJECTED onto the track rather than measured along one axis, so a diagonal
+ * track works and, more usefully, so a pointer that drifts off the line keeps
+ * driving the control instead of sticking — a slider that only responded to
+ * perfectly horizontal movement would read as one that jams.
+ *
+ * ONE CLAMP, at the end, and deliberately only one. The obvious shape is to
+ * clamp the projection to the segment AND clamp the result to the prop's range,
+ * but the second subsumes the first exactly — `min + t·(max − min)` is monotone
+ * in t — so the first is dead code that looks like a safety net. A mutation
+ * check found it: deleting it changed no behaviour and failed no test, which is
+ * the definition of a line that should not be there.
+ */
+export function sliderValueFor(
+  slider: SliderControl,
+  prop: PropSpec,
+  px: number,
+  py: number,
+): number {
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const step = prop.step ?? 1
+  const dx = slider.x2 - slider.x1
+  const dy = slider.y2 - slider.y1
+  const len2 = dx * dx + dy * dy
+  // A zero-length track has no direction to project onto. propDeclarationProblems
+  // rejects one, so this is a guard against division by zero, not a behaviour.
+  const t = len2 > 0 ? ((px - slider.x1) * dx + (py - slider.y1) * dy) / len2 : 0
+  const snapped = step > 0 ? Math.round((min + t * (max - min)) / step) * step : min + t * (max - min)
+  /**
+   * THE END STOPS. Dragging past either end must HOLD at that end — the same
+   * job the knob's dead zone does, and needed for the same reason: a control
+   * that wrapped from 100 % to 0 % as the pointer ran off the track is worse
+   * than one that does not move at all.
+   */
+  return Math.min(max, Math.max(min, Number(snapped.toFixed(6))))
+}
+
 // ─── Declaration self-check ───────────────────────────────────────────────────
 
 /**
@@ -1944,6 +2350,46 @@ export function propDeclarationProblems(): string[] {
       }
       if (knob.fromDeg === knob.toDeg) {
         out.push(`${type}'s knob has a zero-degree sweep, so it can never change its value.`)
+      }
+    }
+
+    const slider = def.slider
+    if (slider) {
+      const target = (def.props ?? []).find((p) => p.key === slider.key)
+      if (!target) {
+        out.push(`${type} declares a slider on "${slider.key}", which is not one of its props.`)
+      } else if (target.type !== 'range') {
+        out.push(
+          `${type}'s slider drives "${slider.key}", a \`${target.type}\` prop — a slider sweeps ` +
+            `a \`range\`, and the panel control has to be the same value.`,
+        )
+      }
+      if (slider.x1 === slider.x2 && slider.y1 === slider.y2) {
+        out.push(`${type}'s slider has a zero-length track, so it can never change its value.`)
+      }
+    }
+
+    /**
+     * A momentary control has one more thing to check than the other two: its
+     * prop must be the 0/1 shape, because pressing writes 1 and releasing
+     * writes 0 and nothing else is meaningful. A momentary on a 0–100 range
+     * would jump a pot's wiper to 1 % on every click.
+     */
+    const momentary = def.momentary
+    if (momentary) {
+      const target = (def.props ?? []).find((p) => p.key === momentary.key)
+      if (!target) {
+        out.push(
+          `${type} declares a momentary control on "${momentary.key}", which is not one of its props.`,
+        )
+      } else if (target.type !== 'range' || target.min !== 0 || target.max !== 1) {
+        out.push(
+          `${type}'s momentary control drives "${momentary.key}", which is not a 0/1 \`range\` — ` +
+            `a press writes 1 and a release writes 0, so anything else would be a jump to 1.`,
+        )
+      }
+      if (!(momentary.r > 0)) {
+        out.push(`${type}'s momentary control has no radius, so there is nothing to press.`)
       }
     }
   }
