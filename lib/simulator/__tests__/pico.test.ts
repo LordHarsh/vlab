@@ -1394,6 +1394,121 @@ group('M. The behavioural clock shim')
   )
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+group('N. A behavioural device survives an edit that did not change it')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * This engine used to throw away EVERY behavioural device on every call to
+   * setDocument — which is to say on every document edit at all, including a
+   * mere prop change or a drag across the canvas. ../engine.ts was fixed for
+   * this; the Pico was not, until now.
+   *
+   * It is not a neutral act, because these devices carry state that only means
+   * anything as a continuous history. The HC-SR501 is the clearest case: its
+   * output stays high until `hold` seconds after motion STOPS, so un-ticking
+   * "motion in front" is precisely the edit that is supposed to START the hold
+   * window — and rebuilding the module at that instant destroyed the window
+   * along with it. The output dropped immediately, which is the one behaviour
+   * the datasheet says it must not have. A flow sensor's cumulative pulse count
+   * had the same defect: turning the tap reset the meter.
+   *
+   * The observable used here is IDENTITY, not a timer: a device that survived is
+   * the same JavaScript object, and a device that was rebuilt is not. That makes
+   * the assertion about the mechanism rather than about a particular model's
+   * timing, so it keeps working when the models change.
+   */
+  const pirDoc = (motion: number, x = 0): CircuitDoc => ({
+    parts: [
+      { id: 'pico', type: 'raspberry_pi_pico', x: 0, y: 0, rotation: 0, props: {} },
+      { id: 'pir', type: 'pir_motion', x, y: 0, rotation: 0, props: { motion, warmup: 0, hold: 5 } },
+    ],
+    wires: [
+      wire(['pico', '3.3V'], ['pir', 'VCC']),
+      wire(['pir', 'GND'], ['pico', 'GND.1']),
+      wire(['pir', 'OUT'], ['pico', 'GP16']),
+    ],
+  })
+
+  const eng = new PicoSimulationEngine(inertFirmware(), pirDoc(1))
+  // `devices` is private; identity is read through the same accessor the engine
+  // itself uses, which is what makes this a test of survival rather than of
+  // any particular reported value.
+  const liveDevices = (e: PicoSimulationEngine): unknown[] =>
+    (e as unknown as { devices: unknown[] }).devices
+  const first = liveDevices(eng)[0]
+  truth('a PIR was instantiated', first !== undefined, 'a device', String(first !== undefined))
+
+  // A PROP CHANGE — the exact edit that used to destroy the module.
+  eng.setDocument(pirDoc(0))
+  truth(
+    'un-ticking "motion in front" does NOT rebuild the module',
+    liveDevices(eng)[0] === first,
+    'the same device object',
+    liveDevices(eng)[0] === first ? 'same object' : 'REBUILT',
+  )
+
+  // A DRAG — same wiring, different position.
+  eng.setDocument(pirDoc(0, 250))
+  truth(
+    'dragging it across the canvas does NOT rebuild it either',
+    liveDevices(eng)[0] === first,
+    'the same device object',
+    liveDevices(eng)[0] === first ? 'same object' : 'REBUILT',
+  )
+
+  /**
+   * Moving the OUT lead from GP16 to GP17 keeps the SAME device, and that is
+   * correct rather than a miss.
+   *
+   * The signature compares net TOPOLOGY — which signals share which nets — and
+   * both documents have OUT alone on a net with one pad on it, so the topology
+   * really is unchanged; only which pad sits there differs. What makes surviving
+   * safe is that `bindings` is re-pointed before anything else runs, so the
+   * device reads the new compile's nets and drives the new compile's ports. The
+   * module does not know or care which header pin it is plugged into, and a real
+   * HC-SR501 moved one pin along does not restart its hold window either.
+   */
+  eng.setDocument({
+    parts: pirDoc(0, 250).parts,
+    wires: [
+      wire(['pico', '3.3V'], ['pir', 'VCC']),
+      wire(['pir', 'GND'], ['pico', 'GND.1']),
+      wire(['pir', 'OUT'], ['pico', 'GP17']),
+    ],
+  })
+  truth(
+    'moving OUT to a different pad keeps it alive (re-pointed, not rebuilt)',
+    liveDevices(eng)[0] === first,
+    'the same device object',
+    liveDevices(eng)[0] === first ? 'same object' : 'REBUILT',
+  )
+
+  /**
+   * Pulling the OUT lead out altogether MUST rebuild it. Now the topology has
+   * genuinely changed — OUT is alone on a dangling net rather than sharing one
+   * with a pad — and the continuity being preserved would be a fiction.
+   */
+  eng.setDocument({
+    parts: pirDoc(0).parts,
+    wires: [wire(['pico', '3.3V'], ['pir', 'VCC']), wire(['pir', 'GND'], ['pico', 'GND.1'])],
+  })
+  truth(
+    'but unplugging its OUT lead does rebuild it',
+    liveDevices(eng)[0] !== first && liveDevices(eng)[0] !== undefined,
+    'a new device object',
+    liveDevices(eng)[0] === first ? 'STALE — still the old object' : 'rebuilt',
+  )
+
+  // And deleting the part must leave nothing behind driving a dead port.
+  eng.setDocument({
+    parts: [{ id: 'pico', type: 'raspberry_pi_pico', x: 0, y: 0, rotation: 0, props: {} }],
+    wires: [],
+  })
+  truth('deleting the part retires its device', liveDevices(eng).length === 0,
+    '0 devices', String(liveDevices(eng).length))
+}
+
 // ─── Report ──────────────────────────────────────────────────────────────────
 
 console.log(
