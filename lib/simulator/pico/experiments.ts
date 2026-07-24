@@ -177,6 +177,325 @@ export const DHT11_RPI_SCRIPT = [
   '    time.sleep(2)',
 ].join('\n')
 
+// ─── Experiment 08 — ds18b20-rpi ──────────────────────────────────────────────
+
+/**
+ * DS18B20 on GP4 with the 4.7 kΩ pull-up, exactly as the published circuit
+ * draws it: red → 3.3 V, black → GND, yellow → GPIO4 with the resistor up to
+ * 3.3 V.
+ *
+ * 4.7 kΩ AND NOT 10 kΩ, which is the DHT11's value one experiment earlier. A
+ * 1-Wire master samples a read slot about 15 µs after pulling the line down, so
+ * the pull-up has to charge the bus capacitance back through a logic threshold
+ * inside that window; Maxim specifies 4.7 kΩ for a short bus and MicroPython's
+ * `onewire` timings are written against it.
+ */
+export const DS18B20_RPI: CircuitDoc = {
+  parts: [
+    { id: 'pico', type: 'raspberry_pi_pico', x: 60, y: 40, rotation: 0, props: {} },
+    { id: 'ds', type: 'ds18b20', x: 260, y: 60, rotation: 0, props: { temperature: 25, resolution: 12 } },
+    { id: 'r4k7', type: 'resistor', x: 260, y: 180, rotation: 0, props: { ohms: 4700 } },
+  ],
+  wires: [
+    w('dsb1', ['ds', 'VDD'], ['pico', '3.3V'], RED),
+    w('dsb2', ['ds', 'GND'], ['pico', 'GND.4'], BLACK),
+    w('dsb3', ['ds', 'DQ'], ['pico', 'GP4'], YELLOW),
+    w('dsb4', ['r4k7', '1'], ['ds', 'DQ'], YELLOW),
+    w('dsb5', ['r4k7', '2'], ['pico', '3.3V'], RED),
+  ],
+}
+
+/**
+ * The published sysfs program, transliterated.
+ *
+ *   os.system('modprobe w1-gpio' / 'w1-therm')  — DELETED. Those load LINUX
+ *                                                 kernel modules, and so does
+ *                                                 the `dtoverlay=w1-gpio` line
+ *                                                 the Procedure adds to
+ *                                                 /boot/config.txt. A
+ *                                                 microcontroller has no kernel:
+ *                                                 `onewire` and `ds18x20` are
+ *                                                 frozen into the firmware and
+ *                                                 the protocol is bit-banged on
+ *                                                 GP4 by the interpreter itself.
+ *   glob('/sys/bus/w1/devices/28*')[0]          → ds.scan(), which is a real
+ *                                                 SEARCH ROM on the wire rather
+ *                                                 than a directory listing
+ *   open(device_file).readlines()               → ds.convert_temp() +
+ *                                                 ds.read_temp(rom)
+ *   while lines[0][-3:] != 'YES'                — the CRC retry. The driver
+ *                                                 checks the scratchpad CRC
+ *                                                 itself and raises, so the
+ *                                                 retry becomes the try/except
+ *                                                 the loop already needs.
+ *
+ * THE 750 ms IS NOT A GUESS AND NOT A COURTESY SLEEP. It is tCONV at 12-bit
+ * resolution from the DS18B20 datasheet, and the device model enforces it: read
+ * the scratchpad early and you get the PREVIOUS conversion, which is what the
+ * silicon does. The published code never waits because the kernel driver was
+ * doing it out of sight.
+ *
+ * THE DEGREE SIGN IS REAL, and it is here on purpose. The published listing
+ * prints `°C` and `°F`; those are two bytes of UTF-8 each (`c2 b0`), and until
+ * both directions of the emulated USB link were made UTF-8 the output arrived as
+ * `Â°C`. It is printed here rather than flattened to "C" because a student
+ * comparing the lab sheet against their own console should find the same
+ * characters, and because it is the one line in this file that would break
+ * again if the serial path ever went back to decoding bytes as characters.
+ */
+export const DS18B20_RPI_SCRIPT = [
+  'from machine import Pin',
+  'import onewire, ds18x20, time',
+  '',
+  '# The bus is GP4 with the published circuit\'s 4.7 kOhm pull-up to 3V3. There',
+  '# is no modprobe and no dtoverlay: onewire/ds18x20 are frozen into this',
+  '# firmware and the timing slots are bit-banged by the interpreter.',
+  'ds = ds18x20.DS18X20(onewire.OneWire(Pin(4)))',
+  '',
+  'roms = ds.scan()',
+  'print("Found %d DS18B20 device(s) on GP4." % len(roms))',
+  'for rom in roms:',
+  '    print("  ROM code: " + "".join("%02x" % b for b in rom))',
+  'if not roms:',
+  '    print("Nothing answered the 1-Wire reset.")',
+  '    print("Check DQ on GP4 and the 4.7k pull-up from DQ to 3V3.")',
+  '',
+  'while roms:',
+  '    try:',
+  '        ds.convert_temp()',
+  '        time.sleep_ms(750)      # tCONV at 12-bit resolution, per the datasheet',
+  '        for rom in roms:',
+  '            c = ds.read_temp(rom)',
+  '            print("Temperature: %.3f °C  |  %.3f °F" % (c, c * 9 / 5 + 32))',
+  '    except Exception as e:',
+  '        # A failed CRC is what the published code\'s "YES" retry was waiting on.',
+  '        print("Read failed (%s) - retrying" % e)',
+  '    time.sleep(1)',
+].join('\n')
+
+// ─── Experiment 09 — motor-control-rpi ────────────────────────────────────────
+
+/**
+ * An L298N driving a DC motor, and a 28BYJ-48 stepped through a ULN2003.
+ *
+ * TWO DEPARTURES FROM THE PUBLISHED CIRCUIT, both forced by the board and both
+ * recorded here and in model/examples.ts rather than quietly fudged.
+ *
+ *   GPIO23 AND GPIO24 ARE NOT ON A PICO'S HEADER. GP23/GP24/GP25 exist on the
+ *   die but are wired to on-board functions and are not brought out (see
+ *   makePico() in model/parts.ts — the header stops at GP22 and resumes at
+ *   GP26). IN1 and IN2 therefore move to GP19 and GP20, the two pads
+ *   immediately after GP18, so ENA/IN1/IN2 remain three consecutive header
+ *   pins. ENA keeps the published GPIO18, and the stepper keeps GPIO 17, 27, 22
+ *   and 5 verbatim — all four exist here.
+ *
+ *   THERE IS NO 12 V SUPPLY. The part library has no bench supply and the only
+ *   rail on this board above 3.3 V is VBUS, the `5V` pad. That clears both of
+ *   the L298N's requirements — VSS wants 4.5–7 V, VS wants at least VIH + 2.5 —
+ *   and it makes the driver's real cost visible: two transistors in series drop
+ *   about 2.55 V, so the motor sees roughly 2.44 V of the 5 V it is fed. A limp
+ *   motor here is the L298N, not a defect.
+ *
+ * The stepper's common tap and the ULN2003's COM both go to the same 5 V pad:
+ * COM is the flyback diodes' cathode rail and has to sit at the coil supply or
+ * the diodes conduct in normal operation. Both grounds are wired to the Pico's
+ * — an L298N or a ULN2003 that does not share a ground with the MCU has no
+ * reference for what a logic high is, and both models say so by doing nothing.
+ */
+export const MOTOR_CONTROL_RPI: CircuitDoc = {
+  parts: [
+    { id: 'pico', type: 'raspberry_pi_pico', x: 60, y: 40, rotation: 0, props: {} },
+    { id: 'l298n', type: 'l298n', x: 240, y: 40, rotation: 0, props: {} },
+    { id: 'motor', type: 'dc_motor', x: 450, y: 40, rotation: 0, props: { load: 0 } },
+    { id: 'uln', type: 'uln2003', x: 240, y: 220, rotation: 0, props: {} },
+    { id: 'stepper', type: 'stepper_28byj48', x: 420, y: 220, rotation: 0, props: {} },
+  ],
+  wires: [
+    // L298N supplies. Both screws come off VBUS: see the header above.
+    w('mc1', ['l298n', 'VS'], ['pico', '5V'], RED),
+    w('mc2', ['l298n', 'VSS'], ['pico', '5V'], RED),
+    w('mc3', ['l298n', 'GND'], ['pico', 'GND.5'], BLACK),
+    // Logic: ENA on the published GPIO18, IN1/IN2 moved to GP19/GP20.
+    w('mc4', ['l298n', 'ENA'], ['pico', 'GP18'], BLUE),
+    w('mc5', ['l298n', 'IN1'], ['pico', 'GP19'], GREEN),
+    w('mc6', ['l298n', 'IN2'], ['pico', 'GP20'], GREEN),
+    // Channel A's output pair to the motor.
+    w('mc7', ['l298n', 'OUT1'], ['motor', '1'], YELLOW),
+    w('mc8', ['l298n', 'OUT2'], ['motor', '2'], YELLOW),
+    // ULN2003: the four published step pins, its own ground, and COM at the
+    // coil supply so the flyback diodes are reverse-biased while the motor runs.
+    w('mc9', ['uln', 'IN1'], ['pico', 'GP17'], GREEN),
+    w('mc10', ['uln', 'IN2'], ['pico', 'GP27'], GREEN),
+    w('mc11', ['uln', 'IN3'], ['pico', 'GP22'], GREEN),
+    w('mc12', ['uln', 'IN4'], ['pico', 'GP5'], GREEN),
+    w('mc13', ['uln', 'GND'], ['pico', 'GND.6'], BLACK),
+    w('mc14', ['uln', 'COM'], ['pico', '5V'], RED),
+    // The motor's five leads: common tap to 5 V, four phases to the sinks.
+    w('mc15', ['stepper', 'COM'], ['pico', '5V'], RED),
+    w('mc16', ['uln', 'OUT1'], ['stepper', 'A'], YELLOW),
+    w('mc17', ['uln', 'OUT2'], ['stepper', 'B'], YELLOW),
+    w('mc18', ['uln', 'OUT3'], ['stepper', 'C'], YELLOW),
+    w('mc19', ['uln', 'OUT4'], ['stepper', 'D'], YELLOW),
+  ],
+}
+
+/**
+ * The published RPi.GPIO program, transliterated.
+ *
+ *   GPIO.setmode(GPIO.BCM)                  — gone; a Pico has only GP numbers
+ *   GPIO.setup(p, GPIO.OUT)                 → Pin(p, Pin.OUT)
+ *   GPIO.PWM(ENA, 1000); pwm.start(0)       → PWM(Pin(18)); freq(1000);
+ *                                             duty_u16(0)
+ *   pwm.ChangeDutyCycle(percent)            → duty_u16(percent * 65535 // 100).
+ *                                             RPi.GPIO takes 0–100, the RP2040's
+ *                                             PWM slice takes a 16-bit compare
+ *                                             value; the arithmetic is the whole
+ *                                             difference.
+ *   GPIO.cleanup()                          — no equivalent, and release() below
+ *                                             does the part that MATTERS on a
+ *                                             bench: a stepper left energised
+ *                                             holds its position by dissipating
+ *                                             about 400 mW in one winding and
+ *                                             gets hot doing nothing.
+ *
+ * THE HALF-STEP RING IS THE PUBLISHED ONE AND IT IS CORRECT. Written out as the
+ * listing has it, the eight rows are A+D, A, A+B, B, B+C, C, C+D, D — the same
+ * cycle as HALF_STEP_SEQUENCE in lib/simulator/devices.ts, entered one position
+ * further round. Consecutive rows differ in exactly ONE bit, which is why the
+ * four separate `Pin.value()` writes inside a step can never produce a pattern
+ * that is off the ring: whichever order they land in, the intermediate states
+ * are the row you left and the row you are entering. StepTracker REFUSES an
+ * off-ring pattern (0b1010 energises two coils wound in opposition, so a real
+ * rotor feels no net field), so this is not a detail the model would forgive.
+ *
+ * ONE CHANGE OF SUBSTANCE. The listing rebuilds the pattern from row zero on
+ * every call, so a second `step()` jumps from wherever the first one stopped
+ * back to row zero — up to four ring positions in one go, which a real motor
+ * meets as a lurch or a lost step and which the model counts as a sequence
+ * error. Walking a persistent `phase` index ±1 is what makes a run of steps
+ * reversible, and it is what turns the published `step(512)` into a shaft angle
+ * that can be checked: 4096 half-steps to one output revolution, so 1024 of
+ * them is exactly 90°.
+ */
+export const MOTOR_CONTROL_RPI_SCRIPT = [
+  'from machine import Pin, PWM',
+  'import time',
+  '',
+  '# -- DC motor, L298N channel A -------------------------------------------',
+  '# GPIO23/24 in the published circuit are not brought out on a Pico header, so',
+  '# IN1/IN2 move to GP19/GP20. ENA keeps the published GPIO18.',
+  'ENA, IN1, IN2 = 18, 19, 20',
+  '',
+  'in1 = Pin(IN1, Pin.OUT, value=0)',
+  'in2 = Pin(IN2, Pin.OUT, value=0)',
+  'ena = PWM(Pin(ENA))',
+  'ena.freq(1000)              # GPIO.PWM(ENA, 1000)',
+  'ena.duty_u16(0)             # pwm.start(0)',
+  '',
+  'def speed(percent):',
+  '    """RPi.GPIO takes 0-100; an RP2040 PWM slice takes a 16-bit compare."""',
+  '    ena.duty_u16(percent * 65535 // 100)',
+  '',
+  'def motor_forward(percent):',
+  '    in1.value(1)            # current leaves OUT1, returns through OUT2',
+  '    in2.value(0)',
+  '    speed(percent)',
+  '',
+  'def motor_reverse(percent):',
+  '    in1.value(0)',
+  '    in2.value(1)',
+  '    speed(percent)',
+  '',
+  'def motor_stop():',
+  '    speed(0)                # pwm.ChangeDutyCycle(0)',
+  '    in1.value(0)',
+  '    in2.value(0)',
+  '',
+  '# -- Stepper, 28BYJ-48 through a ULN2003 ---------------------------------',
+  'STEP_PINS = (17, 27, 22, 5)   # the published GPIO numbers, all four on the header',
+  'step = [Pin(p, Pin.OUT, value=0) for p in STEP_PINS]',
+  '',
+  '# The published half-step ring: A+D, A, A+B, B, B+C, C, C+D, D. Consecutive',
+  '# rows differ in one bit, which is what makes it a half-step sequence and not',
+  '# just eight patterns.',
+  'SEQ = ((1, 0, 0, 1), (1, 0, 0, 0), (1, 1, 0, 0), (0, 1, 0, 0),',
+  '       (0, 1, 1, 0), (0, 0, 1, 0), (0, 0, 1, 1), (0, 0, 0, 1))',
+  '',
+  '# 8 half-steps per electrical cycle x 8 cycles per motor revolution x the',
+  "# 28BYJ-48's 64:1 gearbox = 4096 half-steps at the OUTPUT shaft.",
+  'HALF_STEPS_PER_REV = 4096',
+  '',
+  '# Start on a SINGLE-coil row (rows 1, 3, 5, 7 energise one winding; the even',
+  '# ones energise two). Four Pin.value() calls happen one after another, so',
+  '# entering a two-coil row from rest means the shaft briefly sits on the',
+  "# one-coil row in between - a real half-step, and the model counts it. From a",
+  '# single-coil row, exactly one bit changes and the origin is clean.',
+  'phase = 1',
+  '',
+  'def energise(idx):',
+  '    row = SEQ[idx]',
+  '    for i in range(4):',
+  '        step[i].value(row[i])',
+  '',
+  'def rotate(half_steps, delay_ms=2):',
+  '    """Walk the ring one position per step, so a run is reversible."""',
+  '    global phase',
+  '    d = 1 if half_steps > 0 else -1',
+  '    for _ in range(abs(half_steps)):',
+  '        phase = (phase + d) % 8',
+  '        energise(phase)',
+  '        time.sleep_ms(delay_ms)',
+  '',
+  'def release():',
+  '    """A stepper left energised holds position by getting hot - about 400 mW',
+  '    in one winding. GPIO.cleanup() did this by accident; here it is on',
+  '    purpose."""',
+  '    global phase',
+  '    # Park on a single-coil row first. Dropping two coils means writing them',
+  '    # one at a time, and the pattern in between is a legal half-step the rotor',
+  '    # really does follow - so leaving from a two-coil row nudges the shaft one',
+  '    # half-step on the way to nowhere.',
+  '    if sum(SEQ[phase]) > 1:',
+  '        phase = (phase + 1) % 8',
+  '        energise(phase)',
+  '        time.sleep_ms(2)',
+  '    for p in step:',
+  '        p.value(0)',
+  '',
+  'print("L298N: ENA=GP18 IN1=GP19 IN2=GP20   ULN2003: IN1-IN4 = GP17, GP27, GP22, GP5")',
+  '',
+  '# Energise the starting row and let the rotor settle on it. Position is',
+  '# measured from the first pattern the coils are given, so without this the',
+  '# first commanded half-step defines zero instead of counting as one.',
+  'energise(phase)',
+  'time.sleep_ms(20)',
+  '',
+  'while True:',
+  '    for duty in (40, 70, 100):',
+  '        motor_forward(duty)',
+  '        print("DC motor: forward, ENA duty %d%% at 1 kHz" % duty)',
+  '        time.sleep(1)',
+  '    motor_stop()',
+  '    print("DC motor: stopped")',
+  '    time.sleep(1)',
+  '',
+  '    motor_reverse(70)',
+  '    print("DC motor: reverse, ENA duty 70% at 1 kHz")',
+  '    time.sleep(2)',
+  '    motor_stop()',
+  '    print("DC motor: stopped")',
+  '',
+  '    quarter = HALF_STEPS_PER_REV // 4',
+  '    print("Stepper: %d half-steps forward = %.1f degrees"',
+  '          % (quarter, 360.0 * quarter / HALF_STEPS_PER_REV))',
+  '    rotate(quarter)',
+  '    print("Stepper: %d half-steps back to zero" % quarter)',
+  '    rotate(-quarter)',
+  '    release()',
+  '    print("Stepper: coils off, shaft free")',
+  '    time.sleep(1)',
+].join('\n')
+
 // ─── Experiment 10 — home-automation-rpi ──────────────────────────────────────
 
 /**
@@ -205,10 +524,15 @@ export const DHT11_RPI_SCRIPT = [
  * 1-Wire slot below is real and goes through the solver. What is not real is the
  * HTTP, and the code says so where it happens rather than pretending.
  *
- * ASCII ONLY, deliberately. The script reaches the interpreter through an
- * emulated USB CDC link that this engine reads a byte at a time, so a degree
- * sign or an arrow would arrive as mojibake in both directions. The published
- * text's "C" and "->" stand in for their typographic originals.
+ * ASCII HERE, THOUGH NO LONGER BECAUSE IT HAS TO BE. This note used to read
+ * "ASCII only, deliberately", because the CDC link decoded a byte as a
+ * character in both directions and anything above 0x7F arrived as mojibake.
+ * That defect is fixed — pico/engine.ts now encodes the script as UTF-8 on the
+ * way in and decodes the console as UTF-8, streaming, on the way out, and
+ * ds18b20-rpi prints a real degree sign to prove it. These two scripts keep
+ * "C" and "->" because the canonical widget they mirror prints exactly that,
+ * and matching the text a student is comparing against is worth more than the
+ * typography.
  */
 
 /**
@@ -510,6 +834,18 @@ export const PICO_EXPERIMENTS: Record<string, PicoExperiment> = {
     title: 'DHT11 Temperature & Humidity with Raspberry Pi',
     doc: DHT11_RPI,
     script: DHT11_RPI_SCRIPT,
+  },
+  'ds18b20-rpi': {
+    slug: 'ds18b20-rpi',
+    title: 'DS18B20 Temperature Sensor with Raspberry Pi',
+    doc: DS18B20_RPI,
+    script: DS18B20_RPI_SCRIPT,
+  },
+  'motor-control-rpi': {
+    slug: 'motor-control-rpi',
+    title: 'DC Motor & Stepper Motor Control with Raspberry Pi',
+    doc: MOTOR_CONTROL_RPI,
+    script: MOTOR_CONTROL_RPI_SCRIPT,
   },
   'home-automation-rpi': {
     slug: 'home-automation-rpi',

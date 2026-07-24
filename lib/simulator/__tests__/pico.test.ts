@@ -35,6 +35,8 @@ import {
 import { PICO_PART, gpioIndexOf, adcChannelOf } from '../pico/board'
 import { BEHAVIOURAL_CPU_SURFACE, NANOS_PER_AVR_CYCLE } from '../pico/clock-shim'
 import { PICO_EXPERIMENTS } from '../pico/experiments'
+import { EXPERIMENT_STARTERS } from '../model/examples'
+import { StepTracker, stepPhaseIndex } from '../devices'
 import { BOARDS, detectBoard } from '../model/boards'
 import { PALETTE, PART_LIBRARY, getPart } from '../model/parts'
 import type { CircuitDoc, DocWire, PlacedPart } from '../model/document'
@@ -1507,6 +1509,241 @@ group('N. A behavioural device survives an edit that did not change it')
   })
   truth('deleting the part retires its device', liveDevices(eng).length === 0,
     '0 devices', String(liveDevices(eng).length))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('O. Every Pico experiment ships a script, on pins its starter provides')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * THE DEFECT THIS GROUP EXISTS FOR. PICO_EXPERIMENTS held four slugs, and two
+   * Pico experiments — ds18b20-rpi and motor-control-rpi — therefore opened with
+   * an EMPTY editor, "REPL idle — no script", and a disabled "Reset to starter"
+   * button, because CircuitEditor gates that button on the starter program
+   * having a length. On a board that does nothing at all without code, that is
+   * not a degraded experiment; it is one that cannot be started or recovered.
+   *
+   * So the first assertion is coverage: every Pico STARTER must have a script,
+   * derived from EXPERIMENT_STARTERS rather than from a list typed out here, so
+   * that adding a twelfth Pico starter and forgetting its script fails loudly.
+   *
+   * The rest is the other half of the same defect. A script that addresses pins
+   * the student's board does not have is worse than no script — the published
+   * content really does call for GPIO23 and GPIO24, which exist on a Raspberry
+   * Pi SBC and are not brought out on a Pico — so every pin number in a script
+   * is checked against the header, and against the worked circuit next to it.
+   */
+  const picoSlugs = Object.entries(EXPERIMENT_STARTERS)
+    .filter(([, doc]) => detectBoard(doc).board?.type === 'raspberry_pi_pico')
+    .map(([slug]) => slug)
+    .sort()
+
+  truth(
+    'the starters name more than the four experiments that used to have scripts',
+    picoSlugs.length === 6,
+    '6 Pico starters',
+    `${picoSlugs.length}: ${picoSlugs.join(', ')}`,
+  )
+
+  const headerPins = new Set(PICO_PART.pins.map((p) => p.id))
+  /** GP numbers actually brought out on the header — 23, 24 and 25 are not. */
+  const headerGpios = new Set(
+    PICO_PART.pins.map((p) => /^GP(\d+)$/.exec(p.id)?.[1]).filter((n): n is string => !!n),
+  )
+
+  /**
+   * Pin numbers a MicroPython script hands to `machine.Pin`.
+   *
+   * Two forms, because that is what the six scripts use: a literal inside a
+   * `Pin(...)` call, and a named constant declared before one. Comments are
+   * stripped first — motor-control-rpi's explain that GPIO23/24 do NOT exist,
+   * and a checker that read comments would fail on the sentence saying so.
+   *
+   * If a seventh script declares its pins some other way this extractor returns
+   * nothing for it and the "names at least one pin" assertion below fails. That
+   * is deliberate: silently understanding nothing is how a checker like this
+   * stops checking anything.
+   */
+  const PIN_CONSTANT = /^\s*([A-Z][A-Z0-9_]*(?:\s*,\s*[A-Z][A-Z0-9_]*)*)\s*=\s*(.+)$/
+  const PIN_NAME = /PIN|^ENA$|^ENB$|^IN[1-4]$|^DEVICES$/
+  function scriptPins(script: string): number[] {
+    const found = new Set<number>()
+    const code = script.replace(/#.*$/gm, '')
+    for (const m of code.matchAll(/Pin\(\s*(\d+)\s*[,)]/g)) found.add(Number(m[1]))
+    for (const line of code.split('\n')) {
+      const m = PIN_CONSTANT.exec(line)
+      if (!m) continue
+      const names = m[1].split(',').map((s) => s.trim())
+      if (!names.every((n) => PIN_NAME.test(n))) continue
+      for (const num of m[2].matchAll(/\b(\d+)\b/g)) found.add(Number(num[1]))
+    }
+    return [...found].sort((a, b) => a - b)
+  }
+
+  /** GP numbers the WORKED document wires the board to. */
+  function docGpios(doc: CircuitDoc): number[] {
+    const board = doc.parts.find((p) => p.type === 'raspberry_pi_pico')
+    const out = new Set<number>()
+    for (const wire of doc.wires) {
+      for (const end of [wire.from, wire.to]) {
+        if (end.partId !== board?.id) continue
+        const gp = /^GP(\d+)$/.exec(end.pinId)
+        if (gp) out.add(Number(gp[1]))
+      }
+    }
+    return [...out].sort((a, b) => a - b)
+  }
+
+  for (const slug of picoSlugs) {
+    const exp = PICO_EXPERIMENTS[slug]
+    truth(
+      `${slug} ships a script`,
+      !!exp && exp.script.trim().length > 0,
+      'a MicroPython program',
+      exp ? `${exp.script.split('\n').length} lines` : 'NOT IN PICO_EXPERIMENTS',
+    )
+    if (!exp) continue
+
+    const starter = EXPERIMENT_STARTERS[slug]
+    const pins = scriptPins(exp.script)
+    const wired = docGpios(exp.doc)
+
+    truth(
+      `${slug}: the script names at least one pin the extractor understands`,
+      pins.length > 0,
+      '≥ 1 pin',
+      JSON.stringify(pins),
+    )
+
+    /**
+     * THE CHECK THE DEFECT ASKED FOR. Every pin the script drives has to be a
+     * pad on the board the starter hands the student — not a BCM number that
+     * only a Raspberry Pi SBC brings out.
+     */
+    const offBoard = pins.filter((n) => !headerGpios.has(String(n)))
+    truth(
+      `${slug}: every pin it drives is on the Pico header`,
+      offBoard.length === 0,
+      'all GP pins exist on the header',
+      offBoard.length ? `NOT ON THE HEADER: ${offBoard.join(', ')}` : `GP ${pins.join(', ')}`,
+    )
+
+    /**
+     * And the worked circuit beside it uses the same pins. These two are
+     * authored together in pico/experiments.ts and are the answer to the same
+     * exercise: a script driving GP19 while the document wires GP23 would run,
+     * print, and teach a circuit that cannot work.
+     */
+    truth(
+      `${slug}: the worked circuit wires exactly those pins`,
+      JSON.stringify(pins) === JSON.stringify(wired),
+      `GP ${pins.join(', ')}`,
+      `GP ${wired.join(', ')}`,
+    )
+
+    const badPins = exp.doc.wires
+      .flatMap((wire) => [wire.from, wire.to])
+      .filter((end) => end.partId === exp.doc.parts.find((p) => p.type === 'raspberry_pi_pico')?.id)
+      .map((end) => end.pinId)
+      .filter((id) => !headerPins.has(id))
+    truth(
+      `${slug}: the worked circuit touches no pad the board does not have`,
+      badPins.length === 0,
+      'every pin id is on the part',
+      badPins.length ? `MISSING: ${[...new Set(badPins)].join(', ')}` : 'all present',
+    )
+
+    /**
+     * Finally, the parts. A script for hardware the student was not given is
+     * the same failure one layer up, so every component in the worked document
+     * has to be available in the starter's tray. The breadboard is excluded in
+     * both directions: the starters ship one for the pre-wired rails and none
+     * of the worked documents use one.
+     */
+    const tray = new Map<string, number>()
+    for (const p of starter.parts) {
+      if (p.type === 'breadboard') continue
+      tray.set(p.type, (tray.get(p.type) ?? 0) + 1)
+    }
+    const missing: string[] = []
+    for (const p of exp.doc.parts) {
+      if (p.type === 'breadboard') continue
+      const left = tray.get(p.type) ?? 0
+      if (left === 0) missing.push(p.type)
+      else tray.set(p.type, left - 1)
+    }
+    truth(
+      `${slug}: every part the answer uses is in the starter's tray`,
+      missing.length === 0,
+      'all present',
+      missing.length ? `NOT IN THE STARTER: ${[...new Set(missing)].join(', ')}` : 'all present',
+    )
+  }
+
+  /**
+   * The two scripts written for this defect, pinned to the pin assignments
+   * model/examples.ts documents for their starters — the published GPIO numbers
+   * where they exist on a Pico, and the recorded substitutes where they do not.
+   * Stated as literals because these ARE the numbers the lab sheet's circuit
+   * diagram asks the student to wire; deriving them from the code under test
+   * would assert only that it agrees with itself.
+   */
+  const PUBLISHED: Record<string, number[]> = {
+    // Data on GPIO4 with its 4.7 kΩ pull-up. Nothing moved.
+    'ds18b20-rpi': [4],
+    // ENA on the published GPIO18; IN1/IN2 move from GPIO23/24, which a Pico
+    // does not bring out, to GP19/GP20; the ULN2003 keeps GPIO 17, 27, 22, 5.
+    'motor-control-rpi': [5, 17, 18, 19, 20, 22, 27],
+  }
+  for (const [slug, expected] of Object.entries(PUBLISHED)) {
+    const exp = PICO_EXPERIMENTS[slug]
+    const pins = exp ? scriptPins(exp.script) : []
+    truth(
+      `${slug}: the pins are the lab sheet's, with the recorded substitutions`,
+      JSON.stringify(pins) === JSON.stringify(expected),
+      `GP ${expected.join(', ')}`,
+      `GP ${pins.join(', ')}`,
+    )
+  }
+
+  /**
+   * The half-step ring, checked against the model rather than against itself.
+   * StepTracker REFUSES a pattern that is not on the ring — 0b1010 energises two
+   * coils wound in opposition, so a real rotor feels no net field — and refuses
+   * a jump of three or more positions. The published sequence is the same cycle
+   * as HALF_STEP_SEQUENCE entered one position further round, so this walks it
+   * through the model and requires every row to be a single position's move.
+   */
+  {
+    const script = PICO_EXPERIMENTS['motor-control-rpi']?.script ?? ''
+    const rows = [...script.matchAll(/\((\d), (\d), (\d), (\d)\)/g)].map((m) =>
+      [1, 2, 3, 4].reduce((acc, i) => acc | (Number(m[i]) << (4 - i)), 0),
+    )
+    truth(
+      'motor-control-rpi declares eight coil patterns',
+      rows.length === 8,
+      '8 rows',
+      `${rows.length}: ${rows.map((r) => r.toString(2).padStart(4, '0')).join(' ')}`,
+    )
+    const offRing = rows.filter((r) => stepPhaseIndex(r) < 0)
+    truth(
+      'every one of them is on the model’s half-step ring',
+      rows.length === 8 && offRing.length === 0,
+      'all 8 on the ring',
+      offRing.length
+        ? `OFF-RING: ${offRing.map((r) => r.toString(2).padStart(4, '0')).join(', ')}`
+        : 'all on the ring',
+    )
+    const tracker = new StepTracker()
+    for (const r of rows) tracker.apply(r)
+    tracker.apply(rows[0]) // and the ring closes
+    truth(
+      'walking the eight rows in order advances eight half-steps, with no refusals',
+      tracker.halfSteps === 8 && tracker.sequenceErrors === 0,
+      '+8 half-steps, 0 sequence errors',
+      `${tracker.halfSteps} half-steps, ${tracker.sequenceErrors} errors`,
+    )
+  }
 }
 
 // ─── Report ──────────────────────────────────────────────────────────────────

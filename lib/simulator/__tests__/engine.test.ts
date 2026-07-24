@@ -34,6 +34,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { SimulationEngine, parseIntelHex, type EngineSnapshot } from '../engine'
+import { SerialTextDecoder } from '../serial-text'
 import { compile } from '../model/compile'
 import { EXPERIMENT_01, POT_ADC } from '../model/examples'
 import type { CircuitDoc, DocWire } from '../model/document'
@@ -511,6 +512,173 @@ group('B3. BUG B — an I/O pin shorted to ground faults while it is driving')
   truth('the message quantifies it against the pin rating',
     /200 mA/.test(message) && /40 mA/.test(message) && /On real hardware/.test(message),
     '200 mA vs 40 mA, names the consequence', message || '(none)')
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('C. The serial monitor decodes UTF-8, streaming')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * THE BUG. Both engines appended `String.fromCharCode(b)` per byte, which is
+   * a LATIN-1 decode. `pir-alarm-arduino` prints "No motion — System Idle"; the
+   * em dash goes out as its UTF-8 encoding, e2 80 94, and a Latin-1 decode made
+   * that three separate characters — the measured code points in the page were
+   * 226, 128, 148 where one 8212 belonged. Every sketch printing °C (c2 b0) or
+   * µ (c2 b5) had it too, which is most of the temperature experiments.
+   *
+   * WHY STREAMING IS THE WHOLE POINT. The AVR USART hands over exactly ONE byte
+   * per callback, so a multi-byte character is ALWAYS split across writes; the
+   * Pico's CDC hands over whatever fitted in the last USB packet, so it is split
+   * whenever the packet boundary lands mid-character. A decoder constructed per
+   * write would answer U+FFFD for precisely the characters this fix exists to
+   * repair, which is why the split case is asserted at every offset rather than
+   * only at the easy one.
+   *
+   * Expectations are the UTF-8 standard's, not the engine's: the byte sequences
+   * are written out by hand and the expected code points are stated as numbers.
+   */
+  const EM_DASH = [0xe2, 0x80, 0x94] // U+2014
+  const DEGREE = [0xc2, 0xb0] // U+00B0
+
+  const whole = new SerialTextDecoder().bytes(new Uint8Array(EM_DASH))
+  truth(
+    'e2 80 94 in one write is one character, U+2014',
+    whole === '—' && whole.length === 1,
+    'U+2014 (—), 1 char',
+    `${JSON.stringify(whole)} (${whole.length} chars)`,
+  )
+
+  // The engine's own feed: one byte per call, which is what an AVR USART does.
+  for (const [label, bytes, expected] of [
+    ['em dash', EM_DASH, '—'],
+    ['degree sign', DEGREE, '°'],
+  ] as Array<[string, number[], string]>) {
+    const d = new SerialTextDecoder()
+    let out = ''
+    const partials: string[] = []
+    for (const b of bytes) {
+      const piece = d.byte(b)
+      partials.push(JSON.stringify(piece))
+      out += piece
+    }
+    truth(
+      `${label}, fed one byte at a time, is ONE character`,
+      out === expected && out.length === 1,
+      `${JSON.stringify(expected)} (1 char)`,
+      `${JSON.stringify(out)} (${out.length} chars) from ${partials.join(', ')}`,
+    )
+  }
+
+  /**
+   * Split at every interior offset. This is the case the task named and the one
+   * a non-streaming decoder gets wrong: the tail of a packet holds the lead
+   * byte and the head of the next holds the continuation.
+   */
+  for (let cut = 1; cut < EM_DASH.length; cut++) {
+    const d = new SerialTextDecoder()
+    const first = d.bytes(new Uint8Array(EM_DASH.slice(0, cut)))
+    const second = d.bytes(new Uint8Array(EM_DASH.slice(cut)))
+    truth(
+      `a UTF-8 sequence split ${cut}/${EM_DASH.length - cut} across two writes decodes to one character`,
+      first + second === '—' && (first + second).length === 1,
+      'U+2014, and nothing before the sequence completes',
+      `${JSON.stringify(first)} + ${JSON.stringify(second)}`,
+    )
+  }
+
+  // The exact string from the reproduction, byte for byte off the wire.
+  const line = 'No motion — System Idle'
+  const wire = new TextEncoder().encode(line)
+  const d = new SerialTextDecoder()
+  let got = ''
+  for (const b of wire) got += d.byte(b)
+  truth(
+    "pir-alarm's line survives a byte-at-a-time USART",
+    got === line,
+    JSON.stringify(line),
+    JSON.stringify(got),
+  )
+  truth(
+    'and the dash is U+2014, not 226/128/148',
+    got.codePointAt(got.indexOf('—')) === 0x2014 && !/â/.test(got),
+    '8212 at the dash, no 226',
+    JSON.stringify([...got].map((c) => c.codePointAt(0)).filter((n) => (n ?? 0) > 127)),
+  )
+
+  /**
+   * A lone continuation byte is not a character and must not become one. The
+   * old code turned 0xb0 into 'º'-adjacent nonsense with total confidence;
+   * U+FFFD is the honest answer, and it is what the encoding standard requires.
+   */
+  const lone = new SerialTextDecoder()
+  const loneOut = lone.byte(0xb0) + lone.byte(0x41)
+  truth(
+    'a byte that is not valid UTF-8 becomes U+FFFD, not an invented character',
+    loneOut === '�A',
+    'U+FFFD then A',
+    JSON.stringify([...loneOut].map((c) => c.codePointAt(0))),
+  )
+
+  /**
+   * reset() is for a stream that is genuinely discontinuous — the MCU has been
+   * reset under the decoder. Without it, a half-finished sequence from the old
+   * stream would be completed by the first byte of the new one.
+   */
+  const across = new SerialTextDecoder()
+  across.byte(0xe2)
+  across.reset()
+  const afterReset = across.byte(0x41)
+  truth(
+    'reset() drops a half-finished sequence instead of gluing it to the next stream',
+    afterReset === 'A',
+    '"A"',
+    JSON.stringify(afterReset),
+  )
+
+  /**
+   * And the engines must actually be on this path. Asserted against the SOURCE
+   * because the bug was one expression: a decoder that exists but is bypassed
+   * would pass every assertion above and ship the defect.
+   */
+  for (const rel of [
+    ['lib', 'simulator', 'engine.ts'],
+    ['lib', 'simulator', 'pico', 'engine.ts'],
+  ]) {
+    const src = fs.readFileSync(path.join(process.cwd(), ...rel), 'utf8')
+    const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const builds = /new SerialTextDecoder\(\)/.test(body)
+    const feeds = /\.(byte|bytes)\(/.test(body)
+    const latin1 = /String\.fromCharCode/.test(body)
+    truth(
+      `${rel.join('/')} routes serial bytes through the decoder`,
+      builds && feeds && !latin1,
+      'a SerialTextDecoder is built and fed; no String.fromCharCode',
+      `${builds ? 'built' : 'NOT BUILT'}, ${feeds ? 'fed' : 'NOT FED'}, ` +
+        `${latin1 ? 'String.fromCharCode STILL PRESENT' : 'no fromCharCode'}`,
+    )
+  }
+
+  /**
+   * The REVERSE direction, which only the Pico has: the student's source is
+   * typed into the emulated REPL. `charCodeAt` there was the same defect
+   * mirrored — a script containing a degree sign put one 0xB0 byte on the wire
+   * and MicroPython rejected it as an invalid UTF-8 start byte, so the fix on
+   * the way out would have been unreachable for any script that used one.
+   */
+  {
+    const src = fs.readFileSync(
+      path.join(process.cwd(), 'lib', 'simulator', 'pico', 'engine.ts'),
+      'utf8',
+    )
+    const body = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    truth(
+      'pico/engine.ts types the script into the REPL as UTF-8',
+      /TextEncoder\(\)/.test(body) && !/charCodeAt/.test(body),
+      'TextEncoder, no charCodeAt',
+      `${/TextEncoder\(\)/.test(body) ? 'TextEncoder' : 'NO TextEncoder'}, ` +
+        `${/charCodeAt/.test(body) ? 'charCodeAt STILL PRESENT' : 'no charCodeAt'}`,
+    )
+  }
 }
 
 // ─── Builders that need the fixtures above ────────────────────────────────────
