@@ -111,6 +111,13 @@ end $mig$;
 -- Same pre-wiring rule: supply plumbing done, every signal path open. The three
 -- LED branches (D2/D3/D4 → 220 Ω → anode, cathodes to the ground rail) and the
 -- optional D5 pedestrian button are the student's work.
+--
+-- THE THREE LEDs CARRY A `color` PROP, added after the LED gained one. They were
+-- three identical RED lamps until then, which is a poor traffic light. This
+-- block is edited in place rather than superseded because starters.test.ts §6.4
+-- deep-compares this graph against EXPERIMENT_STARTERS and §6.2 requires each
+-- starter to appear in exactly one migration — so this file stays the single
+-- copy, and 026 is what carries the change to a database 020 has already run on.
 do $mig$
 declare
   v_slug  text := 'traffic-light-arduino';
@@ -124,9 +131,9 @@ declare
     { "id": "r_red",      "type": "resistor",    "x": 60,  "y": 480, "rotation": 0, "props": { "ohms": 220 } },
     { "id": "r_yellow",   "type": "resistor",    "x": 160, "y": 480, "rotation": 0, "props": { "ohms": 220 } },
     { "id": "r_green",    "type": "resistor",    "x": 260, "y": 480, "rotation": 0, "props": { "ohms": 220 } },
-    { "id": "led_red",    "type": "led",         "x": 370, "y": 460, "rotation": 0, "props": {} },
-    { "id": "led_yellow", "type": "led",         "x": 430, "y": 460, "rotation": 0, "props": {} },
-    { "id": "led_green",  "type": "led",         "x": 490, "y": 460, "rotation": 0, "props": {} },
+    { "id": "led_red",    "type": "led",         "x": 370, "y": 460, "rotation": 0, "props": { "color": "red" } },
+    { "id": "led_yellow", "type": "led",         "x": 430, "y": 460, "rotation": 0, "props": { "color": "yellow" } },
+    { "id": "led_green",  "type": "led",         "x": 490, "y": 460, "rotation": 0, "props": { "color": "green" } },
     { "id": "btn",        "type": "push_button", "x": 560, "y": 470, "rotation": 0, "props": { "pressed": 0 } }
   ],
   "wires": [

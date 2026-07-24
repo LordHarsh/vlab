@@ -1,6 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { ChevronDown, ChevronRight, Play, RotateCcw, Square, X } from 'lucide-react'
 
 /**
@@ -485,6 +492,77 @@ export function writeCodeWidth(width: number): void {
   } catch {
     /* see readCodeWidth */
   }
+}
+
+/**
+ * The stored width, as an external store React can subscribe to.
+ *
+ * `useSyncExternalStore` rather than `useState` + an effect, for a reason that
+ * is not stylistic. localStorage does not exist during the server render, so
+ * ANY approach that reads it while producing the first client render disagrees
+ * with the server's HTML — React 19 treats that as a hydration mismatch and
+ * repairs it by discarding the client tree, which is a visible flash on every
+ * page load. Reading it in an effect instead avoids the mismatch but renders
+ * once at the default and once at the stored width, which is the cascading
+ * render the lint rule exists to prevent (and is a visible jump of the divider).
+ *
+ * This hook is the shape React provides for exactly this problem:
+ * `getServerSnapshot` returns the default so the server and the first client
+ * render agree, and the stored value is adopted in the same commit rather than
+ * in a follow-up one.
+ *
+ * The `storage` subscription is a genuine bonus rather than ceremony: a student
+ * with the lab open in two tabs gets the divider in the same place in both.
+ */
+let widthCache: number | null = null
+const widthListeners = new Set<() => void>()
+
+function subscribeCodeWidth(onChange: () => void): () => void {
+  widthListeners.add(onChange)
+  // Fired by OTHER tabs only, which is exactly the cross-tab case.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== null && e.key !== CODE_WIDTH_KEY) return
+    widthCache = null
+    onChange()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    widthListeners.delete(onChange)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+/**
+ * Cached deliberately. `useSyncExternalStore` calls this during render and
+ * compares with `Object.is`; hitting localStorage every time would be a
+ * synchronous disk-backed read per render, and any value that failed to compare
+ * equal would spin.
+ */
+function getCodeWidthSnapshot(): number {
+  if (widthCache === null) widthCache = readCodeWidth() ?? CODE_PANEL_DEFAULT
+  return widthCache
+}
+
+/** No localStorage on the server, so the default is the only honest answer. */
+function getCodeWidthServerSnapshot(): number {
+  return CODE_PANEL_DEFAULT
+}
+
+/** The code panel's width, and a setter that persists it. */
+export function useCodeWidth(): [number, (next: number) => void] {
+  const width = useSyncExternalStore(
+    subscribeCodeWidth,
+    getCodeWidthSnapshot,
+    getCodeWidthServerSnapshot,
+  )
+  const setWidth = useCallback((next: number) => {
+    const clamped = Math.min(CODE_PANEL_MAX, Math.max(CODE_PANEL_MIN, Math.round(next)))
+    if (clamped === widthCache) return
+    widthCache = clamped
+    writeCodeWidth(clamped)
+    for (const fn of widthListeners) fn()
+  }, [])
+  return [width, setWidth]
 }
 
 /**

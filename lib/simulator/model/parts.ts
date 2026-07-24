@@ -647,10 +647,16 @@ export interface LedColour {
  *
  * RED IS THE HISTORIC CONSTANT, deliberately. `LED_RED` in devices.ts is
  * { is: 1e-20, n: 1.8 }, fitted to the ngspice reference solves in
- * SIMULATOR_ARCHITECTURE.md §5.5 (220 Ω → 13.76 mA). ledSaturationCurrent(1.96)
- * gives 1.02e-20 — the same number to 2 %, i.e. 0.4 mV of Vf — so red keeps the
- * literal and every existing solver, engine and starter number stays put.
+ * SIMULATOR_ARCHITECTURE.md §5.5 (220 Ω → 13.76 mA against an ideal source).
+ * ledSaturationCurrent(1.96) gives 1.0198e-20 — the same number to 2 %, which
+ * is n·VT·ln(1.0198) = 0.91 mV of forward voltage — so red keeps the LITERAL
+ * and every existing solver, engine and starter number stays exactly put.
  * parts.test.ts asserts that agreement rather than trusting this comment.
+ *
+ * Measured through the compiler, Uno D13 (25 Ω pad) → 220 Ω → LED → GND:
+ * red 12.39 mA, orange 12.24, yellow 11.84, green/blue/white 7.47. On a Pico's
+ * 3.3 V rail through the same 220 Ω: red 5.16 mA against blue's 0.90 mA — the
+ * blue one is visibly dim, which is a real bench result students hit.
  */
 export const LED_COLOURS: ReadonlyArray<LedColour> = [
   { value: 'red', label: 'Red', body: '#d0342c', emit: [255, 70, 50], vfVolts: 1.96, is: 1e-20, n: LED_N },
@@ -1669,10 +1675,29 @@ export function splitValueUnit(
   if (!Number.isFinite(value) || value === 0) return { text: String(value || 0), unitIndex: base }
 
   const mag = Math.abs(value)
-  let best = base
+
+  /**
+   * The largest unit that still leaves the figure at 1 or above.
+   *
+   * `best` starts UNSET rather than at the base unit, and that is the whole
+   * correctness of this function. Seeding it at the base and only ever moving
+   * upward meant nothing below the stored unit could be reached: 0.47 µF
+   * displayed as "0.47 µF" instead of "470 nF", and a 100 pF capacitor — stored
+   * as 0.0001 µF — read as "0.0001 µF", which is exactly the unreadable figure
+   * the unit dropdown exists to abolish.
+   */
+  let best = -1
   for (let i = 0; i < units.length; i++) {
-    if (mag / units[i].mul >= 1 && units[i].mul >= units[best].mul) best = i
+    if (mag / units[i].mul >= 1 && (best < 0 || units[i].mul > units[best].mul)) best = i
   }
+
+  // Smaller than the smallest unit on the ladder: there is nothing left to step
+  // down to, so show it on that smallest unit rather than on the base.
+  if (best < 0) {
+    best = 0
+    for (let i = 1; i < units.length; i++) if (units[i].mul < units[best].mul) best = i
+  }
+
   return { text: trimFigure(value / units[best].mul), unitIndex: best }
 }
 
@@ -1689,6 +1714,21 @@ function trimFigure(n: number): string {
   if (!Number.isFinite(n)) return '0'
   if (Number.isInteger(n)) return String(n)
   return String(Number(n.toPrecision(6)))
+}
+
+/**
+ * Strip binary floating-point litter from a scaled value.
+ *
+ * `470 * 1e-3` is 0.47000000000000003, not 0.47. Without this that is the number
+ * written into the DOCUMENT — it is autosaved, it round-trips through JSON into
+ * the database, and it comes back into the text field as a seventeen-digit
+ * figure the student did not type and cannot correct. Twelve significant figures
+ * is far past any component tolerance (a 1 % resistor has three) and comfortably
+ * short of where the litter begins.
+ */
+function cleanFloat(n: number): number {
+  if (!Number.isFinite(n) || n === 0) return n
+  return Number(n.toPrecision(12))
 }
 
 export type ParseResult =
@@ -1720,7 +1760,7 @@ export function parseValueUnit(text: string, prop: PropSpec, unitIndex: number):
   const figure = Number(trimmed)
   if (!Number.isFinite(figure)) return { ok: false, reason: `"${trimmed}" is not a number.` }
 
-  const value = figure * unit.mul
+  const value = cleanFloat(figure * unit.mul)
   if (!Number.isFinite(value)) return { ok: false, reason: 'That value is too large.' }
 
   const min = prop.min ?? -Infinity

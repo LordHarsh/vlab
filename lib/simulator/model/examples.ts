@@ -199,9 +199,18 @@ export const STARTER_LED_DHT11: CircuitDoc = {
  * and Procedure sections both call for on D5 (pedestrian phase). The student
  * wires D2/D3/D4 → 220 Ω → anode and every cathode back to the ground rail.
  *
- * The three LEDs are electrically and visually identical — the part library has
- * one LED with a fixed red colour and no colour property — so the colour lives
- * in the part id, which is what the Measurements readout is keyed by.
+ * THE THREE LEDs ARE NOW ACTUALLY RED, YELLOW AND GREEN. They used to be three
+ * identical red LEDs distinguished only by their part ids, because the library
+ * had one LED with a hardcoded colour and no colour property — a traffic light
+ * whose three lamps were the same colour, which is the first thing a student
+ * looking at the canvas would notice was wrong.
+ *
+ * The colour is not cosmetic here, and this starter is where that shows. Green
+ * has a 3.2 V forward drop against red's ~2.0, so on the Uno's 5 V pad through
+ * the same 220 Ω the green lamp draws 7.47 mA where the red draws 12.39 — both
+ * perfectly serviceable, but genuinely different, and a student who measures
+ * them and finds two different numbers is seeing the real reason a designer
+ * picks a different series resistor per colour.
  */
 export const STARTER_TRAFFIC_LIGHT: CircuitDoc = {
   parts: [
@@ -210,9 +219,9 @@ export const STARTER_TRAFFIC_LIGHT: CircuitDoc = {
     { id: 'r_red', type: 'resistor', x: 60, y: 480, rotation: 0, props: { ohms: 220 } },
     { id: 'r_yellow', type: 'resistor', x: 160, y: 480, rotation: 0, props: { ohms: 220 } },
     { id: 'r_green', type: 'resistor', x: 260, y: 480, rotation: 0, props: { ohms: 220 } },
-    { id: 'led_red', type: 'led', x: 370, y: 460, rotation: 0, props: {} },
-    { id: 'led_yellow', type: 'led', x: 430, y: 460, rotation: 0, props: {} },
-    { id: 'led_green', type: 'led', x: 490, y: 460, rotation: 0, props: {} },
+    { id: 'led_red', type: 'led', x: 370, y: 460, rotation: 0, props: { color: 'red' } },
+    { id: 'led_yellow', type: 'led', x: 430, y: 460, rotation: 0, props: { color: 'yellow' } },
+    { id: 'led_green', type: 'led', x: 490, y: 460, rotation: 0, props: { color: 'green' } },
     { id: 'btn', type: 'push_button', x: 560, y: 470, rotation: 0, props: { pressed: 0 } },
   ],
   wires: powerRails(),

@@ -26,7 +26,7 @@ import {
   type Diode,
 } from '../devices'
 import type { NetId } from '../types'
-import { getPart } from './parts'
+import { getPart, ledColour } from './parts'
 import { pinKeyOf, type CircuitDoc, type PinRef } from './document'
 
 export interface CompiledNet {
@@ -593,7 +593,26 @@ export function compile(doc: CircuitDoc): CompileResult {
       const c = net({ partId: part.id, pinId: 'C' })
       if (a === undefined || c === undefined) continue
       const internal = circuit.allocNet()
-      const { devices, diode } = createLED(part.id, a, c, internal)
+      /**
+       * COLOUR IS ELECTRICAL, not decoration.
+       *
+       * A red LED drops ~2.0 V and a blue or green one ~3.2 V, so the same
+       * 220 Ω on the same 5 V Uno pad passes 12.39 mA of red and 7.47 mA of
+       * blue. Rendering the dome blue while solving it as red would put a
+       * number in the Measurements panel that no bench would ever produce — and
+       * on a Pico's 3.3 V rail the difference is the whole answer: 5.16 mA of
+       * red against 0.90 mA of blue, i.e. an LED that barely lights.
+       *
+       * `ledColour(undefined)` is red, whose `is` is the literal 1e-20 fitted
+       * against the ngspice reference solves — so a document that carries no
+       * colour (every starter authored before this prop, every saved attempt)
+       * compiles to exactly the circuit it did before.
+       */
+      const colour = ledColour(part.props.color)
+      const { devices, diode } = createLED(part.id, a, c, internal, {
+        is: colour.is,
+        n: colour.n,
+      })
       circuit.add(...devices)
       leds.set(part.id, diode)
       meters.set(part.id, diode)

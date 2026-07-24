@@ -197,8 +197,13 @@ const EXPECTED: Record<
      * is a capacitor and draws no DC current at all — and the PIR's
      * `warmup: 0` is what stops the starter looking dead for the first minute.
      * Drop one and the part silently falls back to a library default.
+     *
+     * `string` as well as `number` because an LED's colour is a string, and it
+     * is a prop of exactly this kind: green's 3.2 V forward drop against red's
+     * ~2.0 V changes the current through the same resistor, so a dropped
+     * `color` is a silent electrical change, not a cosmetic one.
      */
-    props: Record<string, Record<string, number>>
+    props: Record<string, Record<string, number | string>>
   }
 > = {
   'led-dht11-arduino': {
@@ -231,10 +236,19 @@ const EXPECTED: Record<
     wires: 4,
     types: { arduino_uno: 1, breadboard: 1, led: 3, push_button: 1, resistor: 3 },
     ohms: [220, 220, 220],
+    /**
+     * The three lamps carry a colour, and a traffic light is the one circuit
+     * where three identical red LEDs is not a cosmetic complaint. Asserted here
+     * because the colour is electrical: dropping `color: 'green'` would put a
+     * red LED's 12.39 mA where the finished circuit measures 7.47 mA.
+     */
     props: {
       r_red: { ohms: 220 },
       r_yellow: { ohms: 220 },
       r_green: { ohms: 220 },
+      led_red: { color: 'red' },
+      led_yellow: { color: 'yellow' },
+      led_green: { color: 'green' },
       btn: { pressed: 0 },
     },
   },
@@ -727,6 +741,44 @@ const COMPLETED_PIR_ALARM: CircuitDoc = {
   check('5.12 experiment 3 finished: the driven LED draws 5–20 mA', green > 5 && green < 20, `${green.toFixed(2)} mA`)
   check('5.13 experiment 3 finished: an undriven LED is dark', red < 0.01, `${red.toFixed(4)} mA`)
   check('5.14 experiment 3 finished: within the ~15 unknown budget', c.unknowns <= 15, String(c.unknowns))
+
+  /**
+   * THE COLOUR REACHED THE SOLVER, not just the artwork.
+   *
+   * This is the assertion that would have caught shipping LED colour as
+   * appearance-only, which is exactly what the first cut of it did: `parts.ts`
+   * carried a per-colour saturation current and `compile.ts` called
+   * `createLED(id, a, c, internal)` with no params, so every LED on the canvas
+   * was solved as red no matter what colour it was drawn.
+   *
+   * Driving the RED lamp instead and comparing against the green figure above
+   * is the whole check. A green LED's 3.2 V forward drop leaves less of the 5 V
+   * pad for the 220 Ω than red's ~2.0 V does, so red must draw materially MORE.
+   * Both are on the same rail through the same resistor, so nothing but the
+   * colour can account for a difference.
+   */
+  const redDriven = Math.abs(solveDoc(COMPLETED_TRAFFIC, ['D2']).c.leds.get('led_red')!.current) * 1000
+  check(
+    '5.12a experiment 3: the red lamp draws MORE than the green one — colour reaches the solve',
+    redDriven > green + 2,
+    `red ${redDriven.toFixed(2)} mA vs green ${green.toFixed(2)} mA`,
+  )
+  check(
+    '5.12b experiment 3: and the red lamp is itself in range',
+    redDriven > 5 && redDriven < 20,
+    `${redDriven.toFixed(2)} mA`,
+  )
+  /**
+   * The yellow lamp sits BETWEEN them. A model that simply split LEDs into
+   * "red" and "not red" would pass 5.12a and fail this.
+   */
+  const yellowDriven =
+    Math.abs(solveDoc(COMPLETED_TRAFFIC, ['D3']).c.leds.get('led_yellow')!.current) * 1000
+  check(
+    '5.12c experiment 3: yellow falls between red and green',
+    yellowDriven < redDriven && yellowDriven > green,
+    `red ${redDriven.toFixed(2)} > yellow ${yellowDriven.toFixed(2)} > green ${green.toFixed(2)} mA`,
+  )
 }
 
 {

@@ -11,13 +11,7 @@ import {
 } from 'react'
 import { Code2, Minimize2 } from 'lucide-react'
 import { CircuitCanvas } from './CircuitCanvas'
-import {
-  CODE_PANEL_DEFAULT,
-  CodePanel,
-  CodePanelResizer,
-  readCodeWidth,
-  writeCodeWidth,
-} from './CodePanel'
+import { CodePanel, CodePanelResizer, useCodeWidth } from './CodePanel'
 import { useFullscreenGate } from './FullscreenGate'
 import { detectBoard } from '@/lib/simulator/model/boards'
 import { EMPTY_CODE, readCodeFile, writeCodeFile } from '@/lib/simulator/model/code'
@@ -293,20 +287,35 @@ function ValueUnitControl({
   /**
    * The value this control itself last wrote.
    *
-   * Without it the effect below would reformat the box on every keystroke —
-   * committing `4.7` changes `value`, which would re-split it and overwrite the
-   * `4.7` the student is still typing. With it, the effect only fires for
-   * changes that came from SOMEWHERE ELSE: undo, a starter load, or the knob
-   * being dragged on the canvas.
+   * STATE, not a ref, and not by preference: the comparison below happens
+   * during render, and a ref may not be read or written there — React makes no
+   * promise about when a render runs, so a ref touched during one is a value
+   * that can silently disagree with what was committed.
+   *
+   * Its job is to tell apart the two ways `value` can change. Committing `4.7`
+   * changes it, and re-splitting then would overwrite the `4.7` the student is
+   * still typing. So only changes that came from SOMEWHERE ELSE — undo, a
+   * starter load, the knob being dragged on the canvas — reformat the box.
    */
-  const written = useRef(value)
+  const [lastWritten, setLastWritten] = useState(value)
 
-  useEffect(() => {
-    if (value === written.current) return
-    written.current = value
+  /**
+   * Adjusting state DURING RENDER, which is React's documented pattern for
+   * "some state needs to follow a prop" — not an effect.
+   *
+   * An effect would be a second render pass: the box would paint once with the
+   * stale figure and again with the new one, which for a value arriving from an
+   * undo is a visible flicker of the previous resistance. React sees a setState
+   * during the render of the same component, discards the in-progress output
+   * and re-runs immediately, before the browser paints anything — so there is
+   * one commit and no flicker. This is what the react-hooks lint rule steers
+   * toward, rather than something suppressed to satisfy it.
+   */
+  if (value !== lastWritten) {
+    setLastWritten(value)
     setDraft(splitValueUnit(value, units))
     setNote(null)
-  }, [value, units])
+  }
 
   function commit(text: string, unitIndex: number) {
     const result = parseValueUnit(text, prop, unitIndex)
@@ -321,7 +330,7 @@ function ValueUnitControl({
     } else {
       setNote(null)
     }
-    written.current = result.value
+    setLastWritten(result.value)
     onChange(result.value)
   }
 
@@ -344,7 +353,13 @@ function ValueUnitControl({
             setDraft((d) => ({ ...d, text: e.target.value }))
             commit(e.target.value, draft.unitIndex)
           }}
-          onBlur={() => setDraft(splitValueUnit(written.current, units))}
+          /* Leaving the field tidies a half-typed or rejected entry back to
+             what the document actually holds, so the box can never be left
+             showing a figure the simulation is not using. */
+          onBlur={() => {
+            setDraft(splitValueUnit(lastWritten, units))
+            setNote(null)
+          }}
           className={`${FIELD} flex-1 min-w-0 tabular-nums ${
             note?.kind === 'error' ? 'border-red-500' : ''
           }`}
@@ -875,28 +890,14 @@ export function CircuitEditor({
   /**
    * The code panel's width, remembered across reloads.
    *
-   * Seeded with the DEFAULT and adopted from storage in an effect, not read
-   * during the initial render. Reading localStorage in a `useState` initialiser
-   * would give the server one width and the client another, which React 19
-   * reports as a hydration mismatch and repairs by throwing the client tree
-   * away — a visible flash on every load, to save one frame.
+   * Persisted on every change rather than on drag end: the resizer streams
+   * widths and has no "finished" event, so a student who drags the divider and
+   * immediately reloads would otherwise lose it. One localStorage write per
+   * pointermove is a string assignment — cheaper than the layout the same event
+   * has already caused. See useCodeWidth for why this is an external store
+   * rather than state plus an effect.
    */
-  const [codeWidth, setCodeWidth] = useState(CODE_PANEL_DEFAULT)
-  useEffect(() => {
-    const stored = readCodeWidth()
-    if (stored !== null) setCodeWidth(stored)
-  }, [])
-
-  /**
-   * Persist on change rather than on drag end: the resizer streams widths and
-   * has no "finished" event, and a student who resizes and immediately reloads
-   * would otherwise lose it. One localStorage write per pointermove is a string
-   * assignment, which is cheaper than the layout the same event already caused.
-   */
-  const setAndStoreCodeWidth = useCallback((next: number) => {
-    setCodeWidth(next)
-    writeCodeWidth(next)
-  }, [])
+  const [codeWidth, setCodeWidth] = useCodeWidth()
 
   /**
    * Whether this document has a board whose program the student can edit.
@@ -1426,7 +1427,7 @@ export function CircuitEditor({
             three-column layout on a phone gives every column nothing. */}
         {sim.track === 'rp2040' && codeOpen && (
           <>
-            <CodePanelResizer width={codeWidth} onWidth={setAndStoreCodeWidth} />
+            <CodePanelResizer width={codeWidth} onWidth={setCodeWidth} />
             <div
               id="code-panel-region"
               /* The width lives in a custom property so it can apply from md up
