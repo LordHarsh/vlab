@@ -23,6 +23,7 @@ import {
   getPart,
   parseValueUnit,
   splitValueUnit,
+  type BoardType,
   type PartDefinition,
   type PropSpec,
 } from '@/lib/simulator/model/parts'
@@ -42,10 +43,38 @@ import {
 import { useAutosave, type RemoteTarget } from '@/lib/simulator/useAutosave'
 import { BLANK, EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
 
-const FIRMWARE = [
-  { url: '/sim/blink.hex', label: 'Blink', note: 'D13 on/off, 1 s' },
-  { url: '/sim/dht11.hex', label: 'DHT11', note: 'Experiment 01 sketch' },
-  { url: '/sim/pot.hex', label: 'Pot', note: 'analogRead(A0) → PWM on D9' },
+/**
+ * The prebuilt sketches, tagged with the board each was compiled FOR.
+ *
+ * The tag is load-bearing, not decoration. An ATmega328P image handed to a
+ * Mega does not error — it runs, and moves whichever pads the 328P's register
+ * addresses happen to name on an ATmega2560, which is silent nonsense. So the
+ * selector below only ever offers a board its own firmware, and a board with
+ * none gets an honest refusal instead of somebody else's binary.
+ *
+ * All three are rebuilt byte-identically by scripts/build-avr-hex.mjs; none is
+ * an unreproducible blob any more.
+ */
+const FIRMWARE: ReadonlyArray<{
+  url: string
+  label: string
+  note: string
+  board: BoardType
+}> = [
+  { url: '/sim/blink.hex', label: 'Blink', note: 'D13 on/off, 1 s', board: 'arduino_uno' },
+  { url: '/sim/dht11.hex', label: 'DHT11', note: 'Experiment 01 sketch', board: 'arduino_uno' },
+  {
+    url: '/sim/pot.hex',
+    label: 'Pot',
+    note: 'analogRead(A0) → PWM on D9',
+    board: 'arduino_uno',
+  },
+  {
+    url: '/sim/traffic-mega.hex',
+    label: 'Traffic',
+    note: 'Experiment 11 sketch — 12 lamps on pins 22–33, 4 pots on A0–A3',
+    board: 'arduino_mega',
+  },
 ]
 
 /**
@@ -979,24 +1008,45 @@ export function CircuitEditor({
    * ever resident.
    */
   /**
-   * An Arduino Mega gets NO firmware, deliberately, and therefore never starts.
+   * The sketches this document's board can actually run.
    *
-   * The emulated ATmega2560 is complete — vectors, timers, USART0, the 16-channel
-   * ADC and all eleven ports, all pinned against the datasheet in
-   * lib/simulator/__tests__/mega.test.ts. What does not exist is a Mega .hex:
-   * every image in public/sim/ was compiled for an ATmega328P, and there is no
-   * avr-gcc here to build another. Handing one of those to a Mega would not
-   * error — it would run, move whichever pads the 328P's register addresses
-   * happen to name on this part, and present the result as the student's sketch.
-   * Passing an empty url is what stops the worker fetching one at all, so the
-   * circuit still compiles, solves and reports, and nothing pretends to execute.
+   * A .hex is compiled for ONE part. An ATmega328P image handed to a Mega does
+   * not error — it runs, moves whichever pads the 328P's register addresses
+   * name on an ATmega2560, and presents the result as the student's sketch. So
+   * the selector is filtered by board rather than trusting the student not to
+   * pick the wrong one.
+   *
+   * A board with no firmware at all still gets an honest refusal: the empty url
+   * below stops the worker fetching anything, so the circuit compiles, solves
+   * and reports while nothing pretends to execute. That was every Mega until
+   * traffic-mega.hex existed; it is now no board, but the path stays because
+   * the next board added will land here first.
    */
-  const noFirmwareFor = useMemo(() => {
+  const boardFirmware = useMemo(() => {
     const board = detectBoard(doc).board
-    return board?.track === 'avr' && board.type === 'arduino_mega' ? board.label : null
+    if (!board || board.track !== 'avr') return []
+    return FIRMWARE.filter((f) => f.board === board.type)
   }, [doc])
 
-  const sim = useBoardSimulator(doc, { hexUrl: noFirmwareFor ? '' : hexUrl, script })
+  const noFirmwareFor = useMemo(() => {
+    const board = detectBoard(doc).board
+    if (!board || board.track !== 'avr') return null
+    return boardFirmware.length === 0 ? board.label : null
+  }, [doc, boardFirmware])
+
+  /**
+   * Keep the selection legal when the board changes.
+   *
+   * Swapping an Uno for a Mega leaves `hexUrl` pointing at a 328P image the new
+   * board must never be given, so it falls back to that board's first sketch.
+   * Derived during render rather than synced in an effect: an effect would let
+   * one frame reach the worker with the wrong firmware.
+   */
+  const activeHexUrl = boardFirmware.some((f) => f.url === hexUrl)
+    ? hexUrl
+    : (boardFirmware[0]?.url ?? '')
+
+  const sim = useBoardSimulator(doc, { hexUrl: noFirmwareFor ? '' : activeHexUrl, script })
   const { ready, running, error, speedRatio, start, stop, reset } = sim
   const snapshot: SharedSnapshot = sim.snapshot ?? NO_SNAPSHOT
 
@@ -1263,42 +1313,44 @@ export function CircuitEditor({
             language are stated instead, and the script itself is in the rail. A
             firmware selector over a MicroPython board would be a lie. */}
         {/*
-          THE MEGA HAS NO FIRMWARE YET, and says so rather than offering an
-          Uno's.
+          A BOARD IS ONLY EVER OFFERED ITS OWN FIRMWARE.
 
-          Every .hex in public/sim/ was compiled for an ATmega328P. Loaded into
-          an ATmega2560 it does not fail — the image parses, the CPU runs it,
-          and the pins it moves are whatever the 328P's register addresses
-          happen to be on this part. That is the silent-wrong-answer failure
-          SIMULATOR_ARCHITECTURE.md §2.3 forbids, so the picker is replaced by a
-          statement of fact. The emulated chip itself is complete and tested
-          (lib/simulator/__tests__/mega.test.ts); what is missing is a
-          toolchain, which is its own piece of work.
+          A .hex is compiled for one part. An ATmega328P image loaded into an
+          ATmega2560 does not fail — the image parses, the CPU runs it, and the
+          pins it moves are whatever the 328P's register addresses happen to be
+          on this part. That is the silent-wrong-answer failure
+          SIMULATOR_ARCHITECTURE.md §2.3 forbids, so the list is filtered by
+          board rather than trusting the student to pick correctly.
+
+          A board with nothing to offer still gets a statement of fact instead
+          of somebody else's binary. That was the Mega until traffic-mega.hex
+          was built from experiment 11's own published sketch; the branch stays
+          because it is what any future board hits first.
         */}
-        {sim.track === 'avr' && sim.board.type === 'arduino_mega' && (
-          <div className="flex items-center gap-2 shrink-0" data-testid="mega-firmware">
+        {sim.track === 'avr' && noFirmwareFor && (
+          <div className="flex items-center gap-2 shrink-0" data-testid="no-firmware">
             <span className="text-[11px] text-[#566573]">{sim.board.label}</span>
             <span className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-amber-300 bg-amber-50 text-amber-900">
-              No Mega firmware yet — the circuit solves, but nothing runs
+              No {noFirmwareFor} firmware yet — the circuit solves, but nothing runs
             </span>
           </div>
         )}
 
-        {sim.track === 'avr' && sim.board.type !== 'arduino_mega' && (
+        {sim.track === 'avr' && !noFirmwareFor && (
           <>
             <span className="text-[11px] text-[#566573] shrink-0">Firmware</span>
             <div className="flex shrink-0" role="group" aria-label="Firmware">
-              {FIRMWARE.map((f, i) => (
+              {boardFirmware.map((f, i) => (
                 <button
                   key={f.url}
                   data-testid={`fw-${f.label}`}
                   onClick={() => setHexUrl(f.url)}
                   title={f.note}
-                  aria-pressed={hexUrl === f.url}
+                  aria-pressed={activeHexUrl === f.url}
                   className={`h-8 px-2.5 text-xs border transition-colors ${
                     i === 0 ? 'rounded-l-[3px]' : '-ml-px'
-                  } ${i === FIRMWARE.length - 1 ? 'rounded-r-[3px]' : ''} ${
-                    hexUrl === f.url
+                  } ${i === boardFirmware.length - 1 ? 'rounded-r-[3px]' : ''} ${
+                    activeHexUrl === f.url
                       ? 'z-10 border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
                       : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1]'
                   }`}
