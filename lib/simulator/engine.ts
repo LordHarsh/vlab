@@ -39,9 +39,82 @@ import {
   type NortonPort,
 } from './devices'
 import type { CircuitDoc, PlacedPart } from './model/document'
-import type { SolveFault } from './types'
+import type { NetId, SolveFault, SolveResult } from './types'
 
 export const CLOCK_HZ = 16_000_000
+
+// ─── Transient stepping (TRANSIENT_DESIGN.md §4) ─────────────────────────────
+
+/**
+ * Backward-Euler steps per time constant.
+ *
+ * BE's error on an RC charge is exactly computable, which is what lets this be
+ * a derived number rather than a taste. The discrete solution is
+ * v(k) = V·(1 − r^k) with r = 1/(1 + h/τ), so at t = τ (k = τ/h = n steps):
+ *
+ *   n =  10   →  v/V = 1 − 1.1^−10   = 0.6145  vs  1 − e^−1 = 0.6321   (−2.8 %)
+ *   n =  50   →  v/V = 1 − 1.02^−50  = 0.6285  vs                      (−0.58 %)
+ *   n = 100   →  v/V = 1 − 1.01^−100 = 0.6303  vs                      (−0.29 %)
+ *
+ * The error is first-order in h, so halving the step halves it and doubles the
+ * cost. 50 buys sub-1 % timing — well under the tolerance of the electrolytic
+ * capacitor a student would actually solder — for half the work of 100.
+ */
+const STEPS_PER_TAU = 50
+
+/**
+ * Floor on the timestep, in seconds of SIMULATED time. This is a COST ceiling
+ * expressed as a step: 20 µs is at most 50 000 analog solves per simulated
+ * second, measured at 5.9 µs (linear RC) to 8.8 µs (RC plus an LED) per step on
+ * this machine, i.e. 0.30–0.44 s of wall clock per simulated second on top of
+ * whatever the AVR itself costs.
+ *
+ * A circuit whose real τ is below 20 µs/50 = 400 ns therefore gets stepped with
+ * h > τ. That is SAFE rather than merely tolerable, and it is the reason the
+ * design chose backward Euler: BE is L-stable, so h ≫ τ does not ring or
+ * diverge, it collapses to the DC steady state within a step or two — which is
+ * the physically right answer for a time constant far finer than anything the
+ * student can observe. A 1 µF cap straight across a driving pin (25 Ω, τ = 25 µs)
+ * settles in a few steps instead of a few hundred; it still settles to the same
+ * place. What is lost is resolution of the first microsecond, not correctness.
+ */
+const MIN_STEP_SECONDS = 20e-6
+
+/**
+ * Ceiling on the timestep, in seconds. A 100 kΩ × 470 µF pair has τ = 47 s, and
+ * τ/50 would be nearly a second — one step per twenty snapshots, so the student
+ * would watch a staircase rather than a curve. 5 ms is 200 steps per simulated
+ * second (free) and four steps per 20 Hz snapshot interval.
+ */
+const MAX_STEP_SECONDS = 5e-3
+
+/**
+ * The step used when no simulated time has actually passed since the last one.
+ *
+ * This is not a fudge, it is a limit. Two analog updates in the same CPU cycle
+ * (the first evaluate after construction, or a pin edge landing on the cycle a
+ * scheduled step already took) must still re-solve, because the drive changed —
+ * but a capacitor's charge cannot change in zero time. Geq = C/h with h → 0
+ * clamps to MAX_CONDUCTANCE and pins the branch at v_prev, which IS the
+ * zero-length-step answer. The fictitious 1 ns is bounded by one per evaluate
+ * and can never accumulate: any real gap is at least one 62.5 ns cycle, which
+ * is 62.5× larger, so the floor stops binding the moment time moves.
+ */
+const HOLD_STEP_SECONDS = 1e-9
+
+/**
+ * How often the timestep is re-derived, in seconds of simulated time.
+ *
+ * τ is not a constant of the circuit — it is R·C, and R is whatever the network
+ * presents across the capacitor RIGHT NOW. An MCU pin swings between 25 Ω
+ * driving and 100 MΩ floating, so the same 1 µF cap has a τ of 25 µs or 100 s
+ * depending on one bit in a port register. Re-measuring every 200 µs costs at
+ * most 5000 driving-point probes per simulated second at 1.36 µs each (~7 ms of
+ * wall clock per simulated second, under 1 %), and bounds how long a stale step
+ * size can persist to a fifth of a millisecond — which, again, only ever costs
+ * resolution, because BE cannot be destabilised by too large a step.
+ */
+const RETUNE_SECONDS = 200e-6
 
 /**
  * Hard cap on the memoisation cache, in entries.
@@ -176,6 +249,17 @@ export interface EngineSnapshot {
   /** Honest statement of what the DC engine cannot do for this circuit (§2.3). */
   limitations: string[]
   /**
+   * Timestep the transient loop is currently using, in seconds, or 0 when the
+   * circuit is purely resistive and is being solved as a DC operating point.
+   *
+   * Optional because both worker hooks build an EMPTY snapshot literal and the
+   * editor declares its own structural SharedSnapshot; a required field would
+   * break three files owned by other work for a diagnostic.
+   */
+  transientStep?: number
+  /** Backward-Euler steps taken so far. 0 on a purely resistive circuit. */
+  transientSteps?: number
+  /**
    * partId → whatever that part is doing that a node voltage cannot express:
    * the pitch a buzzer is sounding, the rpm and direction of a motor, whether a
    * PIR is still warming up. REPORTED state, derived from the solved circuit and
@@ -207,6 +291,39 @@ export class SimulationEngine {
   private topologyVersion = 0
 
   private latest: CachedSolution = EMPTY_SOLUTION
+
+  /**
+   * True while the compiled circuit contains a capacitor or an inductor.
+   *
+   * This is the switch between the two run loops, and it is also the switch that
+   * DISABLES THE MEMOISATION CACHE. That is not an optimisation being given up
+   * reluctantly, it is a correctness requirement: stateKey() describes the pin
+   * drive vector and the behavioural drives, and a capacitor's voltage is state
+   * that appears in NEITHER. A blinking pin returns to a key it has visited
+   * before on every cycle, so a cache hit would restore the node voltages from
+   * the first time that pin was high and freeze the charge curve flat — the
+   * engine would report an RC circuit as a resistive divider, with ok:true, for
+   * as long as the student watched it.
+   *
+   * Keying the cache correctly is not available either: the key would have to
+   * carry every reactive element's stored state, which is continuous, so every
+   * lookup would miss AND the map would grow without bound. The honest choice is
+   * to not have a cache in this mode. It costs nothing in practice — the
+   * transient loop re-solves on a schedule regardless, so there was never a
+   * repeated solve for the cache to elide.
+   */
+  private transient = false
+  /** Timestep in seconds, derived in tuneStep(). */
+  private stepSeconds = 0
+  /** The same step in CPU cycles, which is the unit the run loop compares in. */
+  private stepCycles = 0
+  /** cpu.cycles at the last analog update. The transient's notion of "now". */
+  private lastStepCycles = 0
+  /** cpu.cycles at which the next scheduled step falls due. */
+  private nextStepCycles = 0
+  /** cpu.cycles at which the timestep is next re-derived. */
+  private retuneCycles = 0
+  private transientSteps = 0
 
   /**
    * Time-weighted averaging of device currents.
@@ -345,6 +462,7 @@ export class SimulationEngine {
     this.compiled = compile(doc)
     this.rebuildWatchList()
     this.buildBehavioural()
+    this.startTransient(null)
     this.evaluate()
   }
 
@@ -352,16 +470,97 @@ export class SimulationEngine {
    * Swap in an edited circuit. The firmware keeps running — a student rewiring
    * mid-run is a normal thing to do, and resetting the MCU would lose the
    * program state they are trying to observe.
+   *
+   * The same argument applies to a half-charged capacitor, which is why the
+   * reactive state is lifted out BEFORE the recompile and put back after. See
+   * captureReactive().
    */
   setDocument(doc: CircuitDoc): void {
+    const carried = this.captureReactive()
     this.doc = doc
     this.compiled = compile(doc)
     this.rebuildWatchList()
     this.buildBehavioural()
     this.topologyVersion++
     this.cache.clear()
+    this.startTransient(carried)
     this.dirtyFlag[0] = 1
     this.evaluate()
+  }
+
+  /**
+   * Stored charge and inductor current, keyed by part id and stamped with the
+   * nets the element was bridging when it acquired them.
+   *
+   * The terminals are carried because they are what makes putting the state back
+   * legitimate. compile() re-derives net ids from the document every time, so an
+   * element still on nets [3, 0] after the edit is still across the same two
+   * points of the same circuit and its charge is still the same charge. An
+   * element the student re-wired is electrically somewhere else, and insisting
+   * its old voltage is still valid would be inventing a number — those start
+   * again from their initial condition, which is what physically happens when
+   * you pull a lead out and put it somewhere else.
+   */
+  private captureReactive(): Map<string, { terminals: readonly [NetId, NetId]; state: number }> {
+    const out = new Map<string, { terminals: readonly [NetId, NetId]; state: number }>()
+    for (const [partId, device] of this.compiled.reactive) {
+      out.set(partId, { terminals: device.terminals, state: device.state })
+    }
+    return out
+  }
+
+  /**
+   * Put the analog side into (or out of) transient mode for the CURRENT compile.
+   *
+   * beginTransient() resets every reactive element to its t=0 condition, so the
+   * carried state is restored immediately afterwards for the elements that
+   * earned it. `lastStepCycles` is reset to the CPU's cycle counter rather than
+   * to zero: the MCU keeps running across an edit, so the transient's clock has
+   * to rejoin it where it is, not restart.
+   */
+  private startTransient(
+    carried: Map<string, { terminals: readonly [NetId, NetId]; state: number }> | null,
+  ): void {
+    this.transient = this.compiled.circuit.hasReactive
+    if (!this.transient) {
+      this.stepSeconds = 0
+      this.stepCycles = 0
+      return
+    }
+    this.compiled.circuit.beginTransient()
+    if (carried) {
+      for (const [partId, device] of this.compiled.reactive) {
+        const was = carried.get(partId)
+        if (!was) continue
+        if (was.terminals[0] !== device.terminals[0] || was.terminals[1] !== device.terminals[1]) {
+          continue
+        }
+        device.state = was.state
+      }
+    }
+    this.lastStepCycles = this.cpu.cycles
+    this.retuneCycles = this.cpu.cycles
+    this.tuneStep()
+  }
+
+  /**
+   * Re-derive the timestep from the circuit's own smallest time constant.
+   *
+   * A null probe (no reactive element the probe could measure, or a matrix it
+   * could not factor) falls back to the CEILING rather than the floor. Erring
+   * large is the safe direction: too small a step only wastes wall clock, but it
+   * wastes it without bound, and a pathological circuit that defeats the probe
+   * would otherwise pin the engine at 50 000 solves a second forever.
+   */
+  private tuneStep(): void {
+    const tau = this.compiled.circuit.smallestTimeConstant()
+    const h =
+      tau === null
+        ? MAX_STEP_SECONDS
+        : Math.min(Math.max(tau / STEPS_PER_TAU, MIN_STEP_SECONDS), MAX_STEP_SECONDS)
+    this.stepSeconds = h
+    this.stepCycles = Math.max(1, Math.round(h * CLOCK_HZ))
+    this.nextStepCycles = this.lastStepCycles + this.stepCycles
   }
 
   /** Pins that are electrically connected. Unconnected pins are not in the key. */
@@ -628,65 +827,135 @@ export class SimulationEngine {
     }
   }
 
+  /** Stamp the MCU's pins onto their Norton ports from the current drive vector. */
+  private stampPins(): void {
+    for (const [name, port] of this.compiled.mcuPorts) {
+      const { g, i } = nortonFor(this.drives.get(name) ?? 'float')
+      port.set(g, i)
+    }
+  }
+
+  /**
+   * Turn a converged solution into the published operating point.
+   *
+   * Shared by the DC and the transient paths deliberately: the two differ in HOW
+   * they reach a solution and in nothing else, and a readout that drifted
+   * between them (an LED brightness curve applied on one path but not the other)
+   * would be invisible until a student compared two circuits.
+   */
+  private publish(res: SolveResult): void {
+    this.voltages = res.voltages
+    // Publish solved node voltages to the ADC. Unconnected analog pins read
+    // 0 V: a real floating input picks up noise, but a deterministic 0 is the
+    // honest choice for a teaching tool.
+    for (const [pin, ch] of this.chip.adcPins) {
+      const netId = this.compiled.analogNets.get(pin)
+      this.adc.channelValues[ch] =
+        netId !== undefined && netId < res.voltages.length ? res.voltages[netId] : 0
+    }
+
+    const brightness: Record<string, number> = {}
+    const currents: Record<string, number> = {}
+    for (const [partId, dev] of this.compiled.meters) currents[partId] = dev.current
+    for (const [partId, diode] of this.compiled.leds) {
+      const i = Math.max(diode.current, 0)
+      // Perceptual curve — a linear map makes a dim LED look completely off.
+      brightness[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
+    }
+    this.latest = {
+      brightness,
+      currents,
+      faults: res.faults,
+      solveError: res.ok ? null : (res.error ?? 'circuit did not solve'),
+      voltages: res.voltages,
+    }
+  }
+
+  /** Let the circuit and the behavioural models see the new operating point. */
+  private settle(): void {
+    this.dirtyFlag[0] = 0
+    this.driveInputs()
+    for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
+  }
+
   private evaluate(): void {
     this.advanceAverage()
+    if (this.transient) {
+      this.stepTransient()
+      return
+    }
+
     const key = this.stateKey()
     const hit = this.cache.get(key)
     if (hit) {
       this.cacheHits++
       this.latest = hit
       this.voltages = hit.voltages
-      this.dirtyFlag[0] = 0
-      this.driveInputs()
-      for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
+      this.settle()
       return
     }
 
-    for (const [name, port] of this.compiled.mcuPorts) {
-      const { g, i } = nortonFor(this.drives.get(name) ?? 'float')
-      port.set(g, i)
-    }
+    this.stampPins()
 
-    let solveError: string | null = null
     if (this.compiled.circuit.size > 0) {
       const res = this.compiled.circuit.solve()
-      if (!res.ok) solveError = res.error ?? 'circuit did not solve'
       this.solves++
-
-      this.voltages = res.voltages
-      // Publish solved node voltages to the ADC. Unconnected analog pins read
-      // 0 V: a real floating input picks up noise, but a deterministic 0 is the
-      // honest choice for a teaching tool.
-      for (const [pin, ch] of this.chip.adcPins) {
-        const netId = this.compiled.analogNets.get(pin)
-        this.adc.channelValues[ch] =
-          netId !== undefined && netId < res.voltages.length ? res.voltages[netId] : 0
-      }
-
-      const brightness: Record<string, number> = {}
-      const currents: Record<string, number> = {}
-      for (const [partId, dev] of this.compiled.meters) currents[partId] = dev.current
-      for (const [partId, diode] of this.compiled.leds) {
-        const i = Math.max(diode.current, 0)
-        // Perceptual curve — a linear map makes a dim LED look completely off.
-        brightness[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
-      }
-      this.latest = {
-        brightness,
-        currents,
-        faults: res.faults,
-        solveError,
-        voltages: res.voltages,
-      }
+      this.publish(res)
     } else {
       this.latest = EMPTY_SOLUTION
     }
 
     if (this.cache.size >= MAX_CACHE_ENTRIES) this.cache.clear()
     this.cache.set(key, this.latest)
-    this.dirtyFlag[0] = 0
-    this.driveInputs()
-    for (let i = 0; i < this.devices.length; i++) this.devices[i].poll()
+    this.settle()
+  }
+
+  /**
+   * Advance the analog side to the CPU's current cycle, by one backward-Euler
+   * step of exactly the simulated time that has elapsed since the last one.
+   *
+   * THIS IS THE CLOCK SYNCHRONISATION, and it is a synchronisation by
+   * construction rather than by agreement. The step handed to the solver is not
+   * a nominal h — it is `(cpu.cycles − lastStepCycles) / CLOCK_HZ`, read off
+   * avr8js's own counter. Analog time is therefore identically cpu.cycles/16e6
+   * at every instant, and there is no second clock that could drift from it. A
+   * `delay(1000)` is 16 000 000 cycles, so the integrated transient time across
+   * it is 1.000000 s exactly, whatever the steps in between happened to be.
+   *
+   * It also makes pin edges EXACT rather than quantised. `nextStepCycles`
+   * schedules the regular steps, but an edge calls in immediately and takes a
+   * short partial step up to the instant it happened; the following step is a
+   * full one from there. So the circuit sees a pin change at the cycle it
+   * actually occurred, not rounded to the nearest 20 µs — which is the same
+   * property §2.1 relies on for PWM, preserved.
+   */
+  private stepTransient(): void {
+    const cycles = this.cpu.cycles
+    const dt = Math.max((cycles - this.lastStepCycles) / CLOCK_HZ, HOLD_STEP_SECONDS)
+    this.lastStepCycles = cycles
+    this.nextStepCycles = cycles + this.stepCycles
+
+    this.stampPins()
+
+    if (this.compiled.circuit.size > 0) {
+      const res = this.compiled.circuit.transientStep(dt)
+      this.solves++
+      this.transientSteps++
+      this.publish(res)
+    } else {
+      this.latest = EMPTY_SOLUTION
+    }
+
+    // Re-derive h AFTER the step, so the probe linearises at the operating point
+    // that was just converged rather than the one before it.
+    if (cycles >= this.retuneCycles) {
+      this.retuneCycles = cycles + Math.max(1, Math.round(RETUNE_SECONDS * CLOCK_HZ))
+      this.tuneStep()
+    }
+
+    // No cache write. See the `transient` field for why a memo keyed on pin
+    // state would freeze the charge curve.
+    this.settle()
   }
 
   /**
@@ -701,11 +970,36 @@ export class SimulationEngine {
     const cpu = this.cpu
     const flag = this.dirtyFlag
     const target = cpu.cycles + Math.round((micros * CLOCK_HZ) / 1e6)
+
+    if (!this.transient) {
+      while (cpu.cycles < target) {
+        avrInstruction(cpu)
+        cpu.tick()
+        // Event-driven: the analog side is only touched when a pin actually moves.
+        if (flag[0] === 1) this.evaluate()
+      }
+      return
+    }
+
+    /**
+     * Reactive circuit: the analog side is no longer purely event-driven,
+     * because a capacitor charges whether or not a pin moved. It is visited on
+     * a SCHEDULE as well as on an edge.
+     *
+     * `next` mirrors this.nextStepCycles in a local on purpose. The comment on
+     * dirtyFlag records that reading instance properties inside this loop
+     * measured ~3.5x slower than locals, and this loop body runs tens of
+     * millions of times per simulated second. Only evaluate() ever moves the
+     * schedule, so re-reading it right after each evaluate is exact.
+     */
+    let next = this.nextStepCycles
     while (cpu.cycles < target) {
       avrInstruction(cpu)
       cpu.tick()
-      // Event-driven: the analog side is only touched when a pin actually moves.
-      if (flag[0] === 1) this.evaluate()
+      if (flag[0] === 1 || cpu.cycles >= next) {
+        this.evaluate()
+        next = this.nextStepCycles
+      }
     }
   }
 
@@ -801,6 +1095,21 @@ export class SimulationEngine {
   }
 
   snapshot(): EngineSnapshot {
+    /**
+     * Close the TRANSIENT window here too, for exactly the reason the averaging
+     * window is closed here.
+     *
+     * run() leaves the analog solution standing at `lastStepCycles`, which can
+     * be up to one whole timestep behind `cpu.cycles` — the loop stops on the
+     * time budget, not on a step boundary. Publishing that state alongside
+     * `simSeconds: cpu.cycles / CLOCK_HZ` would date a voltage to an instant it
+     * does not belong to: measured on a 1 kΩ/1 µF charge sampled every 20 µs,
+     * it read 3.108 V against the 3.142 V the same integration actually holds
+     * at t = τ, a 1 % lag that a student comparing to the theory would see and
+     * we could not explain. Stepping to now makes the pair consistent by
+     * construction, and costs one extra solve per snapshot (20 a second).
+     */
+    if (this.transient && this.cpu.cycles > this.lastStepCycles) this.evaluate()
     // Close the averaging window HERE, so the reading reflects the recent past
     // up to this instant rather than up to the last pin edge.
     this.advanceAverage()
@@ -823,6 +1132,8 @@ export class SimulationEngine {
       unknowns: this.compiled.unknowns,
       solveError: this.latest.solveError,
       limitations: this.compiled.limitations,
+      transientStep: this.transient ? this.stepSeconds : 0,
+      transientSteps: this.transientSteps,
     }
   }
 }

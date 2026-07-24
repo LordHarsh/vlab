@@ -32,6 +32,43 @@ export interface ReactiveDevice extends Device {
   advance(ctx: TransientContext): void
   /** Return to the t=0 initial condition (uncharged cap / zero inductor current). */
   resetTransient(): void
+  /**
+   * The two nets this element bridges.
+   *
+   * Read by two callers that both need to talk ABOUT the element rather than
+   * stamp it: Circuit.smallestTimeConstant(), which drives a unit test current
+   * between these nets to measure the resistance the network presents; and the
+   * engine, which uses them to decide whether a stored charge is still the same
+   * charge after the student edits the document.
+   */
+  readonly terminals: readonly [NetId, NetId]
+  /**
+   * The time constant this element would have if the rest of the network
+   * presented `rTh` ohms across its terminals, in seconds: R·C for a capacitor,
+   * L/R for an inductor.
+   *
+   * The element owns this rather than the caller because the two formulas are
+   * reciprocal in R — an engine that guessed "τ = R × value" would size the
+   * timestep for an inductor by a factor of R² out.
+   */
+  timeConstant(rTh: number): number
+  /**
+   * Stored state: branch VOLTS for a capacitor, branch AMPS for an inductor.
+   *
+   * Writable, and that is the point. compile() builds a brand-new Circuit — and
+   * therefore brand-new reactive devices at their t=0 initial condition — on
+   * every document edit, including a mere drag across the canvas. Without a way
+   * to carry the state over, nudging a capacitor two pixels would dump its
+   * charge. That is the same class of defect as the PIR whose hold timer was
+   * reset by the very prop change that started it.
+   */
+  state: number
+  /**
+   * Branch current from the step just advanced, amps, a → b. Both elements
+   * already computed it; declaring it here is what lets compile() put them in
+   * `meters` alongside the resistors and LEDs.
+   */
+  current: number
 }
 
 export function isReactive(d: Device): d is ReactiveDevice {
@@ -319,6 +356,8 @@ export class Capacitor implements ReactiveDevice {
   /** Reported current i_C for the step just advanced, amps (a → b). */
   current = 0
 
+  readonly terminals: readonly [NetId, NetId]
+
   constructor(
     readonly id: string,
     private a: NetId,
@@ -328,6 +367,20 @@ export class Capacitor implements ReactiveDevice {
   ) {
     this.v0 = v0
     this.vPrev = v0
+    this.terminals = [a, b]
+  }
+
+  /** τ = R·C. */
+  timeConstant(rTh: number): number {
+    return this.farads * rTh
+  }
+
+  /** Branch voltage carried between compiles. See ReactiveDevice.state. */
+  get state(): number {
+    return this.vPrev
+  }
+  set state(v: number) {
+    this.vPrev = v
   }
 
   setStep(h: number): void {
@@ -389,6 +442,8 @@ export class Inductor implements ReactiveDevice {
   /** Reported current i_L for the step just advanced, amps (a → b). */
   current = 0
 
+  readonly terminals: readonly [NetId, NetId]
+
   constructor(
     readonly id: string,
     private a: NetId,
@@ -399,6 +454,25 @@ export class Inductor implements ReactiveDevice {
     this.i0 = i0
     this.iPrev = i0
     this.current = i0
+    this.terminals = [a, b]
+  }
+
+  /**
+   * τ = L/R — RECIPROCAL in R, unlike the capacitor's R·C. A shorted inductor
+   * has a long time constant, a shorted capacitor a short one. rTh is floored at
+   * MIN_RESISTANCE so a dead short returns a large finite τ rather than Infinity.
+   */
+  timeConstant(rTh: number): number {
+    return this.henries / Math.max(rTh, MIN_RESISTANCE)
+  }
+
+  /** Branch current carried between compiles. See ReactiveDevice.state. */
+  get state(): number {
+    return this.iPrev
+  }
+  set state(i: number) {
+    this.iPrev = i
+    this.current = i
   }
 
   setStep(h: number): void {

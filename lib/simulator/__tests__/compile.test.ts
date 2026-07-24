@@ -607,10 +607,17 @@ group('9. capacitor honesty')
 // ══════════════════════════════════════════════════════════════════════════════
 {
   /**
-   * A capacitor is stamped as a 1e12 Ω resistor — its true DC steady state, and
-   * the wrong answer for everything a student puts a capacitor there to do. The
-   * contract in §2.3 is that the engine says so rather than letting the part sit
-   * there quietly, so the limitation must reach the caller.
+   * A capacitor is now a REAL reactive element: both engines advance it with
+   * backward-Euler steps synchronised to the MCU clock (engine.ts stepTransient,
+   * pico/engine.ts). So the "charging and timing are not simulated" banner that
+   * this group used to require is gone, and its ABSENCE is what is asserted now
+   * — leaving a warning up after it stopped being true is its own dishonesty,
+   * and it is the kind that survives for years because nothing tests for it.
+   *
+   * What has NOT changed is the DC path. A plain `solve()` still stamps the cap
+   * as a 1e12 Ω open, because that is its true steady state, so every caller
+   * that only ever solves an operating point is unaffected. Both halves are
+   * pinned below.
    */
   const doc: CircuitDoc = {
     parts: [place('uno', 'arduino_uno'), place('r', 'resistor', { ohms: 10000 }),
@@ -619,27 +626,35 @@ group('9. capacitor honesty')
       wire(['c', '2'], ['uno', 'GND.1'])],
   }
   const { c, res } = solveDoc(doc)
-  truth('placing a capacitor surfaces exactly one limitation', c.limitations.length === 1,
-    '1 limitation', JSON.stringify(c.limitations))
-  truth('the limitation says timing is not simulated',
-    /transient simulation, which is not available yet/.test(c.limitations[0] ?? ''),
-    'names transient simulation', c.limitations[0] ?? '(none)')
+  truth('a capacitor no longer carries a "not simulated" limitation', c.limitations.length === 0,
+    '[]', JSON.stringify(c.limitations))
+  truth('the compiled circuit is flagged reactive, so the engines step it in time',
+    c.circuit.hasReactive, 'true', String(c.circuit.hasReactive))
+  truth('the capacitor is exposed by part id, so a rewire can carry its charge',
+    c.reactive.get('c') !== undefined, 'a reactive device', String(c.reactive.get('c')?.id))
+  truth('the capacitor is metered, so its current reaches the readout',
+    c.meters.get('c') !== undefined, 'a meter', String(c.meters.get('c')?.id))
 
   // Node between the resistor and the cap: 1e-4 S to 5 V, 1e-12 S (cap) plus
   // 1e-12 S (gmin) to ground. V = 5e-4/(1e-4 + 2e-12) = 4.99999990 V.
-  near('a capacitor is an open circuit at DC', res.voltages[c.netOf.get('c 1')!],
+  near('a capacitor is STILL an open circuit at DC', res.voltages[c.netOf.get('c 1')!],
     5e-4 / (1e-4 + 1e-12 + GMIN), 1e-7)
 
-  // An unwired capacitor still warns — the student must never see a capacitor on
-  // the canvas with nothing said about it.
-  const alone = compile({ parts: [place('uno', 'arduino_uno'), place('c', 'capacitor')], wires: [] })
-  truth('an unwired capacitor still warns', alone.limitations.length === 1,
-    '1 limitation', JSON.stringify(alone.limitations))
+  // τ = R·C measured as a driving-point resistance, not read off any document
+  // field: the cap sees the 10 kΩ back to the (small-signal short) 5 V rail, so
+  // τ = 10e3 × 100e-6 = 1.0 s. This is the number that sizes the engine's step.
+  const tau = c.circuit.smallestTimeConstant()
+  near('the driving-point probe recovers τ = R·C = 1.0 s', tau ?? NaN, 1.0, 1e-3, 's')
 
-  // And a circuit with no capacitor must not warn.
+  // A circuit with no reactive part has no time constant to report, and must not
+  // invent one — the engines read null as "solve a DC operating point".
   const none = compile(EXPERIMENT_01)
   truth('a circuit with no capacitor carries no limitation', none.limitations.length === 0,
     '[]', JSON.stringify(none.limitations))
+  truth('a purely resistive circuit reports no time constant',
+    none.circuit.smallestTimeConstant() === null, 'null', String(none.circuit.smallestTimeConstant()))
+  truth('a purely resistive circuit is not flagged reactive', !none.circuit.hasReactive,
+    'false', String(none.circuit.hasReactive))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

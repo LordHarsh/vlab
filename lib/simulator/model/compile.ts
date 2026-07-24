@@ -24,6 +24,7 @@ import {
   createRelayModule,
   createULN2003,
   type Diode,
+  type ReactiveDevice,
 } from '../devices'
 import type { NetId } from '../types'
 import { getPart, ledColour } from './parts'
@@ -85,6 +86,18 @@ export interface CompileResult {
    * resistors). Read after a solve; the value updates via Device.readback.
    */
   meters: Map<string, { readonly id: string; current: number }>
+  /**
+   * Part id → its capacitor or inductor.
+   *
+   * The engine needs these by NAME, not just as anonymous members of the
+   * circuit, for one reason: compile() runs on every document edit and builds a
+   * brand-new Circuit with brand-new reactive devices sitting at their t=0
+   * initial condition. Without a per-part handle there is no way to carry a
+   * half-charged capacitor across an edit, and dragging the part two pixels
+   * would silently dump its charge — the PIR-hold-timer defect again, in the
+   * analog half of the engine.
+   */
+  reactive: Map<string, ReactiveDevice>
   /** Analog pin name (A0…A5) → the net it reads, for the ADC. */
   analogNets: Map<string, NetId>
   /** Every MCU pin name → its net, so solved voltages can be fed back as inputs. */
@@ -264,6 +277,7 @@ export function compile(doc: CircuitDoc): CompileResult {
   const leds = new Map<string, Diode>()
   const motors = new Map<string, DCMotor>()
   const meters = new Map<string, { readonly id: string; current: number }>()
+  const reactive = new Map<string, ReactiveDevice>()
   const analogNets = new Map<string, NetId>()
   const pinNets = new Map<string, NetId>()
   const behavioural: CompileResult['behavioural'] = []
@@ -560,27 +574,31 @@ export function compile(doc: CircuitDoc): CompileResult {
       const a = net({ partId: part.id, pinId: '1' })
       const b = net({ partId: part.id, pinId: '2' })
       if (a === undefined || b === undefined) continue
-      if (el.element === 'capacitor') {
-        // A real reactive device now: transient stepping (Circuit.transientStep)
-        // charges and discharges it. Circuit.hasReactive is set automatically by
-        // add(). At DC (a plain solve, which is what the interactive engine still
-        // runs) the Capacitor stamps as a 1e12 Ω open — its true steady state —
-        // so the honest limitation below stays accurate until the engine drives a
-        // transient loop (TRANSIENT_DESIGN.md §4).
-        const microfarads = Number(part.props.microfarads ?? 1)
-        circuit.add(new Capacitor(part.id, a, b, microfarads * 1e-6))
-        limitations.push(
-          'Capacitors are held at their DC steady state (no current flows). ' +
-            'Charging, discharging and timing need transient simulation, which is not available yet.',
-        )
-      } else {
-        const millihenries = Number(part.props.millihenries ?? 1)
-        circuit.add(new Inductor(part.id, a, b, millihenries * 1e-3))
-        limitations.push(
-          'Inductors are held at their DC steady state (a plain wire). ' +
-            'Current ramp and back-EMF need transient simulation, which is not available yet.',
-        )
-      }
+      /**
+       * A real reactive element, genuinely integrated in time.
+       *
+       * `Circuit.hasReactive` is set automatically by add(), and BOTH engines
+       * read it to switch their run loop from "solve one DC operating point and
+       * memoise it" to "advance backward-Euler steps in step with the MCU
+       * clock" (engine.ts stepTransient / pico/engine.ts). That is why the
+       * "charging and timing are not simulated" limitation that used to be
+       * pushed here is gone: it is no longer true, and leaving a stale warning
+       * up is its own kind of dishonesty.
+       *
+       * A plain DC `solve()` still stamps a capacitor as a 1e12 Ω open and an
+       * inductor as a 0.01 Ω short — their true steady states — so nothing that
+       * only ever calls solve() changes behaviour.
+       */
+      const device: ReactiveDevice =
+        el.element === 'capacitor'
+          ? new Capacitor(part.id, a, b, Number(part.props.microfarads ?? 1) * 1e-6)
+          : new Inductor(part.id, a, b, Number(part.props.millihenries ?? 1) * 1e-3)
+      circuit.add(device)
+      reactive.set(part.id, device)
+      // Both report a branch current from the step just advanced, so the
+      // Measurements panel can show a charging cap's current decaying to zero —
+      // which is the one number that says out loud that time is passing.
+      meters.set(part.id, device)
     } else if (el.kind === 'diode') {
       const a = net({ partId: part.id, pinId: 'A' })
       const c = net({ partId: part.id, pinId: 'C' })
@@ -856,6 +874,7 @@ export function compile(doc: CircuitDoc): CompileResult {
     leds,
     motors,
     meters,
+    reactive,
     analogNets,
     pinNets,
     behavioural,

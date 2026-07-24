@@ -175,6 +175,98 @@ export class Circuit {
     return res
   }
 
+  /**
+   * The SMALLEST time constant among this circuit's reactive elements, in
+   * seconds, at the operating point the last solve left behind — or null if
+   * there are no reactive elements (or the probe cannot be formed).
+   *
+   * This exists so a transient loop can size its timestep from the circuit
+   * instead of from a constant. τ = R·C needs the R the network presents ACROSS
+   * the capacitor, which is not a property of the capacitor and is not written
+   * down anywhere in the document: it is the driving-point resistance of
+   * everything else, and it changes every time an MCU pin moves between driving
+   * (25 Ω) and floating (100 MΩ) — seven orders of magnitude, on the same wire.
+   *
+   * Measuring it is the textbook definition, done literally:
+   *
+   *   1. stamp every NON-reactive device, linearised at the current operating
+   *      point (a diode's stamp() already linearises around ctx.x, so an LED
+   *      contributes its small-signal conductance, which is the correct thing
+   *      for a time constant);
+   *   2. factor that matrix ONCE;
+   *   3. for each reactive element, solve A·x = (e_a − e_b) — a 1 A test source
+   *      pushed in at one terminal and out of the other — and read back
+   *      R_th = x_a − x_b, which is volts per amp;
+   *   4. ask the element what time constant that R implies (R·C or L/R).
+   *
+   * Removing the reactive elements from the probe matrix is deliberate and is
+   * the whole reason this cannot reuse newton()'s assembly: a capacitor's own
+   * companion conductance C/h is a function of the very h being chosen, so
+   * leaving it in would make the measurement circular, and an inductor's DC
+   * stamp is a 0.01 Ω short that would swallow the loop resistance entirely.
+   *
+   * Cost is one LU factorisation plus one back-substitution per element, at the
+   * same n the solver already runs at (≤ ~15). Callers should still rate-limit
+   * it rather than calling it per step.
+   *
+   * NOTE this does NOT disturb solve(): it allocates its own matrix and never
+   * writes this.x. A failed probe returns null, and a caller that gets null must
+   * fall back to its own clamp rather than treating it as "no reactive parts".
+   */
+  smallestTimeConstant(): number | null {
+    const reactive = this.reactive()
+    if (reactive.length === 0) return null
+    if (this.dirty) this.layout()
+    const n = this.n
+    if (n === 0) return null
+
+    const A = new Float64Array(n * n)
+    const b = new Float64Array(n)
+    const ctx: StampContext = {
+      A,
+      b,
+      x: this.x,
+      n,
+      index: (net: NetId) => {
+        if (net === 0) return -1
+        if (net < 0 || net >= this.nextNet) {
+          throw new Error(`Device stamped onto net ${net}, which this circuit never allocated.`)
+        }
+        return net - 1
+      },
+      voltage: (net: NetId) => (net === 0 ? 0 : this.x[net - 1]),
+    }
+
+    try {
+      for (let i = 0; i < this.nodeCount; i++) A[i * n + i] += DEFAULT_OPTIONS.gmin
+      for (const d of this.devices) if (!isReactive(d)) d.stamp(ctx)
+    } catch {
+      // A malformed device throwing here must not take the worker down; the
+      // caller falls back to its clamp.
+      return null
+    }
+
+    const piv = luFactor(A, n)
+    if (!piv) return null
+
+    let smallest = Infinity
+    const rhs = new Float64Array(n)
+    for (const d of reactive) {
+      const [na, nb] = d.terminals
+      rhs.fill(0)
+      if (na > 0 && na <= this.nodeCount) rhs[na - 1] = 1
+      if (nb > 0 && nb <= this.nodeCount) rhs[nb - 1] = -1
+      const x = luSolve(A, piv, rhs, n)
+      const rTh = (na > 0 ? x[na - 1] : 0) - (nb > 0 ? x[nb - 1] : 0)
+      // A non-positive or non-finite driving point means the probe told us
+      // nothing (both terminals on ground, say). Skip it rather than inventing.
+      if (!Number.isFinite(rTh) || rTh <= 0) continue
+      const tau = d.timeConstant(rTh)
+      if (Number.isFinite(tau) && tau > 0 && tau < smallest) smallest = tau
+    }
+    return Number.isFinite(smallest) ? smallest : null
+  }
+
   private gminStepping(o: SolveOptions): SolveResult {
     this.resetState()
     let last: SolveResult | null = null
