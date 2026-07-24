@@ -1,6 +1,14 @@
-import { createHash } from 'node:crypto'
-import path from 'node:path'
-import { Worker } from 'node:worker_threads'
+// Bare specifiers, NOT the `node:` prefix. Turbopack's Node-file-trace pass
+// walks this module (it is reachable from app/api/compile/route.ts) and cannot
+// resolve a `node:`-prefixed builtin when it writes the .nft.json, which fails
+// `next build` outright with:
+//   FATAL: NftJsonAsset: cannot handle filepath node:crypto
+// The bare form resolves to the same builtins at runtime. Note the sibling
+// build-worker.mjs and scripts/build-avr-hex.mjs may keep `node:` — they are
+// spawned as workers/CLI and never enter the bundle graph.
+import { createHash } from 'crypto'
+import path from 'path'
+import { Worker } from 'worker_threads'
 import { prepareSketch, parseDiagnostics, hasError, type Diagnostic } from './ino'
 import type { BoardType } from '../model/parts'
 
