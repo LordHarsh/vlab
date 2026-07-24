@@ -15,7 +15,7 @@ import {
   type DocAction,
 } from '@/lib/simulator/model/document'
 import { useAutosave, type RemoteTarget } from '@/lib/simulator/useAutosave'
-import { EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
+import { BLANK, EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
 
 const FIRMWARE = [
   { url: '/sim/blink.hex', label: 'Blink', note: 'D13 on/off, 1 s' },
@@ -163,9 +163,25 @@ export function CircuitEditor({
   /** Omitted in the dev harness, where there is no class or simulation. */
   remote?: RemoteTarget
 }) {
+  /**
+   * What the editor holds before the restore lands.
+   *
+   * With a `remote` target the real document is the student's attempt or this
+   * experiment's authored starter, and both arrive asynchronously — so the seed
+   * must be NEUTRAL. It used to be EXPERIMENT_01, which meant a student opening
+   * the traffic-light experiment was seeded with experiment 1's finished LED
+   * circuit, and, if the starter row was missing or the load failed, kept it.
+   * An empty board is the honest fallback: nothing to unlearn, nothing that
+   * looks like an answer to a different question.
+   *
+   * The dev harness (no `remote`) keeps EXPERIMENT_01 — there is nothing to
+   * fetch there and a populated board is the point of the harness.
+   */
+  const seed = initial ?? (remote ? BLANK : EXPERIMENT_01)
+
   // The lazy initialiser (rather than a plain initial value) so the starting
   // document's ids are claimed too — it never passes through the 'load' action.
-  const [state, dispatch] = useReducer(docReducer, initial ?? EXPERIMENT_01, (doc) => {
+  const [state, dispatch] = useReducer(docReducer, seed, (doc) => {
     adoptIds(doc)
     return { doc, past: [], future: [] }
   })
@@ -176,7 +192,7 @@ export function CircuitEditor({
 
   // Local-first autosave. Restores previous work before the student notices
   // they lost anything.
-  const { state: saveState, restored, restoreChecked } = useAutosave(doc, remote)
+  const { state: saveState, restored, restoreSource, restoreChecked } = useAutosave(doc, remote)
   const appliedRestore = useRef(false)
   useEffect(() => {
     if (!restoreChecked || appliedRestore.current) return
@@ -207,6 +223,29 @@ export function CircuitEditor({
 
   const readings = Object.entries(snapshot.currents)
   const highPins = Object.entries(snapshot.pins).filter(([, d]) => d === 'high')
+
+  /**
+   * Hold the first paint until the restore has resolved.
+   *
+   * Only when there is something to wait FOR: without a `remote` target the
+   * document is already final, and gating on an IndexedDB round-trip would add
+   * a flash to the dev harness for nothing. With one, painting the seed first
+   * would show every student a board that is about to be replaced — and, for a
+   * moment, run the simulator on it.
+   *
+   * `restoreChecked` is set unconditionally by useAutosave, including when the
+   * server load throws, so this cannot become a permanent spinner.
+   */
+  if (remote && !restoreChecked) {
+    return (
+      <div
+        data-testid="editor-restoring"
+        className="flex h-[100dvh] items-center justify-center bg-[#f4f5f6] px-4 text-center"
+      >
+        <p className="text-xs text-[#566573]">Loading your circuit…</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-[100dvh] bg-[#f4f5f6] text-[#34495e]">
@@ -325,6 +364,19 @@ export function CircuitEditor({
         </div>
 
         <aside className="w-full h-[45dvh] shrink-0 border-t border-[#dfe3e8] md:h-auto md:w-80 md:border-t-0 md:border-l bg-white overflow-y-auto text-sm">
+          {/* A native experiment whose circuits.role='starter' row is missing
+              (or whose load failed) lands on the empty seed board. Saying so is
+              better than letting the student wonder where the parts went. */}
+          {remote && restoreSource === 'none' && (
+            <div
+              className="px-4 py-3 bg-amber-50 text-amber-900 text-xs leading-snug"
+              data-testid="no-starter"
+            >
+              No starter circuit is set up for this experiment yet, and you have no saved work —
+              starting from an empty board.
+            </div>
+          )}
+
           {error && (
             <div className="px-4 py-3 bg-red-50 text-red-700 text-xs" data-testid="error">
               {error}
@@ -440,13 +492,7 @@ export function CircuitEditor({
                   title={ex.label}
                   className={BTN}
                 >
-                  {key === 'exp01'
-                    ? 'LED'
-                    : key === 'dht'
-                      ? 'Exp 01'
-                      : key === 'pot'
-                        ? 'Pot'
-                        : 'Blank'}
+                  {ex.short}
                 </button>
               ))}
             </div>

@@ -7,6 +7,16 @@ import { loadAttempt, saveAttempt } from '@/lib/actions/simulator'
 
 export type SaveState = 'idle' | 'local' | 'saving' | 'saved' | 'offline'
 
+/**
+ * Where the document the editor opened with came from.
+ *
+ *  - `attempt` — the student's own saved work, on the server.
+ *  - `starter` — the authored circuits.role='starter' row for this simulation.
+ *  - `local`   — an IndexedDB copy, either unsynced work or an offline cache.
+ *  - `none`    — nothing was found, so the caller's own initial document stands.
+ */
+export type RestoreSource = 'attempt' | 'starter' | 'local' | 'none'
+
 export interface RemoteTarget {
   simulationId: string
   classId: string
@@ -33,6 +43,7 @@ export function useAutosave(doc: CircuitDoc, remote?: RemoteTarget) {
   const key = remote ? attemptKey(remote.simulationId, remote.classId) : 'dev:scratch'
   const [state, setState] = useState<SaveState>('idle')
   const [restored, setRestored] = useState<CircuitDoc | null>(null)
+  const [restoreSource, setRestoreSource] = useState<RestoreSource>('none')
   const [restoreChecked, setRestoreChecked] = useState(false)
 
   const localTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -50,15 +61,38 @@ export function useAutosave(doc: CircuitDoc, remote?: RemoteTarget) {
       if (cancelled) return
 
       if (remote) {
-        const res = await loadAttempt(remote.simulationId, remote.classId)
+        // The server action can reject outright — an unauthenticated harness, a
+        // dropped connection, a redeploy mid-flight. It must not take the
+        // restore down with it: `restoreChecked` gates BOTH the first render of
+        // the editor and the arming of autosave, so a throw that escaped here
+        // would leave the student looking at a spinner that never saves.
+        let graph: CircuitDoc | null = null
+        let source: RestoreSource = 'none'
+        try {
+          const res = await loadAttempt(remote.simulationId, remote.classId)
+          if (res.graph) {
+            graph = res.graph as unknown as CircuitDoc
+            source = res.source === 'attempt' ? 'attempt' : 'starter'
+          }
+        } catch {
+          // Falls through to whatever the local copy holds.
+        }
         if (cancelled) return
         // Prefer whichever is newer in intent: unsynced local work always wins,
         // because it is by definition work the server has not seen.
-        if (local && !local.synced) setRestored(local.doc)
-        else if (res.graph) setRestored(res.graph as unknown as CircuitDoc)
-        else if (local) setRestored(local.doc)
+        if (local && !local.synced) {
+          setRestored(local.doc)
+          setRestoreSource('local')
+        } else if (graph) {
+          setRestored(graph)
+          setRestoreSource(source)
+        } else if (local) {
+          setRestored(local.doc)
+          setRestoreSource('local')
+        }
       } else if (local) {
         setRestored(local.doc)
+        setRestoreSource('local')
       }
       setRestoreChecked(true)
     })()
@@ -121,5 +155,5 @@ export function useAutosave(doc: CircuitDoc, remote?: RemoteTarget) {
     return () => window.removeEventListener('pagehide', flush)
   }, [doc, key])
 
-  return { state, restored, restoreChecked, syncNow }
+  return { state, restored, restoreSource, restoreChecked, syncNow }
 }
