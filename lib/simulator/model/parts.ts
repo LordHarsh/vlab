@@ -50,8 +50,28 @@ export interface PartDefinition {
     /** Modelled by its coil/driver resistance; activity is reported, not solved. */
     | { kind: 'load'; ohms: number; label: string }
     | { kind: 'diode' }
-    /** Talks a wire protocol; needs a behavioural model (§7.1 tier 2). */
-    | { kind: 'sensor'; protocol: 'dht11' }
+    /**
+     * Electro-acoustic transducer. Two very different parts share the name: an
+     * ACTIVE buzzer is a resistive load with its own oscillator, a PASSIVE one is
+     * a piezo element (a capacitor) that only sounds when the drive changes. The
+     * `passive` prop picks which, and the model differs electrically.
+     */
+    | { kind: 'buzzer' }
+    /**
+     * Brushed DC motor. Solved at its electrical/mechanical steady state from
+     * four datasheet numbers — see MotorParams in devices.ts.
+     */
+    | { kind: 'motor' }
+    /**
+     * Talks a wire protocol or drives its own output; needs a behavioural model
+     * (§7.1 tier 2). `drives` names the pins the part itself can drive, which is
+     * what tells the compiler where to put a Norton port.
+     */
+    | {
+        kind: 'sensor'
+        protocol: 'dht11' | 'hc_sr04' | 'pir' | 'flow'
+        drives: string[]
+      }
     /**
      * Capacitor or inductor. The interactive engine is DC-only, so these are
      * solved at their DC limit — a cap is open, an inductor is a wire. That is
@@ -244,7 +264,7 @@ const photoresistor: PartDefinition = {
 const buzzer: PartDefinition = {
   type: 'buzzer',
   label: 'Buzzer',
-  electrical: { kind: 'load', ohms: 300, label: 'Buzzer' },
+  electrical: { kind: 'buzzer' },
   // Hand-drawn on purpose. The harvested wokwi buzzer declares an 8x8 SVG but
   // places its pins at (27,84) — it sizes itself with CSS outside the SVG, so
   // the art and the pin coordinates do not share a coordinate system.
@@ -253,6 +273,10 @@ const buzzer: PartDefinition = {
   pins: [
     { id: 'P', name: '+', x: 12, y: 40, type: 'passive' },
     { id: 'N', name: '-', x: 28, y: 40, type: 'passive' },
+  ],
+  props: [
+    // 0/1 rather than a text dropdown, matching the push button's `pressed`.
+    { key: 'passive', label: 'Passive (needs tone)', type: 'range', min: 0, max: 1, step: 1, default: 0 },
   ],
   svg: `
     <circle cx="20" cy="20" r="18" fill="#1a1a1a" stroke="#000"/>
@@ -271,7 +295,19 @@ const dcMotor: PartDefinition = {
     { id: '1', name: '+', x: 15, y: 40, type: 'passive' },
     { id: '2', name: '-', x: 35, y: 40, type: 'passive' },
   ],
-  electrical: { kind: 'load', ohms: 120, label: 'Motor' },
+  electrical: { kind: 'motor' },
+  props: [
+    {
+      key: 'load',
+      label: 'Mechanical load',
+      type: 'range',
+      min: 0,
+      max: 100,
+      step: 5,
+      unit: '%',
+      default: 0,
+    },
+  ],
   svg: `
     <rect x="4" y="4" width="42" height="30" rx="6" fill="#9aa3ad" stroke="#6d757e"/>
     <circle cx="25" cy="19" r="9" fill="#6d757e"/>
@@ -302,6 +338,98 @@ const diode: PartDefinition = {
 
 // ─── Behavioural sensors (tier 2) ─────────────────────────────────────────────
 
+/**
+ * Every one of these declares GND as `passive`, not `gnd`, exactly as the DHT11
+ * does. compile() collapses every `gnd` pin in the document onto net 0 whether
+ * or not a wire reaches it, so typing the pin as `gnd` would silently ground the
+ * sensor for a student who never connected it — turning "you forgot the ground
+ * wire", the single commonest beginner mistake, into a circuit that works.
+ */
+const GND_IS_A_REAL_WIRE = { GND: 'passive' } as const
+
+const hcsr04: PartDefinition = {
+  type: 'hc_sr04',
+  label: 'HC-SR04 ultrasonic',
+  electrical: { kind: 'sensor', protocol: 'hc_sr04', drives: ['ECHO'] },
+  props: [
+    {
+      key: 'distance',
+      label: 'Target distance',
+      type: 'range',
+      // The datasheet's own 2–400 cm ranging window. Outside it the module
+      // reports no echo, which the behavioural model implements as its 38 ms
+      // timeout pulse rather than by refusing to move the slider.
+      min: 1,
+      max: 420,
+      step: 1,
+      unit: ' cm',
+      default: 50,
+    },
+  ],
+  ...wokwiGeometry('hc-sr04', {
+    types: { ...GND_IS_A_REAL_WIRE, TRIG: 'digital', ECHO: 'digital' },
+  }),
+}
+
+const pirMotion: PartDefinition = {
+  type: 'pir_motion',
+  label: 'PIR motion sensor',
+  electrical: { kind: 'sensor', protocol: 'pir', drives: ['OUT'] },
+  props: [
+    { key: 'motion', label: 'Motion in front', type: 'range', min: 0, max: 1, step: 1, default: 0 },
+    // Tx on a real HC-SR501 goes to 200 s; nobody sits through that, and the
+    // teaching point is made anywhere in this range.
+    { key: 'hold', label: 'Hold time (Tx)', type: 'range', min: 1, max: 30, step: 1, unit: ' s', default: 5 },
+    // Defaults to 0. See PIRSensor in behavioural.ts for why the real 30-60 s
+    // induction lockout is off unless the student asks for it.
+    { key: 'warmup', label: 'Warm-up', type: 'range', min: 0, max: 60, step: 5, unit: ' s', default: 0 },
+  ],
+  ...wokwiGeometry('pir-motion-sensor', {
+    types: { ...GND_IS_A_REAL_WIRE, OUT: 'digital' },
+  }),
+}
+
+/**
+ * YF-S201 water flow sensor. Hand-drawn: wokwi has no flow-sensor element, so
+ * there is no harvested art to use.
+ */
+const flowSensor: PartDefinition = {
+  type: 'flow_sensor',
+  label: 'YF-S201 flow sensor',
+  width: 60,
+  height: 50,
+  pins: [
+    { id: 'VCC', name: 'VCC', x: 18, y: 50, type: 'power' },
+    { id: 'SIG', name: 'SIG', x: 30, y: 50, type: 'digital' },
+    { id: 'GND', name: 'GND', x: 42, y: 50, type: 'passive' },
+  ],
+  electrical: { kind: 'sensor', protocol: 'flow', drives: ['SIG'] },
+  props: [
+    {
+      key: 'flow',
+      label: 'Water flow',
+      type: 'range',
+      // Datasheet working range is 1–30 L/min; 0 is "tap closed", which has to
+      // be reachable or the sensor could never be seen to stop pulsing.
+      min: 0,
+      max: 30,
+      step: 1,
+      unit: ' L/min',
+      default: 10,
+    },
+  ],
+  svg: `
+    <rect x="4" y="10" width="52" height="28" rx="6" fill="#3a3f45" stroke="#22262b"/>
+    <rect x="0" y="18" width="8" height="12" rx="2" fill="#7d848c"/>
+    <rect x="52" y="18" width="8" height="12" rx="2" fill="#7d848c"/>
+    <circle cx="30" cy="24" r="9" fill="#22262b"/>
+    <path d="M30 17 l0 14 M23 24 l14 0" stroke="#7d848c" stroke-width="2"/>
+    <line x1="18" y1="50" x2="18" y2="38" stroke="#e04a4a" stroke-width="2"/>
+    <line x1="30" y1="50" x2="30" y2="38" stroke="#eab308" stroke-width="2"/>
+    <line x1="42" y1="50" x2="42" y2="38" stroke="#111827" stroke-width="2"/>
+  `,
+}
+
 const dht11: PartDefinition = {
   type: 'dht11',
   label: 'DHT11 sensor',
@@ -312,7 +440,7 @@ const dht11: PartDefinition = {
     { id: 'DATA', name: 'DATA', x: 20, y: 55, type: 'digital' },
     { id: 'GND', name: 'GND', x: 32, y: 55, type: 'passive' },
   ],
-  electrical: { kind: 'sensor', protocol: 'dht11' },
+  electrical: { kind: 'sensor', protocol: 'dht11', drives: ['DATA'] },
   props: [
     { key: 'temperature', label: 'Temperature', type: 'range', min: 0, max: 50, step: 1, unit: '°C', default: 24 },
     { key: 'humidity', label: 'Humidity', type: 'range', min: 20, max: 90, step: 1, unit: '%', default: 45 },
@@ -368,6 +496,9 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   dc_motor: dcMotor,
   diode,
   dht11,
+  hc_sr04: hcsr04,
+  pir_motion: pirMotion,
+  flow_sensor: flowSensor,
   capacitor,
 }
 
@@ -384,6 +515,9 @@ export const PALETTE: string[] = [
   'buzzer',
   'dc_motor',
   'dht11',
+  'hc_sr04',
+  'pir_motion',
+  'flow_sensor',
   'capacitor',
 ]
 

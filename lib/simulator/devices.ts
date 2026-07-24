@@ -605,3 +605,290 @@ export function createLED(
   const rseries = new Resistor(`${id}.rs`, internal, cathode, rs)
   return { devices: [diode, rseries], diode }
 }
+
+// ─── Transducers ──────────────────────────────────────────────────────────────
+
+/**
+ * Electrical characteristics of a buzzer, from its datasheet.
+ *
+ * The two kinds of "buzzer" sold for Arduino kits are electrically nothing alike
+ * and that difference IS the lesson (a passive one is silent on digitalWrite,
+ * an active one ignores tone()):
+ *
+ *   ACTIVE  — a magnetic transducer plus its own oscillator, e.g. a TMB12A05
+ *             class 5 V unit: rated 5 V DC, <= 30 mA, operating 4-7 V, and its
+ *             internal oscillator fixes the pitch at ~2300 Hz. To the circuit it
+ *             is a resistor of Vrated/Irated = 167 Ohm.
+ *
+ *   PASSIVE — a bare piezo element, e.g. a 12 mm disc of ~10 nF. It has NO DC
+ *             path at all; current through it is displacement current, so a DC
+ *             operating point correctly reports ~0 A and the pitch is whatever
+ *             the driving square wave is. Modelled as the same 1e-12 S open the
+ *             Capacitor stamps at DC.
+ */
+export interface BuzzerParams {
+  /** Rated DC supply, volts. */
+  ratedVolts: number
+  /** DC current drawn at ratedVolts by an ACTIVE buzzer, amps. */
+  ratedAmps: number
+  /** Absolute maximum continuous DC supply, volts. Past this the coil cooks. */
+  maxVolts: number
+  /** Piezo element capacitance of a PASSIVE buzzer, farads. */
+  piezoFarads: number
+  /** Fixed pitch of an ACTIVE buzzer's internal oscillator, hertz. */
+  oscillatorHz: number
+  /** Minimum supply at which an ACTIVE buzzer's oscillator runs, volts. */
+  minOperatingVolts: number
+}
+
+/** Generic 5 V buzzer as sold in Arduino kits. See BuzzerParams for sources. */
+export const BUZZER_5V: BuzzerParams = {
+  ratedVolts: 5,
+  ratedAmps: 0.03,
+  maxVolts: 7,
+  piezoFarads: 1e-8,
+  oscillatorHz: 2300,
+  minOperatingVolts: 4,
+}
+
+export class Buzzer implements Device {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Last solved current, amps, from the + terminal to the − terminal. */
+  current = 0
+
+  constructor(
+    readonly id: string,
+    private a: NetId,
+    private b: NetId,
+    /** True for a bare piezo element, false for a self-oscillating unit. */
+    readonly passive: boolean,
+    readonly params: BuzzerParams = BUZZER_5V,
+  ) {}
+
+  /**
+   * DC conductance. A passive piezo is a capacitor, so at a DC operating point
+   * it is an open — the same 1e-12 S (1 TOhm) the Capacitor stamps with no step
+   * set, and for the same reason.
+   */
+  private g(): number {
+    if (this.passive) return 1e-12
+    return this.params.ratedAmps / this.params.ratedVolts
+  }
+
+  stamp(ctx: StampContext): void {
+    stampConductance(ctx, this.a, this.b, this.g())
+  }
+
+  /** Voltage across the buzzer at the converged solution. */
+  voltsAcross(ctx: StampContext): number {
+    return ctx.voltage(this.a) - ctx.voltage(this.b)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.voltsAcross(ctx) * this.g()
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const v = Math.abs(this.voltsAcross(ctx))
+    if (v <= this.params.maxVolts) return null
+    const p = this.passive ? 0 : v * v * this.g()
+    return {
+      kind: 'over_power',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: p,
+      message:
+        `${v.toFixed(1)} V across a buzzer rated for ${this.params.ratedVolts} V ` +
+        `(absolute maximum ${this.params.maxVolts} V). On real hardware this part is destroyed.`,
+    }
+  }
+}
+
+/**
+ * Brushed DC motor, at its electrical/mechanical steady state.
+ *
+ * Everything follows from the four numbers every small-motor datasheet prints —
+ * nominal voltage Vn, no-load speed w0, no-load current I0 and stall current Is
+ * — and nothing is fitted per experiment.
+ *
+ *   Armature resistance   Ra = Vn / Is            (locked rotor: no back-EMF)
+ *   Back-EMF constant     Ke = (Vn − I0·Ra) / w0
+ *
+ * A brushed motor's current-versus-torque curve is a STRAIGHT LINE from the
+ * no-load point (0 torque, I0) to the stall point (stall torque, Is) — that is
+ * what the performance curves on the datasheet are. Writing the mechanical load
+ * as the fraction L of stall torque it demands, at nominal voltage:
+ *
+ *   i = I0 + L·(Is − I0)
+ *
+ * and the whole element is a conductance, because the line passes through the
+ * origin in V:
+ *
+ *   G(L) = (I0 + L·(Is − I0)) / Vn      i = G(L)·V
+ *
+ * Speed comes straight out of the back-EMF balance V = i·Ra + Ke·w:
+ *
+ *   w = (V − i·Ra) / Ke
+ *
+ * Three things make this model worth having rather than a fudge:
+ *
+ *   - A FREE-RUNNING motor (L = 0) is a resistor of Vn/I0, NOT of Ra. Back-EMF,
+ *     not copper, is what limits the current of a spinning motor; stamping the
+ *     coil resistance alone overstates it by Is/I0 — an order of magnitude. At
+ *     L = 1 the back-EMF is gone and the element becomes exactly Ra, the
+ *     locked-rotor current every motor datasheet warns about.
+ *   - Speed is LINEAR in current, w = i·(1/G − Ra)/Ke, so the engine's exact
+ *     time-weighted current average converts straight into the time-averaged
+ *     speed of a PWM-driven motor at no extra solve. PWM duty falls out free.
+ *   - The element stays LINEAR at every load, so it cannot make the Newton loop
+ *     limit-cycle. A load that is a constant torque rather than a proportional
+ *     one puts a kink at V = L·Vn, and Newton can ping-pong across a kink
+ *     forever; that model was written first and rejected for exactly that.
+ *
+ * HONEST LIMITATIONS, both structural:
+ *
+ *   - The load is PROPORTIONAL to the applied voltage — a fan or a pump, whose
+ *     torque falls away as the motor slows. A constant-torque load (a weight on
+ *     a winch) can stall a motor at low voltage while still drawing locked-rotor
+ *     current; that is not modelled. At full load this model is stalled at every
+ *     voltage, which is the case that matters.
+ *   - This is the STEADY state only. Rotor inertia, the start-up inrush and the
+ *     inductive spike when the motor is switched off all need transient
+ *     simulation. Circuit.transientStep() exists but the interactive engine does
+ *     not drive it yet, so none of those appear.
+ */
+export interface MotorParams {
+  /** Nominal supply, volts. */
+  ratedVolts: number
+  /** No-load speed at ratedVolts, rpm. */
+  noLoadRpm: number
+  /** No-load current at ratedVolts, amps. */
+  noLoadAmps: number
+  /** Locked-rotor current at ratedVolts, amps. */
+  stallAmps: number
+}
+
+/**
+ * Small brushed hobby motor, 6 V nominal — the size found in Arduino kits.
+ * Ra = 6/0.8 = 7.5 Ohm; free-running it looks like 6/0.07 = 85.7 Ohm.
+ */
+export const HOBBY_MOTOR_6V: MotorParams = {
+  ratedVolts: 6,
+  noLoadRpm: 6000,
+  noLoadAmps: 0.07,
+  stallAmps: 0.8,
+}
+
+export class DCMotor implements Device {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Last solved current, amps, + terminal to − terminal. Signed. */
+  current = 0
+
+  /** Mechanical load as a fraction of stall torque, 0..1. */
+  readonly load: number
+
+  constructor(
+    readonly id: string,
+    private a: NetId,
+    private b: NetId,
+    load = 0,
+    readonly params: MotorParams = HOBBY_MOTOR_6V,
+  ) {
+    this.load = Math.min(1, Math.max(0, load))
+  }
+
+  /** Armature (coil) resistance, ohms: Ra = Vn/Is, the locked-rotor figure. */
+  get coilOhms(): number {
+    return Math.max(this.params.ratedVolts / this.params.stallAmps, MIN_RESISTANCE)
+  }
+
+  /** Back-EMF constant, volts per rpm. Ke = (Vn − I0·Ra)/w0. */
+  get voltsPerRpm(): number {
+    const { ratedVolts: vn, noLoadAmps: i0, noLoadRpm: n0 } = this.params
+    return (vn - i0 * this.coilOhms) / n0
+  }
+
+  /**
+   * Terminal conductance at this load, siemens.
+   * G(L) = (I0 + L·(Is − I0))/Vn — the datasheet's own no-load-to-stall line.
+   */
+  get conductance(): number {
+    const { ratedVolts: vn, noLoadAmps: i0, stallAmps: is } = this.params
+    return (i0 + this.load * (is - i0)) / vn
+  }
+
+  /** What the motor looks like to the rest of the circuit, ohms. */
+  get effectiveOhms(): number {
+    return 1 / this.conductance
+  }
+
+  stamp(ctx: StampContext): void {
+    stampConductance(ctx, this.a, this.b, this.conductance)
+  }
+
+  /** Terminal voltage at the converged solution, volts. */
+  voltsAcross(ctx: StampContext): number {
+    return ctx.voltage(this.a) - ctx.voltage(this.b)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.voltsAcross(ctx) * this.conductance
+  }
+
+  /**
+   * Shaft speed for an armature current, rpm, signed by direction.
+   *
+   * w = (V − i·Ra)/Ke with V = i/G, so w = i·(1/G − Ra)/Ke — LINEAR in current.
+   * That is exactly why the engine can hand it a TIME-AVERAGED current and get
+   * the time-averaged speed of a PWM-driven motor without solving anything
+   * extra: the average of a linear function is the function of the average.
+   */
+  rpmFor(current: number): number {
+    return (current * (this.effectiveOhms - this.coilOhms)) / this.voltsPerRpm
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const v = this.voltsAcross(ctx)
+    const av = Math.abs(v)
+    const i = v * this.conductance
+
+    // Over-voltage burns the winding insulation. 1.5x nominal is the usual
+    // "absolute maximum" headroom quoted for small brushed motors.
+    const maxVolts = 1.5 * this.params.ratedVolts
+    if (av > maxVolts) {
+      return {
+        kind: 'over_power',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: av * Math.abs(i),
+        message:
+          `${av.toFixed(1)} V across a ${this.params.ratedVolts} V motor. ` +
+          `On real hardware the winding insulation fails.`,
+      }
+    }
+
+    // A stalled or heavily loaded motor develops little back-EMF, so most of the
+    // supply lands in the copper. It survives for a while — that is what makes
+    // this a caution and not a death.
+    const rpm = Math.abs(this.rpmFor(i))
+    if (Math.abs(i) > 0.5 * this.params.stallAmps && rpm < 0.1 * this.params.noLoadRpm) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: Math.abs(i),
+        message:
+          `${(Math.abs(i) * 1000).toFixed(0)} mA into a motor that is barely turning ` +
+          `(${rpm.toFixed(0)} rpm). With no back-EMF to oppose it the winding heats ` +
+          `fast — reduce the load or the voltage.`,
+      }
+    }
+    return null
+  }
+}

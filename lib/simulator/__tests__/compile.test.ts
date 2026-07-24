@@ -418,7 +418,7 @@ group('4. DHT11 data line with its 10 kΩ pull-up')
    * Sensor asserts the line: its Norton port becomes 1/40 S (R_PULLDOWN) to
    * ground. V = 5e-4 / (1e-4 + 1/40 + 1e-8 + 1e-12) = 0.019920 V.
    */
-  c.behavioural[0].port.set(1 / 40, 0)
+  c.behavioural[0].ports.DATA.set(1 / 40, 0)
   const low = c.circuit.solve()
   near('DATA pulled low by the sensor', low.voltages[data],
     5e-4 / (1e-4 + 1 / 40 + G_FLOAT + GMIN), 1e-9)

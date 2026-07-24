@@ -27,8 +27,20 @@ import {
   usart0Config,
 } from 'avr8js'
 import { compile, type CompileResult } from './model/compile'
-import { DHT11, G_RELEASED, R_PULLDOWN, type BehaviouralDevice } from './behavioural'
-import { MIN_RESISTANCE } from './devices'
+import {
+  BuzzerMonitor,
+  DHT11,
+  FlowSensor,
+  G_RELEASED,
+  HCSR04,
+  PIRSensor,
+  R_PULLDOWN,
+  type BehaviouralContext,
+  type BehaviouralDevice,
+  type DeviceState,
+  type DriveLevel,
+} from './behavioural'
+import { BUZZER_5V, MIN_RESISTANCE } from './devices'
 import type { CircuitDoc, PlacedPart } from './model/document'
 import type { SolveFault } from './types'
 
@@ -119,6 +131,13 @@ export interface EngineSnapshot {
   solveError: string | null
   /** Honest statement of what the DC engine cannot do for this circuit (§2.3). */
   limitations: string[]
+  /**
+   * partId → whatever that part is doing that a node voltage cannot express:
+   * the pitch a buzzer is sounding, the rpm and direction of a motor, whether a
+   * PIR is still warming up. REPORTED state, derived from the solved circuit and
+   * from simulated time — never a substitute for solving.
+   */
+  deviceStates: Record<string, DeviceState>
 }
 
 export class SimulationEngine {
@@ -159,8 +178,10 @@ export class SimulationEngine {
   private avg = new Map<string, number>()
   private lastAvgCycle = 0
   private devices: BehaviouralDevice[] = []
-  /** Behavioural drive state, part of the memoisation key. */
-  private deviceDrives = new Map<string, 'low' | 'release'>()
+  /** Behavioural drive state, keyed "partId:signal". Part of the memo key. */
+  private deviceDrives = new Map<string, DriveLevel>()
+  /** Latest reported state per behavioural part, for the snapshot. */
+  private deviceStates: Record<string, DeviceState> = {}
   /** Last logic level presented to each MCU input pin, for hysteresis. */
   private inputLevels = new Map<string, boolean>()
   private doc: CircuitDoc
@@ -274,25 +295,44 @@ export class SimulationEngine {
    * reading reports without rebuilding anything.
    */
   private buildBehavioural(): void {
+    // Self-clocked devices (a PIR watching a slider, a flow sensor generating a
+    // pulse train) have live callbacks on the CPU's event list. Rebuilding the
+    // document without cancelling them leaves an orphan still driving a port
+    // that belongs to the previous compile.
+    for (const d of this.devices) d.dispose?.()
     this.devices = []
     this.deviceDrives.clear()
+    this.deviceStates = {}
+
     for (const b of this.compiled.behavioural) {
-      if (b.protocol !== 'dht11') continue
-      this.devices.push(
-        new DHT11(b.partId, {
-          cpu: this.cpu,
-          voltage: () => (b.net < this.voltages.length ? this.voltages[b.net] : 0),
-          // The engine owns both the port and the cache key, so a device's
-          // drive can never diverge from what the cache thinks it is.
-          drive: (level) => {
-            if (this.deviceDrives.get(b.partId) === level) return
-            this.deviceDrives.set(b.partId, level)
-            b.port.set(level === 'low' ? 1 / R_PULLDOWN : G_RELEASED, 0)
-            this.dirtyFlag[0] = 1
-          },
-          props: () => this.partProps(b.partId),
-        }),
-      )
+      const ctx: BehaviouralContext = {
+        cpu: this.cpu,
+        voltage: (signal) => {
+          const n = b.nets[signal]
+          return n !== undefined && n < this.voltages.length ? this.voltages[n] : 0
+        },
+        // The engine owns both the port and the cache key, so a device's drive
+        // can never diverge from what the cache thinks it is.
+        drive: (signal, level, volts = VCC) => {
+          const port = b.ports[signal]
+          if (!port) return
+          const key = `${b.partId}:${signal}`
+          if (this.deviceDrives.get(key) === level) return
+          this.deviceDrives.set(key, level)
+          port.set(
+            level === 'release' ? G_RELEASED : 1 / R_PULLDOWN,
+            level === 'high' ? volts / R_PULLDOWN : 0,
+          )
+          this.dirtyFlag[0] = 1
+        },
+        props: () => this.partProps(b.partId),
+        report: (state) => {
+          this.deviceStates[b.partId] = state
+        },
+      }
+
+      const device = makeBehavioural(b.protocol, b.partId, ctx)
+      if (device) this.devices.push(device)
     }
   }
 
@@ -534,15 +574,46 @@ export class SimulationEngine {
     return out.concat(this.latest.faults)
   }
 
+  /**
+   * Reported device state at snapshot time.
+   *
+   * Motors are computed HERE rather than published by the device, because their
+   * speed has to come from the TIME-AVERAGED current: a PWM-driven motor sits at
+   * two DC operating points, and a snapshot of either one is a speed the shaft
+   * never actually runs at. Speed is affine in current (see DCMotor.rpmFor), so
+   * converting the exact time-weighted average is exactly the average speed.
+   */
+  private states(averaged: Record<string, number>): Record<string, DeviceState> {
+    // Give devices whose reading AGES (a buzzer that stopped being driven) a
+    // chance to notice — solves only happen on pin edges, and silence has none.
+    for (let i = 0; i < this.devices.length; i++) this.devices[i].refresh?.()
+
+    const out: Record<string, DeviceState> = { ...this.deviceStates }
+    for (const [partId, motor] of this.compiled.motors) {
+      const amps = averaged[partId] ?? motor.current
+      const rpm = motor.rpmFor(amps)
+      out[partId] = {
+        rpm: Math.abs(rpm),
+        direction: rpm > 0 ? 'forward' : rpm < 0 ? 'reverse' : 'stopped',
+        amps,
+        load: motor.load,
+        stalled: rpm === 0 && Math.abs(amps) > 0,
+      }
+    }
+    return out
+  }
+
   snapshot(): EngineSnapshot {
     // Close the averaging window HERE, so the reading reflects the recent past
     // up to this instant rather than up to the last pin edge.
     this.advanceAverage()
     const pins: Record<string, PinDrive> = {}
     for (const [name, d] of this.drives) pins[name] = d
+    const currents = this.averagedCurrents()
     return {
       ledBrightness: this.averagedBrightness(),
-      currents: this.averagedCurrents(),
+      currents,
+      deviceStates: this.states(currents),
       adc: adcCounts(this.adc),
       faults: this.faults(),
       problems: this.compiled.problems,
@@ -556,6 +627,33 @@ export class SimulationEngine {
       solveError: this.latest.solveError,
       limitations: this.compiled.limitations,
     }
+  }
+}
+
+/**
+ * Protocol name → behavioural model. The compiler decides WHICH parts need one
+ * and wires their nets; this decides what code runs. An unknown protocol returns
+ * null rather than throwing: a document authored against a newer part library
+ * should degrade to an inert part, not take the whole worker down.
+ */
+function makeBehavioural(
+  protocol: string,
+  partId: string,
+  ctx: BehaviouralContext,
+): BehaviouralDevice | null {
+  switch (protocol) {
+    case 'dht11':
+      return new DHT11(partId, ctx)
+    case 'hc_sr04':
+      return new HCSR04(partId, ctx)
+    case 'pir':
+      return new PIRSensor(partId, ctx)
+    case 'flow':
+      return new FlowSensor(partId, ctx)
+    case 'buzzer':
+      return new BuzzerMonitor(partId, ctx, BUZZER_5V)
+    default:
+      return null
   }
 }
 

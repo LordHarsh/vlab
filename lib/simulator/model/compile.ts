@@ -6,7 +6,9 @@
 
 import { Circuit } from '../solver'
 import {
+  Buzzer,
   Capacitor,
+  DCMotor,
   Diode as DiodeDevice,
   DIODE_1N4148,
   Inductor,
@@ -66,6 +68,12 @@ export interface CompileResult {
   /** Part id → its LED diode, for current readout. */
   leds: Map<string, Diode>
   /**
+   * Part id → its motor, so the engine can convert a TIME-AVERAGED current into
+   * a speed. Speed is affine in current (see DCMotor), which is what lets a
+   * PWM-driven motor report its real average rpm without an extra solve.
+   */
+  motors: Map<string, DCMotor>
+  /**
    * Part id → any device whose current is worth showing (LEDs, buzzers, motors,
    * resistors). Read after a solve; the value updates via Device.readback.
    */
@@ -75,10 +83,20 @@ export interface CompileResult {
   /** Every MCU pin name → its net, so solved voltages can be fed back as inputs. */
   pinNets: Map<string, NetId>
   /**
-   * Parts needing a behavioural model, with the nets they drive. The engine
-   * instantiates these; the compiler only wires up their electrical side.
+   * Parts needing a behavioural model. The engine instantiates these; the
+   * compiler only wires up their electrical side.
+   *
+   * `nets` carries EVERY pin of the part that reached a real net, keyed by pin
+   * id, so a device can read its own supply rail (an unpowered HC-SR04 must not
+   * answer) as easily as its signal line. `ports` carries a Norton port for each
+   * pin the part declares it can DRIVE.
    */
-  behavioural: Array<{ partId: string; protocol: string; port: NortonPort; net: NetId }>
+  behavioural: Array<{
+    partId: string
+    protocol: string
+    nets: Record<string, NetId>
+    ports: Record<string, NortonPort>
+  }>
   /**
    * Honest statement of what the DC engine cannot do for this circuit.
    * §2.3: the failure mode must be a refusal, never a wrong number.
@@ -237,6 +255,7 @@ export function compile(doc: CircuitDoc): CompileResult {
   // ─── Instantiate devices ───
   const mcuPorts = new Map<string, NortonPort>()
   const leds = new Map<string, Diode>()
+  const motors = new Map<string, DCMotor>()
   const meters = new Map<string, { readonly id: string; current: number }>()
   const analogNets = new Map<string, NetId>()
   const pinNets = new Map<string, NetId>()
@@ -290,15 +309,66 @@ export function compile(doc: CircuitDoc): CompileResult {
       const r = new Resistor(part.id, a, b, el.ohms)
       circuit.add(r)
       meters.set(part.id, r)
+    } else if (el.kind === 'buzzer') {
+      const a = net({ partId: part.id, pinId: 'P' })
+      const b = net({ partId: part.id, pinId: 'N' })
+      if (a === undefined || b === undefined) continue
+      // Passive means a bare piezo element — a capacitor, so an open at DC.
+      const passive = Number(part.props.passive ?? 0) >= 0.5
+      const bz = new Buzzer(part.id, a, b, passive)
+      circuit.add(bz)
+      meters.set(part.id, bz)
+      // The sound is a property of the drive waveform in TIME, which a DC
+      // operating point cannot hold. A monitor watches the terminal voltage and
+      // reports the pitch; it drives nothing, hence no ports.
+      behavioural.push({
+        partId: part.id,
+        protocol: 'buzzer',
+        nets: { P: a, N: b },
+        ports: {},
+      })
+      if (passive) {
+        limitations.push(
+          'A passive buzzer is a piezo element — a capacitor — so no DC current flows ' +
+            'through it. The pitch it is being driven at is reported, but the current ' +
+            'reads zero because that is its true DC steady state.',
+        )
+      }
+    } else if (el.kind === 'motor') {
+      const a = net({ partId: part.id, pinId: '1' })
+      const b = net({ partId: part.id, pinId: '2' })
+      if (a === undefined || b === undefined) continue
+      const load = Math.min(100, Math.max(0, Number(part.props.load ?? 0))) / 100
+      const m = new DCMotor(part.id, a, b, load)
+      circuit.add(m)
+      meters.set(part.id, m)
+      motors.set(part.id, m)
+      limitations.push(
+        'The motor is solved at its steady state. Start-up inrush, rotor inertia and ' +
+          'the inductive spike when it is switched off all need transient simulation, ' +
+          'which the interactive engine does not run yet.',
+      )
     } else if (el.kind === 'sensor') {
-      // The sensor shares its DATA line with the MCU, so it gets its own Norton
-      // port and the behavioural model drives it. Open-drain: it only pulls
-      // down, and releasing means going high-impedance.
-      const data = net({ partId: part.id, pinId: 'DATA' })
-      if (data === undefined) continue
-      const port = new NortonPort(part.id + '.data', 0, data, 1e-9, 0)
-      circuit.add(port)
-      behavioural.push({ partId: part.id, protocol: el.protocol, port, net: data })
+      // Every pin that reached a real net, so the model can read its own supply
+      // as well as its signal lines.
+      const nets: Record<string, NetId> = {}
+      for (const pin of def.pins) {
+        const n = net({ partId: part.id, pinId: pin.id })
+        if (n !== undefined) nets[pin.id] = n
+      }
+      // Each driven pin gets its own Norton port, permanently stamped and
+      // starting released (high impedance) so it cannot fight whatever else is
+      // on the wire before the model has decided anything.
+      const ports: Record<string, NortonPort> = {}
+      for (const signal of el.drives) {
+        const n = nets[signal]
+        if (n === undefined) continue
+        const port = new NortonPort(`${part.id}.${signal.toLowerCase()}`, 0, n, 1e-9, 0)
+        circuit.add(port)
+        ports[signal] = port
+      }
+      if (Object.keys(ports).length === 0) continue
+      behavioural.push({ partId: part.id, protocol: el.protocol, nets, ports })
     } else if (el.kind === 'reactive') {
       const a = net({ partId: part.id, pinId: '1' })
       const b = net({ partId: part.id, pinId: '2' })
@@ -550,6 +620,7 @@ export function compile(doc: CircuitDoc): CompileResult {
     nets,
     mcuPorts,
     leds,
+    motors,
     meters,
     analogNets,
     pinNets,

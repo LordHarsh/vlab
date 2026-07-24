@@ -19,6 +19,7 @@ const EMPTY: EngineSnapshot = {
   unknowns: 0,
   solveError: null,
   limitations: [],
+  deviceStates: {},
 }
 
 /**
