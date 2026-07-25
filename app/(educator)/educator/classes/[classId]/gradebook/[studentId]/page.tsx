@@ -234,8 +234,6 @@ export default async function StudentDetailPage({
           experiments.map((exp) => {
             const progress = progressMap.get(exp.experimentId)
             const completedIds = new Set(progress?.completed_section_ids ?? [])
-            const requiredSections = exp.sections.filter((s) => s.is_required)
-            const completedRequired = requiredSections.filter((s) => completedIds.has(s.id)).length
             const isExpCompleted = !!progress?.completed_at
 
             return (

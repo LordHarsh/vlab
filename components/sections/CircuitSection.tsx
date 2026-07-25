@@ -5,7 +5,6 @@ type CircuitConnection = {
 
 type CircuitContent = {
   connections?: CircuitConnection[]
-  svg_data?: string
 }
 
 export function CircuitSection({ content }: { content: CircuitContent | null }) {
@@ -15,16 +14,6 @@ export function CircuitSection({ content }: { content: CircuitContent | null }) 
 
   return (
     <div className="space-y-6">
-      {content.svg_data && (
-        <div className="border border-[#c1c1c1] rounded-xl overflow-hidden bg-white p-4 flex justify-center">
-          {/* eslint-disable-next-line react/no-danger */}
-          <div
-            className="max-w-full"
-            dangerouslySetInnerHTML={{ __html: content.svg_data }}
-          />
-        </div>
-      )}
-
       {content.connections && content.connections.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold text-[#222222] mb-3">Connections</h3>

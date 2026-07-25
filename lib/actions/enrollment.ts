@@ -60,6 +60,8 @@ export async function joinByCode(
     .eq('student_id', profile.id)
     .single()
 
+  // Any existing row blocks a re-join — UNIQUE(class_id, student_id) means the
+  // insert below would fail anyway, so return a useful message instead.
   if (existingEnrollment) {
     if (existingEnrollment.status === 'active') {
       return { success: false, error: 'You are already enrolled in this class.' }
@@ -67,6 +69,7 @@ export async function joinByCode(
     if (existingEnrollment.status === 'dropped') {
       return { success: false, error: 'You previously dropped this class. Contact your educator.' }
     }
+    return { success: false, error: 'You have already completed this class.' }
   }
 
   // Check max_students limit

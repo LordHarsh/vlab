@@ -1,5 +1,4 @@
 import Link from 'next/link'
-import { Badge } from '@/components/ui/badge'
 import { FlaskConical, BookOpen, Lock } from 'lucide-react'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 

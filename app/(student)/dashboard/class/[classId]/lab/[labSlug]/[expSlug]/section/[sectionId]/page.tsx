@@ -19,6 +19,15 @@ import { SimulationSection } from '@/components/sections/SimulationSection'
 import { QuizSection } from '@/components/sections/QuizSection'
 import { FeedbackSection } from '@/components/sections/FeedbackSection'
 
+/** Derives a display platform from the experiment slug, e.g. `dht11-rpi`. */
+function platformFromSlug(slug: string | undefined): string | null {
+  if (!slug) return null
+  const s = slug.toLowerCase()
+  if (s.includes('rpi') || s.includes('raspberry')) return 'Raspberry Pi'
+  if (s.includes('arduino')) return 'Arduino'
+  return null
+}
+
 export default async function SectionPage({
   params,
 }: {
@@ -29,7 +38,7 @@ export default async function SectionPage({
     sectionId: string
   }>
 }) {
-  const { classId, labSlug: _labSlug, expSlug: _expSlug, sectionId } = await params
+  const { classId, expSlug, sectionId } = await params
   const { userId } = await auth()
   if (!userId) redirect('/sign-in')
 
@@ -65,20 +74,75 @@ export default async function SectionPage({
   let simDesignId: string | null = null
   let simHeight = 500
   let simTitle = 'Interactive Simulation'
+  // 'tinkercad' stays the default so a row that predates the type column, or one
+  // whose type we do not recognise, still gets the permanent Tinkercad fallback.
+  let simKind = 'tinkercad'
+  let simType: string | null = null
+  // The native editor autosaves against this simulation id; threaded through so
+  // SimulationSection can build its RemoteTarget. Null for every non-native kind.
+  let simSimulationId: string | null = null
+  /**
+   * This experiment's own published Arduino sketch, for the native editor to
+   * open on.
+   *
+   * WHY IT IS READ HERE. The `code` section of an experiment is the listing the
+   * student reads in the lab sheet, and it is the only place that listing
+   * exists — nothing in the repository duplicates it. Handing the SAME text to
+   * the editor is what makes "your experiment's sketch, editable" true rather
+   * than approximately true, and it means an instructor who corrects the
+   * listing corrects what the board runs, in one edit, with no deploy.
+   *
+   * It is one extra query, on `native` simulation sections only, against a row
+   * this student is already permitted to read and already reading a click away.
+   * The alternative — fetching it from the client after the editor mounts —
+   * would put a loading state in front of the code panel and a second round
+   * trip in front of the first compile.
+   *
+   * `language` is checked rather than assumed: six of the twelve experiments
+   * publish Python for a Raspberry Pi, and handing THAT to a C++ compiler would
+   * produce a screenful of syntax errors against code the student did not write
+   * for this board. Those six run on the Pico track, which sources its script
+   * from lib/simulator/pico/experiments.ts because it is a port rather than a
+   * transcription.
+   */
+  let simStarterSketch: string | null = null
   if (section.type === 'simulation') {
     const simId: string | undefined = content?.simulation_id
     if (simId) {
+      simSimulationId = simId
       const { data: sim } = await supabase
         .from('simulations')
-        .select('title, config')
+        .select('title, type, config')
         .eq('id', simId)
         .single()
       const cfg = sim?.config as Record<string, unknown> | null
       simDesignId = (cfg?.design_id as string) ?? null
       simHeight = (cfg?.height as number) ?? 500
       simTitle = sim?.title ?? 'Interactive Simulation'
+      simKind = sim?.type ?? 'tinkercad'
+      simType = (cfg?.sim_type as string) ?? null
+    }
+
+    if (simKind === 'native') {
+      const { data: codeSection } = await supabase
+        .from('experiment_sections')
+        .select('content')
+        .eq('experiment_id', section.experiment_id)
+        .eq('type', 'code')
+        .eq('status', 'active')
+        .order('order_index', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      const codeContent = codeSection?.content as Record<string, unknown> | null
+      if (codeContent?.language === 'arduino_c' && typeof codeContent.code === 'string') {
+        simStarterSketch = codeContent.code
+      }
     }
   }
+
+  // Best effort only — there is no platform column, so fall back to the slug.
+  // Must never throw: the simulations treat an absent platform as optional.
+  const simPlatform = platformFromSlug(expSlug)
 
   function renderSection() {
     const c = content
@@ -96,7 +160,20 @@ export default async function SectionPage({
       case 'code':
         return <CodeSection content={c} />
       case 'simulation':
-        return <SimulationSection designId={simDesignId} height={simHeight} title={simTitle} />
+        return (
+          <SimulationSection
+            type={simKind}
+            simType={simType}
+            designId={simDesignId}
+            height={simHeight}
+            title={simTitle}
+            platform={simPlatform}
+            simulationId={simSimulationId}
+            classId={classId}
+            experimentSlug={expSlug}
+            starterSketch={simStarterSketch}
+          />
+        )
       case 'quiz': {
         const quizId: string | undefined = c?.quiz_id
         if (!quizId) {

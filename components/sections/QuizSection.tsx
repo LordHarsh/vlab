@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
+import { useUser } from '@clerk/nextjs'
 import { useSupabaseClient } from '@/lib/supabase/client'
 import { submitQuiz, type QuizResult } from '@/lib/actions/quiz'
 import {
@@ -44,6 +45,7 @@ export function QuizSection({
   classId: string
 }) {
   const supabase = useSupabaseClient()
+  const { user } = useUser()
   const [isPending, startTransition] = useTransition()
 
   const [loading, setLoading] = useState(true)
@@ -54,9 +56,12 @@ export function QuizSection({
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [result, setResult] = useState<QuizResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [startTime] = useState(Date.now())
+  // Date.now() is impure, so it cannot be read during render. Stamp it on mount.
+  const startTimeRef = useRef<number | null>(null)
 
   useEffect(() => {
+    startTimeRef.current ??= Date.now()
+
     async function load() {
       setLoading(true)
       setError(null)
@@ -109,20 +114,31 @@ export function QuizSection({
 
   // Count existing attempts after quiz is loaded
   useEffect(() => {
-    if (!quiz) return
+    if (!quiz || !user) return
 
     async function countAttempts() {
+      // RLS already scopes quiz_submissions to the current student, but filter
+      // explicitly so this stays correct if the policy is ever widened.
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('clerk_user_id', user?.id ?? '')
+        .single()
+
+      if (!profile) return
+
       const { count } = await supabase
         .from('quiz_submissions')
         .select('id', { count: 'exact', head: true })
         .eq('quiz_id', quizId)
         .eq('class_id', classId)
+        .eq('student_id', profile.id)
 
       setExistingAttempts(count ?? 0)
     }
 
     countAttempts()
-  }, [quiz, quizId, classId, supabase])
+  }, [quiz, quizId, classId, supabase, user])
 
   const effectiveMaxAttempts =
     classSettings?.max_attempts ?? quiz?.default_max_attempts ?? null
@@ -138,7 +154,7 @@ export function QuizSection({
 
   function handleSubmit() {
     setError(null)
-    const timeTaken = Math.round((Date.now() - startTime) / 1000)
+    const timeTaken = Math.round((Date.now() - (startTimeRef.current ?? Date.now())) / 1000)
 
     startTransition(async () => {
       const res = await submitQuiz(quizId, classId, answers, timeTaken)

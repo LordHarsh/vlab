@@ -2,6 +2,7 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminSupabaseClient } from '@/lib/supabase/admin'
 
 export type QuizResult = {
   success: boolean
@@ -120,8 +121,35 @@ export async function submitQuiz(
 
   const attemptNumber = currentAttempts + 1
 
-  // Fetch active questions with snapshot data
-  const { data: questions } = await supabase
+  // Verify the student is actively enrolled in the class they claim to be
+  // submitting under. RLS on quiz_submissions checks student_id but not class_id,
+  // and the grading read below bypasses RLS entirely, so this is the gate.
+  const { data: enrollment } = await supabase
+    .from('enrollments')
+    .select('id')
+    .eq('class_id', classId)
+    .eq('student_id', profile.id)
+    .eq('status', 'active')
+    .single()
+
+  if (!enrollment) {
+    return {
+      success: false,
+      score: 0,
+      maxScore: 0,
+      percentage: 0,
+      passed: false,
+      attemptNumber: currentAttempts,
+      showAnswers: false,
+      error: 'You are not enrolled in this class.',
+    }
+  }
+
+  // Fetch active questions with the answer key.
+  // Migration 013 revokes SELECT on correct_answer/explanation from the
+  // `authenticated` role, so grading must go through the service-role client.
+  // Identity and enrollment are both verified above before we reach here.
+  const { data: questions } = await createAdminSupabaseClient()
     .from('quiz_questions')
     .select('id, question_text, options, correct_answer, explanation, points, order_number')
     .eq('quiz_id', quizId)
@@ -206,7 +234,10 @@ export async function submitQuiz(
     }
   }
 
-  const showAnswers = effectiveShowAnswers === 'after_submission' || effectiveShowAnswers === 'always'
+  // 'after_due_date' and 'never' withhold the key at submission time.
+  // ('always' is not a permitted value — see the check constraint in 003.)
+  const showAnswers =
+    effectiveShowAnswers === 'after_submission' || effectiveShowAnswers === 'immediately'
 
   return {
     success: true,

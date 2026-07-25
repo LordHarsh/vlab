@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { ArrowLeft, Clock, ChevronRight, Tag, CheckCircle2, Circle } from 'lucide-react'
+import { ArrowLeft, Clock, ChevronRight, Tag, CheckCircle2 } from 'lucide-react'
 
 export default async function LabPage({
   params,

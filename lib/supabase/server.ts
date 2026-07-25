@@ -26,15 +26,35 @@ import type { Database } from '@/types/database'
  * ```
  */
 export async function createServerSupabaseClient() {
-  return createClient<Database>(
+  // supabase-js primes a Realtime auth token the moment the client is
+  // constructed: its constructor synchronously calls `accessToken()` once and
+  // pushes the result into `realtime.setAuth()`. We never use Realtime on the
+  // server, and that single priming call runs during static generation, where
+  // Clerk's `auth()` reads `headers` and throws DYNAMIC_SERVER_USAGE — which
+  // supabase-js swallows and logs as "Failed to set initial Realtime auth
+  // token" (six-ish times across the prerendered routes during `next build`).
+  //
+  // The priming call is the ONLY `accessToken()` invocation that happens while
+  // the constructor is still running; every real PostgREST request calls it
+  // afterwards. So we skip just that construction-time call and return the live
+  // Clerk token for everything after, leaving the authenticated data path
+  // untouched (its `auth()` still throws when appropriate, keeping routes
+  // dynamic exactly as before).
+  let constructed = false
+  const client = createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       async accessToken() {
-        // Get the Clerk session token and pass it to Supabase
-        // This enables Row Level Security policies to work with Clerk user IDs
+        // Construction-time priming call for the unused server-side Realtime
+        // socket — hand back nothing so no Clerk token is fetched here.
+        if (!constructed) return null
+        // Get the Clerk session token and pass it to Supabase.
+        // This enables Row Level Security policies to work with Clerk user IDs.
         return (await auth()).getToken()
       },
     },
   )
+  constructed = true
+  return client
 }

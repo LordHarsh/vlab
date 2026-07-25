@@ -62,7 +62,7 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
     return (
       <div className="space-y-3">
         <div className="rounded-xl overflow-hidden border border-[#c1c1c1]">
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          { }
           <video
             src={url}
             controls

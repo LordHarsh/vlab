@@ -1,7 +1,7 @@
 # VLab — Project Context & Owner's Aims
 
 > Handoff document for any Claude Code session (local or remote) working on this repo.
-> Owner: Harsh (LordHarsh). Last updated: 2026-07-21. Current main: `46eda22`.
+> Owner: Harsh (LordHarsh). Last updated: 2026-07-22. Current main: `b81572f`.
 
 ---
 
@@ -77,10 +77,16 @@ app/
 └── api/
 ```
 
-**Database:** 12 migrations in `supabase/migrations/` (001_profiles → 012_fix_classes_rls_recursion),
+**Database:** 14 migrations in `supabase/migrations/` (001_profiles → 014_harden_function_surface),
 covering profiles, labs, experiments, sections, quizzes, feedback forms, classes,
-enrollments, progress, activity, approval status, and Tinkercad-only simulations.
+enrollments, progress, activity, approval status, Tinkercad-only simulations, and
+content access control.
 Seeded content: 12 IoT experiments with sections, simulations, quizzes, feedback forms.
+
+> **Seeds are currently out of date with the schema.** `seeds/003_experiments.sql`
+> inserts simulations as `type='builtin_js'`, but migration 011 constrains the column
+> to `'tinkercad'`, so those inserts fail. Deliberately left as-is pending the
+> simulator rebuild — fix the simulation rows as part of that work.
 
 **Simulations:** Tinkercad embeds only (migration 011). Fetched server-side; the client
 gets a stable `designId` and renders a preview image + launch flow, loading the iframe
@@ -97,6 +103,26 @@ UI work (font weights, button/input/select tokens were specifically normalized).
 - **RLS vs. server operations:** Onboarding profile upsert and join-by-code class lookup
   must use the **service-role (admin) client** — the anon client gets blocked by RLS
   before the user has a profile row. See `df525a7`, `9b465cc`, `3ea3518`.
+- **RLS filters rows, not columns.** `quiz_questions` was readable by every authenticated
+  user including `correct_answer` and `explanation`, so any signed-in student could pull
+  the answer key from the anon-key client. Migration 013 fixes this with column-level
+  `GRANT`s. Consequence: the `authenticated` role cannot read those two columns *at all*,
+  **admins included** — any server-side reader of the answer key must use the
+  service-role client. Three places do: `lib/actions/quiz.ts` (grading),
+  `lib/actions/admin.ts` (`editQuizQuestion` merge), and the admin quiz editor page.
+- **Never revoke EXECUTE on the RLS helper functions.** The Supabase security advisor
+  flags all eight `auth_*` / `can_read_*` / `is_*` helpers as publicly executable and
+  suggests revoking EXECUTE. Doing so breaks every gated read with
+  `42501: permission denied for function ...` — RLS policy expressions *are* evaluated
+  against the invoking role's privileges. The trap: `revoke ... from anon, authenticated`
+  reports success but changes nothing (they inherit from PUBLIC), so only revoking from
+  PUBLIC has an effect — and that is the one that breaks it. The warning is acceptable;
+  each helper reports only on the caller's own access. Written up in migration 014.
+- **App-layer gating is not access control.** Enrollment used to be enforced only in
+  `[expSlug]/layout.tsx`, so the UI was gated but the REST API was wide open. Migration
+  013 moves the gate into RLS via `can_read_experiment_content()`. `labs` and
+  `experiments` stay public on purpose — they are catalogue metadata and the public
+  `/labs` page counts published experiments per lab.
 - **First admin:** There is no pre-created seed admin. Promote the first real user
   manually (instructions in repo — see `4dcf2f9`).
 - **Next 16 quirks:** `params` is a Promise (must `await`); middleware is exported as
@@ -138,10 +164,16 @@ Commands: `npm run dev` / `npm run build` / `npm run lint`.
 | Need | Location |
 |---|---|
 | Design system rules | `DESIGN.md` |
-| Schema (source of truth) | `supabase/migrations/` (001–012, in order) |
+| Schema (source of truth) | `supabase/migrations/` (001–014, in order) |
 | DB types | `types/database.ts` — must mirror migrations |
 | Auth + route protection | `proxy.ts` |
+| Content access rules | `supabase/migrations/013_gate_content_on_enrollment.sql` |
 | Admin features | `app/(admin)/admin/` |
 | Educator features | `app/(educator)/educator/` |
 | Student experiment viewer | `app/(student)/` |
-| Older analysis / setup docs | `VIRTUAL_LAB_ANALYSIS.md`, `SETUP_GUIDE.md`, `docs/` |
+
+> The pre-rebuild docs (`VIRTUAL_LAB_ANALYSIS.md`, `SETUP_GUIDE.md`, `SETUP_DATABASE.md`,
+> `SIMPLIFIED_TECH_STACK.md`, `QUICK_SETUP.sh`, `docs/`) described the old
+> `categories` / `user_progress` schema and were deleted on 2026-07-22. The Node DB
+> helper scripts (`scripts/`) went with them, per aim #3. Recover from git history if
+> ever needed.

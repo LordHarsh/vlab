@@ -13,7 +13,6 @@ import {
   Loader2,
   Link as LinkIcon,
   Mail,
-  UserX,
   ChevronDown,
   Clock,
 } from 'lucide-react'
@@ -97,7 +96,6 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 
 export function StudentsClient({
   classId,
-  className,
   joinCode,
   joinCodeExpiresAt,
   maxStudents,

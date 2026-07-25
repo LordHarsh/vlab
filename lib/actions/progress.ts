@@ -3,29 +3,55 @@
 import { auth } from '@clerk/nextjs/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 
-export async function markSectionVisited(
-  experimentId: string,
-  classId: string,
-  sectionId: string,
-): Promise<void> {
-  const { userId } = await auth()
-  if (!userId) return
+type Supa = Awaited<ReturnType<typeof createServerSupabaseClient>>
 
-  const supabase = await createServerSupabaseClient()
+/**
+ * The caller's profile id, but only if they are an ACTIVE student in `classId`.
+ *
+ * Progress rows are written with just student_id, and RLS scopes them to the
+ * student — but nothing stopped an enrolled student POSTing progress for a
+ * different class they were never in, seeding phantom rows in that class's
+ * gradebook. This is the app-layer enrollment gate that closes it, mirroring
+ * lib/actions/simulator.ts's studentContext. Returns null (caller silently does
+ * nothing) when there is no session, profile, or active enrollment.
+ */
+async function enrolledProfileId(supabase: Supa, classId: string): Promise<string | null> {
+  const { userId } = await auth()
+  if (!userId) return null
 
   const { data: profile } = await supabase
     .from('profiles')
     .select('id')
     .eq('clerk_user_id', userId)
     .single()
+  if (!profile) return null
 
-  if (!profile) return
+  const { data: enrollment } = await supabase
+    .from('enrollments')
+    .select('id')
+    .eq('class_id', classId)
+    .eq('student_id', profile.id)
+    .eq('status', 'active')
+    .single()
 
-  // Fetch existing progress
+  return enrollment ? profile.id : null
+}
+
+export async function markSectionVisited(
+  experimentId: string,
+  classId: string,
+  sectionId: string,
+): Promise<void> {
+  const supabase = await createServerSupabaseClient()
+  const profileId = await enrolledProfileId(supabase, classId)
+  if (!profileId) return
+
   const { data: existing } = await supabase
     .from('student_progress')
-    .select('id, completed_section_ids')
-    .eq('student_id', profile.id)
+    // completed_at is read to preserve the ORIGINAL completion time —
+    // revisiting a finished experiment must not restamp it.
+    .select('id, completed_section_ids, completed_at')
+    .eq('student_id', profileId)
     .eq('experiment_id', experimentId)
     .eq('class_id', classId)
     .single()
@@ -38,70 +64,72 @@ export async function markSectionVisited(
       ? completedIds
       : [...completedIds, sectionId]
 
-    await supabase
+    // Seeing every active section is what finishing an experiment means. This
+    // is the ONLY writer of completed_at — nothing else marks completion.
+    const done = await coversEverySection(supabase, experimentId, updated)
+
+    const { error } = await supabase
       .from('student_progress')
       .update({
         completed_section_ids: updated,
         last_section_id: sectionId,
         last_accessed_at: now,
+        ...(done ? { completed_at: existing.completed_at ?? now } : {}),
       })
       .eq('id', existing.id)
+    if (error) console.error('[markSectionVisited] update failed:', error.message)
   } else {
-    await supabase.from('student_progress').insert({
-      student_id: profile.id,
-      experiment_id: experimentId,
-      class_id: classId,
-      completed_section_ids: [sectionId],
-      last_section_id: sectionId,
-      started_at: now,
-      last_accessed_at: now,
-      total_time_seconds: 0,
-    })
+    // UPSERT, not insert. The select above and this write are not atomic, so
+    // two near-simultaneous visits (a fast section click, a double render, a
+    // reload mid-flight) both saw no row and both inserted — the second hit
+    // `student_progress_student_id_experiment_id_class_id_key` and the
+    // student's visit was dropped on the floor. Observed live in the server
+    // log on revisiting an experiment.
+    //
+    // onConflict names the unique constraint's own columns so the loser of the
+    // race updates instead of failing. completed_section_ids is deliberately
+    // NOT overwritten here: the winner may already have recorded other
+    // sections, and clobbering them would lose progress. The next visit's
+    // update branch merges this section in.
+    const { error } = await supabase.from('student_progress').upsert(
+      {
+        student_id: profileId,
+        experiment_id: experimentId,
+        class_id: classId,
+        completed_section_ids: [sectionId],
+        last_section_id: sectionId,
+        started_at: now,
+        last_accessed_at: now,
+        total_time_seconds: 0,
+      },
+      { onConflict: 'student_id,experiment_id,class_id', ignoreDuplicates: false },
+    )
+    if (error) console.error('[markSectionVisited] upsert failed:', error.message)
   }
 }
 
-export async function markExperimentComplete(
+/**
+ * Whether `visited` covers every active section of the experiment.
+ *
+ * Compared as a set against the ids that actually exist, rather than by
+ * counting: a stale id left behind by a deleted or archived section would
+ * otherwise inflate the total and mark an unfinished experiment complete.
+ */
+async function coversEverySection(
+  supabase: Supa,
   experimentId: string,
-  classId: string,
-): Promise<void> {
-  const { userId } = await auth()
-  if (!userId) return
-
-  const supabase = await createServerSupabaseClient()
-
-  const { data: profile } = await supabase
-    .from('profiles')
+  visited: string[],
+): Promise<boolean> {
+  const { data: sections } = await supabase
+    .from('experiment_sections')
     .select('id')
-    .eq('clerk_user_id', userId)
-    .single()
-
-  if (!profile) return
-
-  const now = new Date().toISOString()
-
-  const { data: existing } = await supabase
-    .from('student_progress')
-    .select('id')
-    .eq('student_id', profile.id)
     .eq('experiment_id', experimentId)
-    .eq('class_id', classId)
-    .single()
+    .eq('status', 'active')
 
-  if (existing) {
-    await supabase
-      .from('student_progress')
-      .update({ completed_at: now, last_accessed_at: now })
-      .eq('id', existing.id)
-  } else {
-    await supabase.from('student_progress').insert({
-      student_id: profile.id,
-      experiment_id: experimentId,
-      class_id: classId,
-      completed_section_ids: [],
-      completed_at: now,
-      started_at: now,
-      last_accessed_at: now,
-      total_time_seconds: 0,
-    })
-  }
+  // No sections readable (RLS, or a genuinely empty experiment) is not
+  // completion — better to leave it unfinished than to award it wrongly.
+  if (!sections || sections.length === 0) return false
+
+  const seen = new Set(visited)
+  return sections.every((s) => seen.has(s.id))
 }

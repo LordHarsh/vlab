@@ -8,6 +8,14 @@ const isPublicRoute = createRouteMatcher([
   '/pending-approval',
   '/profile(.*)',
   '/api/webhooks(.*)',
+  // Unauthenticated simulator harness, development only. The page itself also
+  // calls notFound() outside development, so this matcher cannot expose
+  // anything in a production deploy even if the two ever drift.
+  // /sim holds the compiled .hex fixtures — the matcher below does not exempt
+  // .hex the way it does .png/.css, so without this they redirect to sign-in.
+  ...(process.env.NODE_ENV === 'development'
+    ? ['/dev(.*)', '/sim(.*)', '/vendor(.*)', '/api/dev(.*)']
+    : []),
 ])
 
 // Next.js 16: Export middleware as 'proxy'

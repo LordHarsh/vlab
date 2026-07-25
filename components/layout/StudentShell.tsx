@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useClerk } from '@clerk/nextjs'
-import { LayoutDashboard, Menu, X, LogOut, User, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, Menu, X, LogOut, User, FlaskConical, CircuitBoard } from 'lucide-react'
 
 type Profile = {
   id: string
@@ -38,6 +38,11 @@ export function StudentShell({
       label: 'My Classes',
       icon: <LayoutDashboard className="w-5 h-5" />,
     },
+    {
+      href: '/dashboard/workspace',
+      label: 'Workspace',
+      icon: <CircuitBoard className="w-5 h-5" />,
+    },
   ]
 
   const isActive = (href: string) =>
@@ -69,6 +74,7 @@ export function StudentShell({
           </div>
           <span className="font-bold text-[#222222] text-lg tracking-tight">VLab</span>
           <button
+            aria-label="Close menu"
             className="ml-auto lg:hidden text-[#6a6a6a] hover:text-[#222222]"
             onClick={() => setSidebarOpen(false)}
           >
@@ -138,6 +144,8 @@ export function StudentShell({
         <header className="sticky top-0 z-20 bg-white border-b border-[#f2f2f2] flex items-center gap-3 px-4 py-3 lg:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={sidebarOpen}
             className="text-[#222222] hover:text-[#ff385c] transition-colors"
           >
             <Menu className="w-6 h-6" />

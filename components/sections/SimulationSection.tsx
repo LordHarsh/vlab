@@ -1,9 +1,207 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PlayCircle, ExternalLink, LogIn, RotateCcw, Loader2, MonitorPlay } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay, AlertTriangle } from 'lucide-react'
+import { SIM_REGISTRY } from '@/components/simulations'
+import { FullscreenGate } from '@/components/simulator/FullscreenGate'
 
+export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | (string & {})
+
+/**
+ * The native circuit editor is lazy-loaded with `ssr: false` so the heavy
+ * avr8js + Web Worker bundle is fetched only when a section is actually
+ * `native`. Every text / quiz / builtin-widget section stays free of it, and it
+ * never enters the section route's server bundle. `ssr: false` is legal here
+ * because this whole module is a client component (`'use client'` above).
+ */
+const NativeCircuitEditor = dynamic(
+  () => import('@/components/simulator/CircuitEditor').then((m) => m.CircuitEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <SimNotice heading="Loading circuit editor…" body="Preparing the interactive editor." />
+    ),
+  },
+)
+
+/**
+ * Dispatches a simulation section to the right renderer.
+ *
+ *  - `tinkercad` — the Tinkercad embed below, untouched. Migration 015 calls it
+ *    "the permanent fallback for every experiment the native simulator cannot
+ *    yet cover"; it must never be removed.
+ *  - `builtin`   — one of the in-app simulations keyed by `config.sim_type`.
+ *  - `native`    — the native circuit editor. Not wired into sections yet.
+ */
 export function SimulationSection({
+  type = 'tinkercad',
+  simType = null,
+  designId = null,
+  height = 500,
+  title = 'Interactive Simulation',
+  platform = null,
+  simulationId = null,
+  classId = null,
+  experimentSlug = null,
+  starterSketch = null,
+}: {
+  type?: SimulationKind
+  simType?: string | null
+  /** Tinkercad only — the `builtin` and `native` paths never read it. */
+  designId?: string | null
+  height?: number
+  title?: string
+  platform?: string | null
+  /** Native only — the target for autosave into sim_attempts. */
+  simulationId?: string | null
+  /** Native only — the enrolled class the attempt belongs to. */
+  classId?: string | null
+  /**
+   * Native only — which experiment this is, so a Raspberry Pi Pico circuit can
+   * be given the MicroPython its lab sheet asks the student to run. The script
+   * is looked up by slug because it is a PORT of a lab sheet written for a
+   * Raspberry Pi SBC, and a port belongs in reviewable code.
+   */
+  experimentSlug?: string | null
+  /**
+   * Native only — this experiment's published Arduino sketch, read from its own
+   * `code` section by the page above. Null for the six Raspberry Pi experiments
+   * and for anything that publishes no listing.
+   */
+  starterSketch?: string | null
+}) {
+  if (type === 'builtin') {
+    return <BuiltinSimulation simType={simType} title={title} platform={platform} />
+  }
+
+  if (type === 'native') {
+    return (
+      <NativeSimulation
+        simulationId={simulationId}
+        classId={classId}
+        title={title}
+        experimentSlug={experimentSlug}
+        starterSketch={starterSketch}
+      />
+    )
+  }
+
+  return <TinkercadSimulation designId={designId} height={height} title={title} />
+}
+
+/* ── Built-in simulations ─────────────────────────────────────────────── */
+
+function BuiltinSimulation({
+  simType,
+  title,
+  platform,
+}: {
+  simType: string | null
+  title: string
+  platform: string | null
+}) {
+  const Sim = simType ? SIM_REGISTRY[simType] : undefined
+
+  if (!Sim) {
+    return (
+      <SimNotice
+        heading="This simulation isn’t available yet"
+        body={
+          simType
+            ? `This section asks for the built-in simulation “${simType}”, but no simulation is registered under that name. Please let your instructor know.`
+            : 'This section is marked as a built-in simulation but no simulation key was configured for it. Please let your instructor know.'
+        }
+      />
+    )
+  }
+
+  return (
+    <div className="w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#dfe3e8] bg-white px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-green-600" />
+          <span className="truncate text-sm font-semibold text-[#34495e]">{title}</span>
+        </div>
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
+          Interactive simulation
+        </span>
+      </div>
+      <div className="p-3 sm:p-4">
+        <Sim platform={platform} />
+      </div>
+    </div>
+  )
+}
+
+/* ── Native circuit editor ────────────────────────────────────────────── */
+
+/**
+ * The in-app circuit editor, wired for a lesson section. It autosaves the
+ * student's work to sim_attempts through the server actions, which re-derive the
+ * student from the Clerk session and check enrollment — so both a simulationId
+ * and the classId are required to have somewhere to save. A section marked
+ * `native` without them is a configuration error, surfaced rather than silently
+ * dropped.
+ */
+function NativeSimulation({
+  simulationId,
+  classId,
+  title,
+  experimentSlug,
+  starterSketch,
+}: {
+  simulationId: string | null
+  classId: string | null
+  title: string
+  experimentSlug: string | null
+  starterSketch: string | null
+}) {
+  if (!simulationId || !classId) {
+    return (
+      <SimNotice
+        heading={title}
+        body="This experiment uses the native circuit editor, but it isn’t fully configured for this section yet. Please let your instructor know."
+      />
+    )
+  }
+
+  return (
+    <div
+      data-testid="native-simulation"
+      className="w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]"
+    >
+      {/* The editor is gated behind fullscreen, and the gate keeps it MOUNTED
+          while it is blocked — see components/simulator/FullscreenGate.tsx. A
+          student who drops out of fullscreen to re-read the lab sheet comes back
+          to the same circuit, the same undo history and the same simulated
+          second; nothing is remounted, so nothing is restored over. */}
+      <FullscreenGate label="circuit simulator">
+        <NativeCircuitEditor
+          remote={{ simulationId, classId }}
+          experimentSlug={experimentSlug ?? undefined}
+          starterSketch={starterSketch ?? undefined}
+        />
+      </FullscreenGate>
+    </div>
+  )
+}
+
+function SimNotice({ heading, body }: { heading: string; body: string }) {
+  return (
+    <div className="w-full max-w-full rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] px-4 py-8 text-center sm:py-10">
+      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#dfe3e8] bg-white">
+        <AlertTriangle className="h-5 w-5 text-[#566573]" />
+      </div>
+      <p className="text-sm font-semibold text-[#34495e]">{heading}</p>
+      <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-[#566573]">{body}</p>
+    </div>
+  )
+}
+
+/* ── Tinkercad embed — unchanged ──────────────────────────────────────── */
+
+function TinkercadSimulation({
   designId,
   height = 500,
   title = 'Interactive Simulation',
@@ -17,7 +215,8 @@ export function SimulationSection({
   const [simActive, setSimActive] = useState(false)
 
   useEffect(() => {
-    if (!designId) { setPreviewLoading(false); return }
+    // No designId renders the empty state below, which never reads previewLoading.
+    if (!designId) return
     fetch(`/api/tinkercad-preview?id=${encodeURIComponent(designId)}`)
       .then((r) => r.json())
       .then((data) => setPreviewUrl(data.imageUrl ?? null))
@@ -88,7 +287,7 @@ export function SimulationSection({
             {previewLoading ? (
               <div className="flex flex-col items-center gap-3 py-16">
                 <Loader2 className="w-8 h-8 text-[#c1c1c1] animate-spin" />
-                <p className="text-xs text-[#c1c1c1]">Loading preview…</p>
+                <p className="text-xs text-[#6a6a6a]">Loading preview…</p>
               </div>
             ) : previewUrl ? (
               <img
@@ -101,7 +300,7 @@ export function SimulationSection({
             ) : (
               <div className="flex flex-col items-center gap-3 py-16">
                 <MonitorPlay className="w-10 h-10 text-[#c1c1c1]" />
-                <p className="text-xs text-[#c1c1c1]">No preview available</p>
+                <p className="text-xs text-[#6a6a6a]">No preview available</p>
               </div>
             )}
 
@@ -140,7 +339,7 @@ export function SimulationSection({
             <div className="flex items-start gap-2.5 pt-1 border-t border-[#f2f2f2]">
               <LogIn className="w-3.5 h-3.5 text-[#c1c1c1] shrink-0 mt-0.5" />
               <p className="text-xs text-[#6a6a6a] leading-relaxed">
-                If the simulation doesn't load,{' '}
+                If the simulation doesn&apos;t load,{' '}
                 <a href={loginUrl} target="_blank" rel="noopener noreferrer"
                   className="text-[#222222] font-medium underline underline-offset-2 hover:text-[#ff385c] transition-colors">
                   sign in to Tinkercad
