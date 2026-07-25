@@ -22,10 +22,18 @@
  * Run: npx tsx lib/simulator/__tests__/compile.test.ts
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
+import { analogDeviceStates } from '../analog-state'
 import { compile } from '../model/compile'
 import type { CircuitDoc, DocWire, PlacedPart } from '../model/document'
 import { EXPERIMENT_01 } from '../model/examples'
-import { getPart } from '../model/parts'
+import { PART_LIBRARY, getPart } from '../model/parts'
+import {
+  probedPartTypes,
+  propReachability,
+  propReachabilityProblems,
+} from '../model/prop-reachability'
 import { LED_RED, LED_SERIES_R, MIN_RESISTANCE } from '../devices'
 import { DEFAULT_OPTIONS, VT } from '../types'
 
@@ -848,6 +856,446 @@ group('11. hardware-safety diagnostics — the four silent gaps')
   }
   truth('an OPEN button (switched off) raises no connectivity problem',
     compile(offButton).problems.length === 0, '[]', JSON.stringify(compile(offButton).problems))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('12. sensors can be damaged, and the fault names the SENSOR')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * Seven `kind:'sensor'` parts used to compile to a Norton port and NOTHING
+   * ELSE, so none of them had a safety() at all: 12 V on a DHT11's VCC, or a
+   * DS18B20 with GND and VDD swapped — "the classic way to cook one of these",
+   * in the part's own comment — left the Checks panel green.
+   *
+   * Datasheet supply windows, restated here rather than imported so this file
+   * asserts the model against the SHEET and not against itself:
+   *
+   *   DHT11     3.3-5.5 V operating   (abs max 6.0 V, judged — no sheet figure)
+   *   DS18B20   3.0-5.5 V operating   (abs max +6.0 V, -0.5 V any pin: SHEET)
+   *   HC-SR04   4.5-5.5 V working     (abs max 6.0 V, judged)
+   *   HC-SR501  4.5-20 V working      (abs max 24 V, judged: HT7133 LDO input)
+   *   YF-S201   5-18 V working        (abs max 24 V, judged)
+   *   pulse     3.0-5.5 V operating   (abs max 7.0 V: MCP6001 VDD-VSS, SHEET)
+   *   MCP3008   2.7-5.5 V operating   (abs max 7.0 V: SHEET)
+   */
+  const SUPPLY_SHEET: Record<string, { min: number; max: number; absMax: number; pin: string }> = {
+    dht11: { min: 3.3, max: 5.5, absMax: 6.0, pin: 'VCC' },
+    ds18b20: { min: 3.0, max: 5.5, absMax: 6.0, pin: 'VDD' },
+    hc_sr04: { min: 4.5, max: 5.5, absMax: 6.0, pin: 'VCC' },
+    pir_motion: { min: 4.5, max: 20, absMax: 24, pin: 'VCC' },
+    flow_sensor: { min: 5, max: 18, absMax: 24, pin: 'VCC' },
+    pulse_sensor: { min: 3.0, max: 5.5, absMax: 7.0, pin: 'VCC' },
+    mcp3008: { min: 2.7, max: 5.5, absMax: 7.0, pin: 'VDD' },
+  }
+  /** The ground pin each part declares — MCP3008 has two and DGND is the one. */
+  const GROUND_PIN: Record<string, string> = { mcp3008: 'DGND' }
+
+  /**
+   * A sensor across a bench supply of `volts`, with nothing else in the circuit.
+   *
+   * An ideal VoltageSource straight across the part's own supply and ground
+   * pins, so the node voltage IS the number under test and no divider has to be
+   * solved for. Reversing the source is how the polarity case is built — which
+   * is exactly what swapping two wires does on a bench.
+   */
+  function supplyFault(type: string, volts: number, reversed = false) {
+    const gnd = GROUND_PIN[type] ?? 'GND'
+    const doc: CircuitDoc = {
+      parts: [place('uno', 'arduino_uno'), place('s', type)],
+      wires: reversed
+        ? [wire(['uno', '5V'], ['s', gnd]), wire(['s', SUPPLY_SHEET[type].pin], ['uno', 'GND.1'])]
+        : [wire(['uno', '5V'], ['s', SUPPLY_SHEET[type].pin]), wire(['s', gnd], ['uno', 'GND.1'])],
+    }
+    const c = compile(doc)
+    // Drive the rail at `volts` rather than the Uno's fixed 5 V: the point is
+    // the SENSOR's window, not the board's, and a PIR is specified to 20 V.
+    for (const d of (c.circuit as unknown as { devices: Array<{ id: string; volts?: number }> })
+      .devices) {
+      if (d.id === 'uno.5V') d.volts = volts
+    }
+    for (const [, p] of c.mcuPorts) p.set(G_FLOAT, 0)
+    const res = c.circuit.solve()
+    return res.faults.find((f) => f.deviceId === 's.supply') ?? null
+  }
+
+  /**
+   * Both declared thresholds are STRADDLED, not merely bracketed.
+   *
+   * A mid-band point on its own is a weak assertion: moving `absMaxVolts` by a
+   * factor of ten still leaves it in the right band about half the time. A pair
+   * 50 mV either side of each declared number means any move of either fails.
+   */
+  const EPS = 0.05
+  for (const [type, sheet] of Object.entries(SUPPLY_SHEET)) {
+    const cases: Array<[string, number, 'none' | 'caution' | 'destructive']> = [
+      [`in the middle of its ${sheet.min}-${sheet.max} V window`, (sheet.min + sheet.max) / 2, 'none'],
+      [`${EPS} V UNDER its ${sheet.max} V spec top`, sheet.max - EPS, 'none'],
+      [`${EPS} V OVER its ${sheet.max} V spec top`, sheet.max + EPS, 'caution'],
+      ['between the spec top and the absolute maximum', (sheet.max + sheet.absMax) / 2, 'caution'],
+      [`${EPS} V UNDER its ${sheet.absMax} V absolute maximum`, sheet.absMax - EPS, 'caution'],
+      [`${EPS} V OVER its ${sheet.absMax} V absolute maximum`, sheet.absMax + EPS, 'destructive'],
+    ]
+    for (const [what, volts, want] of cases) {
+      const f = supplyFault(type, volts)
+      const got = f === null ? 'none' : f.severity
+      truth(`${type} at ${volts} V — ${what} — is ${want}`,
+        got === want && (want !== 'caution' || !/destroy/.test(f?.message ?? '')),
+        want, f === null ? 'no fault' : `${got}: ${f.message}`)
+    }
+
+    // The message names THIS part, quotes ITS numbers, and names ITS supply pin
+    // — not "a sensor", and above all not an ATmega pad.
+    const fDead = supplyFault(type, sheet.absMax + 1)
+    truth(`${type}'s over-voltage fault quotes its own ${sheet.max} V / ${sheet.absMax} V figures`,
+      !!fDead && fDead.message.includes(`${sheet.absMax} V`) &&
+        fDead.message.includes(`${sheet.max} V`) && fDead.message.includes(sheet.pin),
+      `"${sheet.absMax} V", "${sheet.max} V" and "${sheet.pin}"`, fDead?.message ?? '(none)')
+
+    // Supply and ground swapped: destroyed, and the message says which two pins.
+    // Straddled too — a sensor 0.05 V "backwards" is noise, not a mistake.
+    const revTol = type === 'mcp3008' ? 0.6 : type === 'pulse_sensor' ? 0.3 : 0.5
+    truth(`${type} ${EPS} V under its ${revTol} V reverse limit is silent`,
+      supplyFault(type, revTol - EPS, true) === null, 'no fault',
+      JSON.stringify(supplyFault(type, revTol - EPS, true)?.message ?? null))
+    const fRev = supplyFault(type, 5, true)
+    truth(`${type} with ${sheet.pin} and GND swapped is DESTRUCTIVE`,
+      fRev?.severity === 'destructive' && /BACKWARDS/.test(fRev.message) &&
+        /swapped/.test(fRev.message) && fRev.message.includes(`${revTol} V reverse`),
+      `destructive, names the swap and its ${revTol} V limit`,
+      fRev ? `${fRev.severity}: ${fRev.message}` : 'no fault')
+  }
+
+  /**
+   * THE MISATTRIBUTION, before and after.
+   *
+   * A sensor's driven pin used to be a plain NortonPort, whose safety() carries
+   * the ATmega328P's 20/40 mA pad ratings AND the ATmega328P's wording. Loading
+   * an HC-SR04's ECHO therefore produced "…mA through a pin rated for 40 mA. On
+   * real hardware this pin is destroyed." attributed to `hcs.echo`.
+   *
+   * The HC-SR04 drives ECHO push-pull at 5 V through the engine's own drive
+   * resistance. Loading it with 47 Ω to ground gives, by hand, a current of
+   * 5/(25 + 47) = 69.4 mA — past the module's 25 mA absolute maximum and past
+   * the ATmega's 40 mA one too, so BOTH the old wording and the new one would
+   * fire and only the ATTRIBUTION distinguishes them.
+   */
+  const R_LOAD = 47
+  const echoDoc: CircuitDoc = {
+    parts: [place('uno', 'arduino_uno'), place('hcs', 'hc_sr04'), place('rl', 'resistor', { ohms: R_LOAD })],
+    wires: [
+      wire(['uno', '5V'], ['hcs', 'VCC']), wire(['hcs', 'GND'], ['uno', 'GND.1']),
+      wire(['hcs', 'ECHO'], ['rl', '1']), wire(['rl', '2'], ['uno', 'GND.1']),
+    ],
+  }
+  {
+    const c = compile(echoDoc)
+    for (const [, p] of c.mcuPorts) p.set(G_FLOAT, 0)
+    // Drive ECHO as the behavioural model does: 5 V behind the 25 Ω pin model.
+    const echo = c.behavioural.find((b) => b.partId === 'hcs')?.ports.ECHO
+    echo?.set(1 / R_DRIVE, VCC / R_DRIVE)
+    const res = c.circuit.solve()
+    const iHand = VCC / (R_DRIVE + R_LOAD)
+    nearRel('ECHO into 47 Ω carries the hand-computed 5/(25+47) A', iHand, 0.0694444, 1e-3)
+    const f = res.faults.find((x) => x.deviceId === 'hcs.echo')
+    truth('overloading ECHO still faults',
+      f?.severity === 'destructive', 'destructive', f ? f.severity : 'no fault')
+    truth('and the fault names the HC-SR04 and its ECHO pin',
+      !!f && /HC-SR04/.test(f.message) && /ECHO/.test(f.message),
+      'names the sensor', f?.message ?? '(none)')
+    truth('and NO LONGER claims an I/O pin rated for 40 mA was destroyed',
+      !!f && !/40 mA/.test(f.message) && !/I\/O pin/.test(f.message) &&
+        !/this pin is destroyed/.test(f.message),
+      'no ATmega wording', f?.message ?? '(none)')
+    truth('the quoted rating is the sensor\'s own 25 mA absolute maximum',
+      !!f && /25 mA/.test(f.message), 'mentions 25 mA', f?.message ?? '(none)')
+  }
+
+  // A correctly built sensor draws its datasheet supply current and nothing
+  // faults. DHT11: 0.3 mA measuring, so G = 0.3 mA / 5.5 V and at 5 V the part
+  // draws 5 * 0.3e-3/5.5 = 0.2727 mA. That is the whole load it presents.
+  {
+    const doc: CircuitDoc = {
+      parts: [place('uno', 'arduino_uno'), place('d', 'dht11')],
+      wires: [wire(['uno', '5V'], ['d', 'VCC']), wire(['d', 'GND'], ['uno', 'GND.1'])],
+    }
+    const c = compile(doc)
+    for (const [, p] of c.mcuPorts) p.set(G_FLOAT, 0)
+    const res = c.circuit.solve()
+    truth('a correctly powered DHT11 raises no fault at all',
+      res.faults.length === 0, '[]', JSON.stringify(res.faults.map((f) => f.message)))
+    const supply = (c.circuit as unknown as { devices: Array<{ id: string; current?: number }> })
+      .devices.find((d) => d.id === 'd.supply')
+    nearRel('and it draws its datasheet 0.3 mA/5.5 V conductance at 5 V',
+      Math.abs(supply?.current ?? 0), (5 * 0.3e-3) / 5.5, 1e-6)
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('13. the driver ICs report what they are doing')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * L298N truth table (ST L298 datasheet), restated:
+   *   Ven H, C H, D L  Forward     Ven H, C = D    Fast Motor Stop (brake)
+   *   Ven H, C L, D H  Reverse     Ven L           Free Running Stop (coast)
+   * Vss (logic) 4.5-7 V; Vs (motor) >= VIH + 2.5 V = 2.3 + 2.5 = 4.8 V.
+   */
+  const VIH = 2.3
+  const HEADROOM = 2.5
+  const MIN_VS = VIH + HEADROOM
+
+  /**
+   * An L298N with a 100 Ω "motor" between OUT1 and OUT2, ENA and IN1 driven high
+   * from D9/D8, IN2 low, Vss from the Uno's 5 V and Vs from a rail the test can
+   * move. `vs` of 0 means "not wired at all".
+   */
+  function bridge(vs: number | null, vss: number | null = VCC) {
+    const parts: PlacedPart[] = [
+      place('uno', 'arduino_uno'), place('drv', 'l298n'), place('m', 'resistor', { ohms: 100 }),
+    ]
+    const wires: DocWire[] = [
+      wire(['uno', 'GND.1'], ['drv', 'GND']),
+      wire(['uno', 'D9'], ['drv', 'ENA']),
+      wire(['uno', 'D8'], ['drv', 'IN1']),
+      wire(['uno', 'D7'], ['drv', 'IN2']),
+      wire(['drv', 'OUT1'], ['m', '1']), wire(['m', '2'], ['drv', 'OUT2']),
+    ]
+    // Both supplies are fed from the 5 V rail and then over-driven below, so the
+    // topology is the same in every case and only the voltages move.
+    if (vss !== null) wires.push(wire(['uno', '5V'], ['drv', 'VSS']))
+    if (vs !== null) wires.push(wire(['uno', '3.3V'], ['drv', 'VS']))
+    const c = compile({ parts, wires })
+    for (const d of (c.circuit as unknown as { devices: Array<{ id: string; volts?: number }> })
+      .devices) {
+      if (d.id === 'uno.5V' && vss !== null) d.volts = vss
+      if (d.id === 'uno.3V3' && vs !== null) d.volts = vs
+    }
+    for (const [name, p] of c.mcuPorts) {
+      // ENA and IN1 high, IN2 low, everything else floating.
+      if (name === 'D9' || name === 'D8') p.set(1 / R_DRIVE, VCC / R_DRIVE)
+      else p.set(G_FLOAT, 0)
+    }
+    const res = c.circuit.solve()
+    const drv = c.drivers.get('drv')
+    return { c, res, drv, faults: res.faults.filter((f) => f.deviceId.startsWith('drv.')) }
+  }
+
+  {
+    // A healthy bridge: Vs at 12 V, Vss at 5 V, ENA and IN1 high.
+    const { drv, faults } = bridge(12)
+    truth('compile() now hands the L298N\'s channels to the engine',
+      drv?.kind === 'h_bridge' && drv.channels.length === 2,
+      'h_bridge, 2 channels', drv ? `${drv.kind}, ${drv.channels.length}` : 'absent')
+    const a = drv?.kind === 'h_bridge' ? drv.channels[0] : null
+    truth('and channel A reports FORWARD from the datasheet truth table (Ven H, C H, D L)',
+      a?.mode === 'forward', 'forward', String(a?.mode))
+    truth('with both supply verdicts good',
+      a?.logicOk === true && a?.supplyOk === true, 'logicOk + supplyOk',
+      `${a?.logicOk} / ${a?.supplyOk}`)
+    truth('a healthy bridge raises no fault',
+      faults.length === 0, '[]', JSON.stringify(faults.map((f) => f.message)))
+    // The drop IS the lesson: 12 V in, VCEsat(H) 1.35 + VCEsat(L) 1.2 out, plus
+    // 2 x 0.15 Ω of bulk against a 100 Ω load ≈ 12 − 2.55 = 9.45 V, i.e. 94.2 mA.
+    const iHand = (12 - 1.35 - 1.2) / (100 + 2 * 0.15)
+    nearRel('and its current is the load line with the 2.55 V transistor tax taken off',
+      Math.abs(a?.current ?? 0), iHand, 2e-3)
+  }
+
+  {
+    // Vs on the 3.3 V rail: below VIH + 2.5 = 4.8 V, so nothing drives.
+    const { drv, faults } = bridge(3.3)
+    const a = drv?.kind === 'h_bridge' ? drv.channels[0] : null
+    truth(`Vs at 3.3 V is below the datasheet's VIH + ${HEADROOM} = ${MIN_VS} V`,
+      3.3 < MIN_VS, `< ${MIN_VS} V`, '3.3 V')
+    truth('so the bridge coasts even though it was told to go forward',
+      a?.mode === 'coast' && a?.commandedMode === 'forward',
+      'mode coast / asked forward', `${a?.mode} / ${a?.commandedMode}`)
+    const f = faults.find((x) => /Vs/.test(x.message))
+    truth('and the Checks panel now SAYS SO, as a caution',
+      f?.severity === 'caution' && /MOTOR supply/.test(f.message) && /\+12V/.test(f.message),
+      'caution naming Vs', f ? f.message : 'no fault')
+  }
+
+  {
+    // Vss left unwired entirely: the logic is dead whatever Vs is doing.
+    const { drv, faults } = bridge(12, null)
+    const a = drv?.kind === 'h_bridge' ? drv.channels[0] : null
+    truth('with no Vss the logic supply is out of range',
+      a?.logicOk === false, 'logicOk false', String(a?.logicOk))
+    const f = faults.find((x) => /Vss/.test(x.message))
+    truth('and the caution names Vss, the "+5V" screw, and says the outputs cannot switch',
+      f?.severity === 'caution' && /LOGIC supply/.test(f.message) && /\+5V/.test(f.message),
+      'caution naming Vss', f ? f.message : 'no fault')
+  }
+
+  {
+    // Enable low: this is a deliberate coast, not a fault. Nothing is said.
+    const parts: PlacedPart[] = [place('uno', 'arduino_uno'), place('drv', 'l298n')]
+    const c = compile({
+      parts,
+      wires: [wire(['uno', 'GND.1'], ['drv', 'GND']), wire(['uno', '5V'], ['drv', 'VSS'])],
+    })
+    for (const [, p] of c.mcuPorts) p.set(G_FLOAT, 0)
+    const res = c.circuit.solve()
+    truth('an L298N whose enable is low raises NO fault — that is a deliberate coast',
+      res.faults.filter((f) => f.deviceId.startsWith('drv.')).length === 0,
+      '[]', JSON.stringify(res.faults.map((f) => f.message)))
+  }
+
+  {
+    /**
+     * A ULN2003 with IN2 and IN5 driven high from D8/D9 and 220 Ω from COM
+     * (on 5 V) into each of OUT2 and OUT5. Everything else is unwired, so only
+     * two of the seven channels are built at all — which is the case that
+     * matters, because printing the other five as "off" would claim knowledge of
+     * channels the compiler never instantiated.
+     */
+    const ulnDoc: CircuitDoc = {
+      parts: [
+        place('uno', 'arduino_uno'), place('u', 'uln2003'),
+        place('r2', 'resistor', { ohms: 220 }), place('r5', 'resistor', { ohms: 220 }),
+      ],
+      wires: [
+        wire(['uno', 'GND.1'], ['u', 'GND']), wire(['uno', '5V'], ['u', 'COM']),
+        wire(['uno', 'D8'], ['u', 'IN2']), wire(['uno', 'D9'], ['u', 'IN5']),
+        wire(['uno', '5V'], ['r2', '1']), wire(['r2', '2'], ['u', 'OUT2']),
+        wire(['uno', '5V'], ['r5', '1']), wire(['r5', '2'], ['u', 'OUT5']),
+      ],
+    }
+    const c = compile(ulnDoc)
+    for (const [name, p] of c.mcuPorts) {
+      if (name === 'D8') p.set(1 / R_DRIVE, VCC / R_DRIVE)
+      else p.set(G_FLOAT, 0)
+    }
+    c.circuit.solve()
+    const drv = c.drivers.get('u')
+    truth('compile() hands the ULN2003\'s channels over, numbered as the package numbers them',
+      drv?.kind === 'darlington_array' && drv.indices.join(',') === '1,2,3,4,5,6,7' &&
+        drv.channels.length === drv.indices.length,
+      '7 channels, 1..7',
+      drv?.kind === 'darlington_array' ? `${drv.channels.length}, [${drv.indices}]` : 'absent')
+    const ch = drv?.kind === 'darlington_array' ? drv.channels : []
+    truth('IN2 high turns channel 2 on and IN5 low leaves channel 5 off',
+      ch[1]?.on === true && ch[4]?.on === false,
+      'ch2 on, ch5 off', `${ch[1]?.on} / ${ch[4]?.on}`)
+    // 5 V through 220 Ω into a saturated Darlington: VCE(sat) = 0.7 + 2*I, so
+    // I = (5 − 0.7)/(220 + 2) = 19.37 mA, from the two datasheet points alone.
+    nearRel('and its collector current is the 220 Ω load line against VCE(sat)',
+      ch[1]?.current ?? 0, (5 - 0.7) / (220 + 2), 2e-3)
+    /**
+     * Only the WIRED channels are metered. All seven are stamped — a ULN2003 pin
+     * earns a net whatever the student did — but five rows of 0.00 mA over the
+     * channels nobody touched is the noise that trains people to stop reading
+     * the panel.
+     */
+    truth('and only the two channels with a wired input are metered',
+      c.meters.has('u.ch2') && c.meters.has('u.ch5') &&
+        [...c.meters.keys()].filter((k) => k.startsWith('u.')).length === 2,
+      'u.ch2 + u.ch5 only', [...c.meters.keys()].filter((k) => k.startsWith('u.')).join(','))
+
+    /**
+     * The pattern the student reads: `-` for a channel whose IN reaches nothing,
+     * `#` for one conducting, `·` for one that is wired and off. IN2 is high and
+     * IN5 is low, so `-#--·--`… i.e. dashes everywhere except positions 2 and 5.
+     */
+    const state = analogDeviceStates({
+      doc: ulnDoc, netOf: c.netOf, nets: c.nets,
+      voltages: c.circuit.solve().voltages, reactive: c.reactive, drivers: c.drivers,
+      transient: false,
+    })
+    truth('the reported pattern dashes the five channels nobody wired',
+      state.u?.pattern === '-#--·--' && state.u?.conducting === '2' && state.u?.channels === 2,
+      "'-#--·--', conducting 2, 2 wired",
+      `'${String(state.u?.pattern)}', conducting '${String(state.u?.conducting)}', ${String(state.u?.channels)} wired`)
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('14. every declared prop reaches the solver or a model')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * THE GUARD THIS PROJECT DID NOT HAVE.
+   *
+   * propDeclarationProblems() catches declared-but-unrenderable. Nothing caught
+   * declared-but-inert, which is the half that shipped twice: led.color had a
+   * correct datasheet table and a working <select> while compile.ts never passed
+   * it, so every LED in every document solved as red.
+   *
+   * See model/prop-reachability.ts for how the differential probe works and for
+   * why the behavioural half cannot be closed the same way.
+   */
+  const reach = propReachability()
+  truth('the guard is non-vacuous: it probes every part that declares a prop',
+    probedPartTypes().length >= 12 && reach.length >= 20,
+    '>= 12 parts, >= 20 props', `${probedPartTypes().length} parts, ${reach.length} props`)
+  truth('and it can tell the two apart: some props reach the solver, some a model',
+    reach.some((r) => r.reach === 'solver') && reach.some((r) => r.reach === 'behavioural'),
+    'both classes present',
+    `${reach.filter((r) => r.reach === 'solver').length} solver / ` +
+      `${reach.filter((r) => r.reach === 'behavioural').length} behavioural`)
+  truth('NO declared prop reaches nothing at all',
+    propReachabilityProblems().length === 0, '[]', propReachabilityProblems().join(' | '))
+
+  // The specific prop the bug was in, called out by name so a regression is
+  // unmissable in the failure list rather than one line in a table.
+  truth('led.color specifically reaches the solver',
+    reach.find((r) => r.type === 'led' && r.key === 'color')?.reach === 'solver',
+    'solver', String(reach.find((r) => r.type === 'led' && r.key === 'color')?.reach))
+
+  /**
+   * THE BEHAVIOURAL HALF, closed at the source level.
+   *
+   * A prop the probe classifies as `behavioural` is legitimately invisible to
+   * compile() — it reaches a model that runs on the CPU clock, and a DHT11's
+   * temperature only reaches the wire once a host has spent 18 ms asking for it,
+   * which no pair of compiles can reproduce. What CAN be checked without a CPU
+   * is that some model reads that exact key: every read in behavioural.ts goes
+   * through `numProp(<props>, 'key', <fallback>)`, so the key must appear in
+   * that position or nothing reads it at all.
+   *
+   * Weaker than the differential probe — a literal is not proof the read happens
+   * on any particular path — and stated as such. It still catches the failure
+   * that actually occurs: a control declared, rendered, stored, and read by
+   * nobody.
+   */
+  const behaviouralSource = fs.readFileSync(
+    path.join(process.cwd(), 'lib/simulator/behavioural.ts'), 'utf8')
+  for (const r of reach) {
+    if (r.reach !== 'behavioural') continue
+    // `[\s\S]{0,80}?` rather than `[^)]*`: the commonest read in the file is
+    // `numProp(this.ctx.props(), 'key', …)`, whose first argument contains a
+    // closing paren of its own — a naive [^)]* stops dead at it and reports a
+    // read that is right there as missing. Bounded and lazy so it cannot run on
+    // into the NEXT numProp call and match the wrong key.
+    const read = new RegExp(`numProp\\([\\s\\S]{0,80}?'${r.key}'\\s*,`).test(behaviouralSource)
+    truth(`${r.type}.${r.key} is read by a behavioural model`,
+      read, `numProp(…, '${r.key}', …) in behavioural.ts`, read ? 'found' : 'NOT READ ANYWHERE')
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('15. the dead kind:\'load\' variant is gone')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * `{kind:'load'; ohms; label}` was how the buzzer and the motor were first
+   * stamped. Both got real device models long ago, and by the time it was
+   * removed no part used the variant while compile() still carried a live branch
+   * for it — dead code shaped like a supported feature.
+   *
+   * The union no longer has the member, so a part declaring one would not
+   * compile at all; this asserts the other direction, that nothing in the
+   * library is quietly still using the string.
+   */
+  const kinds = new Set(Object.values(PART_LIBRARY).map((d) => d.electrical.kind))
+  truth('no part in the library declares kind:\'load\'',
+    !kinds.has('load' as never), 'absent', [...kinds].sort().join(', '))
+  truth('the buzzer and the motor both have real device models instead',
+    getPart('buzzer').electrical.kind === 'buzzer' &&
+      getPart('dc_motor').electrical.kind === 'motor',
+    'buzzer + motor', `${getPart('buzzer').electrical.kind} + ${getPart('dc_motor').electrical.kind}`)
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────

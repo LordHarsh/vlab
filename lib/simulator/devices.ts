@@ -241,8 +241,13 @@ export class NortonPort implements Device {
 
   constructor(
     readonly id: string,
-    private a: NetId,
-    private b: NetId,
+    /**
+     * `protected`, not `private`, so SensorPort can read them in its own
+     * safety(). Nothing outside this file can see them either way — the change
+     * buys a subclass, not an escape hatch.
+     */
+    protected a: NetId,
+    protected b: NetId,
     public g: number,
     public i: number,
   ) {}
@@ -274,25 +279,39 @@ export class NortonPort implements Device {
   ratedCurrent = 0.02
   maxCurrent = 0.04
 
-  safety(ctx: StampContext): SolveFault | null {
-    // A port whose two terminals are the SAME net contributes nothing to the
-    // matrix, so there is no real current to judge and nothing to report here:
-    //   - a pin wired straight to GND has a === b === ground. That is a
-    //     topological dead short, already surfaced by ShortedPin in compile.ts
-    //     and gated on drive state by the engine, so reporting it again here
-    //     would double-count it.
-    //   - a degenerate self-loop (a === b on a floating net) is a no-op.
-    if (this.a === this.b) return null
+  /**
+   * Current the port drives OUT into its net, amps.
+   *
+   * The branch current a → b of a Norton source: i − g·(V_b − V_a). Real MCU
+   * pins reference ground (a = 0), so this is (V_open − V_net)/R_drive, exactly
+   * the current sourced.
+   *
+   * Only a pin actively SOURCING can exceed a few mA. A floating or pull-up
+   * INPUT (i ≈ 0 with a tiny g) can source at most ~0.25 mA, and a pin sinking
+   * current gives a negative value — both fall under any rating and never
+   * fault, which is the "floating/input pins must not fault" rule.
+   */
+  protected sourcedCurrent(ctx: StampContext): number {
+    return this.i - this.g * (ctx.voltage(this.b) - ctx.voltage(this.a))
+  }
 
-    // Current the pin drives OUT into its net is the branch current a → b of a
-    // Norton source: i − g·(V_b − V_a). Real MCU pins reference ground (a = 0),
-    // so this is (V_open − V_net)/R_drive, exactly the current sourced.
-    //
-    // Only a pin actively SOURCING can exceed a few mA. A floating or pull-up
-    // INPUT (i ≈ 0 with a tiny g) can source at most ~0.25 mA, and a pin
-    // sinking current gives a negative value — both fall under the rating and
-    // never fault, which is the "floating/input pins must not fault" rule.
-    const sourced = this.i - this.g * (ctx.voltage(this.b) - ctx.voltage(this.a))
+  /**
+   * True when this port contributes nothing to the matrix, so there is no real
+   * current to judge and nothing any safety() should report:
+   *   - a pin wired straight to GND has a === b === ground. That is a
+   *     topological dead short, already surfaced by ShortedPin in compile.ts
+   *     and gated on drive state by the engine, so reporting it again here
+   *     would double-count it.
+   *   - a degenerate self-loop (a === b on a floating net) is a no-op.
+   */
+  protected degenerate(): boolean {
+    return this.a === this.b
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    if (this.degenerate()) return null
+
+    const sourced = this.sourcedCurrent(ctx)
     if (sourced <= this.ratedCurrent) return null
 
     const mA = (sourced * 1000).toFixed(0)
@@ -316,6 +335,432 @@ export class NortonPort implements Device {
       message:
         `${mA} mA through a pin rated for ${(this.maxCurrent * 1000).toFixed(0)} mA. ` +
         `On real hardware this pin is destroyed.`,
+    }
+  }
+}
+
+// ─── Sensor modules: supply and output ────────────────────────────────────────
+
+/**
+ * The datasheet numbers that decide whether a sensor MODULE survives its wiring.
+ *
+ * WHY ONE PARAMETERISED PAIR OF DEVICES AND NOT SEVEN CLASSES. The seven tier-2
+ * sensor parts differ in their protocols — which is why each has a behavioural
+ * model of its own, hundreds of lines apart — but they do not differ at all in
+ * how they are DESTROYED. Every one of them dies the same three ways: too much
+ * volts on the supply pin, the supply pin and the ground pin swapped, or an
+ * output driven into more current than its pad can pass. Seven classes would be
+ * seven copies of the same three comparisons, and the numbers would drift; one
+ * class plus one table per part keeps the mechanism in one place and the
+ * DATASHEET in the other, which is the split every other multi-part model here
+ * already uses (BuzzerParams, MotorParams, DarlingtonParams, HBridgeParams).
+ *
+ * The alternative — putting the ratings on the part definition in parts.ts —
+ * was rejected because parts.ts is geometry and inspector data: it has no other
+ * electrical constant in it, and a rating declared there would be one more thing
+ * that can be declared and never reach the solver, which is the exact class of
+ * defect this work exists to close.
+ *
+ * WHAT IS A DATASHEET LINE AND WHAT IS A JUDGEMENT is marked per part in
+ * SENSOR_SUPPLIES below. Modules assembled from a jellybean MCU (HC-SR04,
+ * HC-SR501, DHT11) publish an operating window and no absolute maximum at all;
+ * the silicon parts (DS18B20, MCP3008) publish both.
+ */
+export interface SensorSupplyParams {
+  /** Lowest supply the part is specified to work at, volts. */
+  minVolts: number
+  /** Highest supply the part is specified to work at, volts. */
+  maxVolts: number
+  /**
+   * Absolute maximum supply, volts. Above this the part is destroyed rather
+   * than merely out of spec.
+   */
+  absMaxVolts: number
+  /**
+   * Reverse supply the part survives, volts (a POSITIVE magnitude). Silicon
+   * datasheets print this as the "−0.5 V on any pin" line; beyond it the
+   * substrate diode conducts unbounded and the die cooks.
+   */
+  absMaxReverseVolts: number
+  /** Supply current drawn in normal operation, amps. */
+  supplyAmps: number
+  /** Continuous current a driven output pin is specified for, amps. */
+  outputRatedAmps: number
+  /** Absolute maximum current on a driven output pin, amps. */
+  outputMaxAmps: number
+  /** Part name WITH its article, for fault messages: "a DHT11", "an MCP3008". */
+  label: string
+  /** What the part calls its supply pin — "VCC" or "VDD". */
+  supplyPin: string
+}
+
+/**
+ * Per-protocol ratings for every tier-2 sensor.
+ *
+ * Keyed by the SAME protocol string the part declares in `electrical.protocol`
+ * and the engine switches on in makeBehavioural(), so a new sensor cannot be
+ * added with a model and no ratings without the key being obviously absent.
+ *
+ * Sources, one per part. `[sheet]` marks a printed datasheet line; `[judged]`
+ * marks a number the datasheet does not give, with the reasoning that bounds it.
+ */
+export const SENSOR_SUPPLIES: Record<string, SensorSupplyParams> = {
+  /**
+   * DHT11 (Aosong / D-Robotics DHT11 datasheet).
+   *   [sheet]  Power supply 3.3-5.5 V DC
+   *   [sheet]  Supply current: measuring 0.3 mA, standby 60 uA
+   *   [judged] No absolute maximum is printed anywhere in the sheet. 6.0 V is
+   *            taken from the DS18B20's own printed +6.0 V "any pin" limit,
+   *            which is the same 5 V CMOS process class the module's on-board
+   *            8-bit MCU is built on; the module has no regulator, so its supply
+   *            pin IS that die's VDD.
+   *   [judged] No output current is specified. The DATA line is open-drain and
+   *            the model only ever pulls it DOWN, so the rating that matters is
+   *            a sink: 10 mA / 25 mA is the ordinary 8-bit-MCU pad limit and is
+   *            far above the ~1 mA a 4.7 kOhm pull-up delivers on a correctly
+   *            built bus.
+   */
+  dht11: {
+    minVolts: 3.3,
+    maxVolts: 5.5,
+    absMaxVolts: 6.0,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 0.3e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'a DHT11',
+    supplyPin: 'VCC',
+  },
+  /**
+   * DS18B20 (Analog Devices / Maxim DS18B20 datasheet).
+   *   [sheet]  Absolute maximum: voltage on any pin relative to ground
+   *            -0.5 V to +6.0 V
+   *   [sheet]  Operating VDD 3.0 V to 5.5 V
+   *   [sheet]  Active supply current 1.0 mA typ (1.5 mA max)
+   *   [sheet]  DQ logic 0: IOL = 4.0 mA at VOL 0.4 V max
+   *   [judged] The absolute maximum DQ current is not printed. 20 mA is the
+   *            standard limit for the open-drain pad class and is 5x the only
+   *            characterised sink, which is the whole span the part is specified
+   *            over.
+   * Reversing GND and VDD is the classic way to cook one of these — parts.ts
+   * says so on the pinout, and this is the number that makes the simulator
+   * agree.
+   */
+  ds18b20: {
+    minVolts: 3.0,
+    maxVolts: 5.5,
+    absMaxVolts: 6.0,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 1.0e-3,
+    outputRatedAmps: 0.004,
+    outputMaxAmps: 0.02,
+    label: 'a DS18B20',
+    supplyPin: 'VDD',
+  },
+  /**
+   * HC-SR04 (the module's own spec sheet, as sold).
+   *   [sheet]  Working voltage DC 5 V
+   *   [sheet]  Working current 15 mA
+   *   [judged] 4.5-5.5 V as the working window: 4.5 V is already the model's own
+   *            HC_SR04.MIN_SUPPLY_VOLTS in behavioural.ts (the point below which
+   *            the module releases ECHO and drives nothing), and +-10 % of a
+   *            5 V rail is the narrowest defensible reading of "DC 5 V".
+   *   [judged] 6.0 V absolute maximum, on the same reasoning as the DHT11: the
+   *            board is a bare 5 V MCU plus a 40 kHz driver, with no regulator.
+   *   [judged] ECHO is a push-pull MCU pad; 10 mA / 25 mA is that pad class.
+   */
+  hc_sr04: {
+    minVolts: 4.5,
+    maxVolts: 5.5,
+    absMaxVolts: 6.0,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 15e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'an HC-SR04',
+    supplyPin: 'VCC',
+  },
+  /**
+   * HC-SR501 PIR (the module's own spec sheet).
+   *   [sheet]  Working voltage range DC 4.5 V - 20 V
+   *   [sheet]  Static current < 60 uA
+   *   [sheet]  Output 3.3 V / 0 V
+   *   [judged] 24 V absolute maximum. The board regulates its own 3.3 V with an
+   *            HT7133-class LDO, whose input absolute maximum is 24 V; the 20 V
+   *            in the spec is the working limit below it.
+   *   [judged] The 3.3 V output comes from the BISS0001's OUT pin through the
+   *            board's series resistor; no current is specified. 10 mA / 25 mA
+   *            again, and note this part is the one where the rating is least
+   *            likely to be reached — it drives an MCU input.
+   * NOTE THE CONSEQUENCE: a student who puts 12 V on a PIR gets NO fault, which
+   * is correct. A real HC-SR501 runs happily on 12 V and that is why the module
+   * exists in alarm kits.
+   */
+  pir: {
+    minVolts: 4.5,
+    maxVolts: 20,
+    absMaxVolts: 24,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 60e-6,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'an HC-SR501 PIR',
+    supplyPin: 'VCC',
+  },
+  /**
+   * YF-S201 water flow sensor (the sensor's own spec sheet).
+   *   [sheet]  Working voltage 5 V - 18 V DC
+   *   [sheet]  Max current draw 15 mA at 5 V
+   *   [sheet]  Output load capacity <= 10 mA at DC 5 V  <- a REAL printed
+   *            output-current limit, and the only one of the seven that has one
+   *   [judged] 24 V absolute maximum, 20 % over the printed 18 V working top —
+   *            the same margin convention DCMotor and UnipolarStepper use where
+   *            a sheet gives no absolute maximum.
+   *   [judged] 25 mA as the destructive output figure: the open-collector
+   *            transistor is a jellybean small-signal NPN, and 2.5x the printed
+   *            load capacity is where one stops being a switch.
+   * The model's own YF_S201.MIN_SUPPLY_VOLTS is 4.5, half a volt under the
+   * printed 5, on the same courtesy the HC-SR04 gets — so `minVolts` here is the
+   * SHEET's 5 and the behavioural cut-off is deliberately more forgiving.
+   */
+  flow: {
+    minVolts: 5,
+    maxVolts: 18,
+    absMaxVolts: 24,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 15e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'a YF-S201 flow sensor',
+    supplyPin: 'VCC',
+  },
+  /**
+   * Pulse sensor SEN-11574 / "Pulse Sensor Amped".
+   *   [sheet]  Operating voltage 3 V to 5 V (the product's own spec)
+   *   [sheet]  Current draw ~4 mA
+   *   [sheet]  The amplifier is an MCP6001, whose absolute maximum VDD-VSS is
+   *            7.0 V and whose output short-circuit current is +-23 mA typical.
+   *   [judged] Splitting the MCP6001's 23 mA short-circuit figure into a 10 mA
+   *            rated / 23 mA maximum pair: the op-amp is a signal source feeding
+   *            an ADC and is not specified to drive a load at all, so the rated
+   *            figure is a working limit rather than a sheet line.
+   */
+  pulse: {
+    minVolts: 3.0,
+    maxVolts: 5.5,
+    absMaxVolts: 7.0,
+    absMaxReverseVolts: 0.3,
+    supplyAmps: 4e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.023,
+    label: 'a pulse sensor',
+    supplyPin: 'VCC',
+  },
+  /**
+   * MCP3008 (Microchip DS21295).
+   *   [sheet]  Absolute maximum VDD 7.0 V
+   *   [sheet]  Absolute maximum on all inputs and outputs w.r.t. VSS:
+   *            -0.6 V to VDD +0.6 V   -> the reverse figure below
+   *   [sheet]  Operating VDD 2.7 V to 5.5 V
+   *   [sheet]  IDD 425 uA typ at VDD = 5 V, fSAMPLE = 200 ksps
+   *   [sheet]  Maximum output current sunk or sourced by any output pin: 25 mA
+   *   [judged] 10 mA as the RATED output figure. DOUT drives one SPI master
+   *            input, and the sheet gives no continuous figure below its 25 mA
+   *            absolute maximum.
+   * The supply is referenced to DGND, exactly as MCP3008Device.supply() reads it
+   * in behavioural.ts — AGND is the analog return and a part with only AGND
+   * wired has no digital return path at all.
+   */
+  mcp3008: {
+    minVolts: 2.7,
+    maxVolts: 5.5,
+    absMaxVolts: 7.0,
+    absMaxReverseVolts: 0.6,
+    supplyAmps: 425e-6,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'an MCP3008',
+    supplyPin: 'VDD',
+  },
+}
+
+/**
+ * A sensor module's supply pin: the load it draws, and every way that supply
+ * can destroy it.
+ *
+ * BEFORE THIS DEVICE EXISTED, `kind:'sensor'` built a Norton port per driven pin
+ * and NOTHING ELSE — so seven parts had no safety() at all. A student could put
+ * 12 V on a DHT11's VCC, or reverse a DS18B20's GND and VDD, and the Checks
+ * panel stayed green.
+ *
+ * It is also a real electrical improvement rather than a bolted-on checker: the
+ * supply pin is now a genuine LOAD. A sensor fed through a series resistor drops
+ * a real voltage across it and can be seen to brown out, where before its VCC
+ * pin drew exactly nothing and any resistor in front of it was invisible.
+ *
+ * The load is a CONDUCTANCE, not a current source, for the same reason Buzzer's
+ * is: G = I_supply / V_nominal, taken at the top of the specified window. A
+ * current source would keep pulling its rated amps out of a dead rail, which is
+ * not what a CMOS part does and would make a browned-out sensor look like a
+ * short. It is linear, so it cannot make Newton limit-cycle.
+ */
+export class SensorSupply implements Device {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Supply current at the last solve, amps. Positive is into the supply pin. */
+  current = 0
+
+  constructor(
+    readonly id: string,
+    /** The part's VCC / VDD net. */
+    private pos: NetId,
+    /** The part's OWN ground pin's net — never net 0 unless it was wired there. */
+    private neg: NetId,
+    readonly params: SensorSupplyParams,
+  ) {}
+
+  /** Conductance the module presents across its supply, siemens. */
+  get conductance(): number {
+    return this.params.supplyAmps / this.params.maxVolts
+  }
+
+  stamp(ctx: StampContext): void {
+    stampConductance(ctx, this.pos, this.neg, this.conductance)
+  }
+
+  /** Supply voltage at the converged solution, volts. Negative means reversed. */
+  voltsAcross(ctx: StampContext): number {
+    return ctx.voltage(this.pos) - ctx.voltage(this.neg)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.voltsAcross(ctx) * this.conductance
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const p = this.params
+    // A device whose two terminals are the same net stamps nothing and can
+    // report nothing — the same rule NortonPort.degenerate() states.
+    if (this.pos === this.neg) return null
+    const v = this.voltsAcross(ctx)
+
+    /**
+     * REVERSED FIRST, because it is the more specific diagnosis and the more
+     * expensive mistake. A negative supply is not "under-volts"; it is the
+     * supply and ground pins swapped, and every silicon datasheet here bounds it
+     * with the same "-0.5 V on any pin" line: past that the substrate diode
+     * conducts without limit.
+     */
+    if (v < -p.absMaxReverseVolts) {
+      return {
+        kind: 'supply_range',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: v,
+        message:
+          `${Math.abs(v).toFixed(1)} V BACKWARDS across ${p.label} — ${p.supplyPin} and GND are ` +
+          `swapped. The part is rated to ${p.absMaxReverseVolts} V reverse on any pin; on real ` +
+          `hardware this destroys it.`,
+      }
+    }
+
+    if (v > p.absMaxVolts) {
+      return {
+        kind: 'supply_range',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: v,
+        message:
+          `${v.toFixed(1)} V on the ${p.supplyPin} of ${p.label}, which is rated ` +
+          `${p.minVolts}-${p.maxVolts} V with an absolute maximum of ${p.absMaxVolts} V. ` +
+          `On real hardware this part is destroyed.`,
+      }
+    }
+
+    /**
+     * Over the specified window but inside the absolute maximum: the part is
+     * running out of spec — it may read wrong, it will run hot, and it is not
+     * guaranteed to survive — but it is not destroyed. The same graduated shape
+     * every other part here uses, and the honest answer for the gap between two
+     * numbers a datasheet prints separately for a reason.
+     */
+    if (v > p.maxVolts) {
+      return {
+        kind: 'supply_range',
+        severity: 'caution',
+        deviceId: this.id,
+        value: v,
+        message:
+          `${v.toFixed(1)} V on the ${p.supplyPin} of ${p.label}, past the ${p.maxVolts} V top of ` +
+          `its specified supply range. It is inside the ${p.absMaxVolts} V absolute maximum, so it ` +
+          `still works — out of spec, and not guaranteed to.`,
+      }
+    }
+
+    return null
+  }
+}
+
+/**
+ * A sensor module's DRIVEN output pin.
+ *
+ * Identical to a NortonPort electrically — that is what it is, and the engine
+ * drives it through the same set() — but with the SENSOR's ratings and the
+ * SENSOR's name on its fault.
+ *
+ * This class exists because of a specific wrong answer. A sensor's driven pin
+ * used to be a plain NortonPort, whose safety() carries the ATmega328P's pad
+ * ratings and the ATmega328P's wording. Overloading an HC-SR04's ECHO therefore
+ * produced "...mA through a pin rated for 40 mA. On real hardware this pin is
+ * destroyed." attributed to `hcs_4.echo` — the wrong part, the wrong datasheet,
+ * and stated with total confidence. Silence would have been better than that.
+ */
+export class SensorPort extends NortonPort {
+  constructor(
+    id: string,
+    a: NetId,
+    b: NetId,
+    g: number,
+    i: number,
+    readonly params: SensorSupplyParams,
+    /** The pin id as the part silkscreens it — "ECHO", "DATA", "OUT". */
+    readonly pinName: string,
+  ) {
+    super(id, a, b, g, i)
+    this.ratedCurrent = params.outputRatedAmps
+    this.maxCurrent = params.outputMaxAmps
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    if (this.degenerate()) return null
+    const sourced = this.sourcedCurrent(ctx)
+    if (sourced <= this.ratedCurrent) return null
+
+    const mA = (sourced * 1000).toFixed(0)
+    const p = this.params
+    if (sourced <= this.maxCurrent) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: sourced,
+        message:
+          `${mA} mA out of the ${this.pinName} pin of ${p.label}, past the ` +
+          `${(this.ratedCurrent * 1000).toFixed(0)} mA that output is specified for. ` +
+          `On real hardware this over-stresses the sensor's own output driver.`,
+      }
+    }
+    return {
+      kind: 'over_current',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: sourced,
+      message:
+        `${mA} mA out of the ${this.pinName} pin of ${p.label}, whose absolute maximum is ` +
+        `${(this.maxCurrent * 1000).toFixed(0)} mA. On real hardware the sensor's output ` +
+        `driver is destroyed.`,
     }
   }
 }
@@ -519,10 +964,69 @@ export interface DiodeParams {
   is: number
   /** Emission coefficient. */
   n: number
+  /**
+   * Recommended continuous forward current, amps — the CAUTION threshold.
+   *
+   * Optional, and it defaults to `LED_RATED_AMPS`, because the LED is the case
+   * that has no params of its own to carry it: `ledColour()` in parts.ts builds
+   * `{is, n}` per colour and knows nothing about ratings, and every one of the
+   * six colours is the same 5 mm lamp. Every OTHER user of this class states its
+   * own numbers below, and the default is what an unstated one falls back to.
+   */
+  ratedAmps?: number
+  /** Absolute maximum forward current, amps — the DESTRUCTIVE threshold. */
+  maxAmps?: number
+  /**
+   * What the part is called in a fault message, WITH its article ("an LED",
+   * "a 1N4148").
+   *
+   * The article is part of the string rather than computed, because "a"/"an"
+   * here follows the SOUND of a part number, not its spelling: "an LED", "an
+   * MCP3008", "a 1N4148". A rule over the first letter gets all three wrong.
+   */
+  label?: string
 }
 
-/** Silicon signal diode, roughly 1N4148. */
-export const DIODE_1N4148: DiodeParams = { is: 2.52e-9, n: 1.752 }
+/**
+ * Recommended and absolute-maximum forward current for a standard 5 mm LED,
+ * amps. Kingbright / Vishay red-lamp datasheets: 20 mA DC forward current
+ * recommended, 30 mA absolute maximum, above which the die overheats and fails.
+ *
+ * These are the DEFAULTS for any DiodeParams that names no rating of its own,
+ * which is exactly the LED colours — see DiodeParams.ratedAmps.
+ */
+export const LED_RATED_AMPS = 0.02
+export const LED_ABS_MAX_AMPS = 0.03
+
+/**
+ * Silicon signal diode, roughly 1N4148.
+ *
+ * RATINGS ARE THE DIODE'S OWN, and until this constant carried them the part
+ * inherited the LED's 20 mA / 30 mA — so a correctly built flyback or clamp
+ * circuit was reported as a DESTROYED component at a sixth of the part's real
+ * rating. The simulator telling a student their right answer is wrong is worse
+ * than saying nothing.
+ *
+ * From the NXP / ON Semiconductor 1N4148 datasheets (both agree; Vishay rates
+ * the continuous figure higher still, at 300 mA):
+ *
+ *   IF    continuous forward current            200 mA
+ *   IFRM  repetitive peak forward current       500 mA
+ *   IFSM  non-repetitive peak forward surge     1 A (1 s)
+ *
+ * `ratedAmps` is IF — held above it the part runs hot and ages, which is the
+ * caution. `maxAmps` is IFRM: a current the part survives only as a repeated
+ * PEAK, so a DC operating point sitting there is past what any of the three
+ * datasheet lines permit continuously, which is the destruction. IFSM is not
+ * used, because a 1 s surge rating says nothing about a steady state.
+ */
+export const DIODE_1N4148: DiodeParams = {
+  is: 2.52e-9,
+  n: 1.752,
+  ratedAmps: 0.2,
+  maxAmps: 0.5,
+  label: 'a 1N4148',
+}
 
 /**
  * Red LED. These parameters are not arbitrary — combined with a 2 Ω series
@@ -531,7 +1035,7 @@ export const DIODE_1N4148: DiodeParams = { is: 2.52e-9, n: 1.752 }
  *
  *   220 Ω → 13.76 mA,  1 kΩ → 3.12 mA,  10 kΩ → 0.32 mA,  none → 1419 mA
  */
-export const LED_RED: DiodeParams = { is: 1e-20, n: 1.8 }
+export const LED_RED: DiodeParams = { is: 1e-20, n: 1.8, label: 'an LED' }
 export const LED_SERIES_R = 2.0
 
 /**
@@ -583,6 +1087,8 @@ export class Diode implements Device {
   ) {
     this.vte = params.n * VT
     this.vcrit = this.vte * Math.log(this.vte / (Math.SQRT2 * params.is))
+    this.rating = params.ratedAmps ?? LED_RATED_AMPS
+    this.absMaxCurrent = params.maxAmps ?? LED_ABS_MAX_AMPS
   }
 
   reset(): void {
@@ -615,16 +1121,19 @@ export class Diode implements Device {
     this.current = this.params.is * (Math.exp(Math.min(vd / this.vte, 300)) - 1)
   }
 
-  /** Recommended continuous forward current. A 5 mm LED is typically 20 mA. */
-  rating = 0.02
-
   /**
-   * Absolute-maximum continuous forward current. Standard 5 mm LED datasheets
-   * (e.g. Kingbright / Vishay red) rate the DC forward current at 20 mA
-   * recommended and 30 mA absolute maximum, above which the die overheats and
-   * fails. Between the two the LED is bright but running hot — a caution.
+   * Recommended continuous forward current, amps — the caution threshold.
+   *
+   * Taken from THIS junction's own params rather than being a constant on the
+   * class. It was a constant (0.02) for as long as the only nonlinear junction
+   * in the library was an LED, and the moment a second one existed that constant
+   * became a wrong datasheet applied to the wrong part: a 1N4148 rated 200 mA
+   * continuous was reported destroyed at 30 mA.
    */
-  absMaxCurrent = 0.03
+  rating: number
+
+  /** Absolute-maximum forward current, amps — the destructive threshold. */
+  absMaxCurrent: number
 
   safety(ctx: StampContext): SolveFault | null {
     this.readback(ctx)
@@ -633,6 +1142,11 @@ export class Diode implements Device {
 
     const mA = (this.current * 1000).toFixed(0)
     const rated = (this.rating * 1000).toFixed(0)
+    // "a part" was the wording while every junction here was an LED. Now that
+    // the same class models a signal diode and an opto-coupler's IR die, the
+    // message names WHICH part it is talking about — a fault that quotes a
+    // rating has to say whose rating it is.
+    const what = this.params.label ?? 'a part'
 
     // Above the rating but still within the absolute maximum: the part survives
     // for now but ages fast. Non-destructive, so the wording warns rather than
@@ -644,7 +1158,7 @@ export class Diode implements Device {
         deviceId: this.id,
         value: this.current,
         message:
-          `${mA} mA through a part running above its ${rated} mA rating. ` +
+          `${mA} mA through ${what} running above its ${rated} mA rating. ` +
           `On real hardware this shortens its life.`,
       }
     }
@@ -656,7 +1170,7 @@ export class Diode implements Device {
       deviceId: this.id,
       value: this.current,
       message:
-        `${mA} mA through a part rated for ${rated} mA. ` +
+        `${mA} mA through ${what} rated for ${rated} mA. ` +
         `On real hardware this part is destroyed.`,
     }
   }
@@ -1334,6 +1848,16 @@ export class HBridgeChannel implements Device {
   logicOk = false
   /** False when Vs is not far enough above a logic high to run the outputs. */
   supplyOk = false
+  /**
+   * The enable pin's own level, UNGATED by logicOk/supplyOk.
+   *
+   * `mode` collapses to 'coast' whenever the chip cannot drive, which is the
+   * right answer for the motor and the wrong one for the student: "coast"
+   * describes a bridge that was told to stop, and a bridge that was told to go
+   * and has no supply looks identical. This is what lets safety() tell those two
+   * apart and say WHY the output is dead.
+   */
+  enableAsked = false
 
   private sourceA = false
   private sourceB = false
@@ -1356,8 +1880,21 @@ export class HBridgeChannel implements Device {
 
   reset(): void {
     this.driving = false
+    this.enableAsked = false
     this.mode = 'coast'
     this.settled = true
+  }
+
+  /**
+   * What the two inputs are ASKING for, ignoring whether the chip can deliver.
+   *
+   * `mode` is what the bridge is doing; this is what it was told to do. They
+   * differ exactly when the part is dead — no logic supply, no motor supply —
+   * which is the case the student most needs spelled out.
+   */
+  get commandedMode(): BridgeMode {
+    if (!this.enableAsked) return 'coast'
+    return this.sourceA === this.sourceB ? 'brake' : this.sourceA ? 'forward' : 'reverse'
   }
 
   /** Load the chip puts on each driving pin, ohms. */
@@ -1414,8 +1951,8 @@ export class HBridgeChannel implements Device {
     this.logicOk = vss >= this.params.minLogicVolts && vss <= this.params.maxLogicVolts
     this.supplyOk = vs >= this.minSupplyVolts
 
-    const enabled =
-      this.logicOk && this.supplyOk && this.levelOf(ctx, this.nets.en, this.driving)
+    this.enableAsked = this.levelOf(ctx, this.nets.en, this.driving)
+    const enabled = this.logicOk && this.supplyOk && this.enableAsked
     const a = this.levelOf(ctx, this.nets.in1, this.sourceA)
     const b = this.levelOf(ctx, this.nets.in2, this.sourceB)
 
@@ -1465,6 +2002,52 @@ export class HBridgeChannel implements Device {
           `${vss.toFixed(1)} V on the logic supply of an L298, which is rated ` +
           `${this.params.minLogicVolts}–${this.params.maxLogicVolts} V. The motor supply ` +
           `goes on Vs, not on Vss — on real hardware this destroys the chip.`,
+      }
+    }
+
+    /**
+     * WHY THE OUTPUT IS DEAD.
+     *
+     * The model has always known this — logicOk and supplyOk are computed on
+     * every solve — and it threw the answer away, so a student whose motor did
+     * not turn had nothing but a silent Checks panel and a bridge reporting
+     * 'coast'. These are CAUTIONS, not destructions: nothing is being damaged.
+     * They fire only when the channel is actually being ASKED to drive, so an
+     * L298N sitting unwired in the tray, or one whose enable is deliberately
+     * low, says nothing at all.
+     */
+    if (this.enableAsked && !this.logicOk) {
+      const vs =
+        this.nets.vs === undefined ? 0 : ctx.voltage(this.nets.vs) - ctx.voltage(this.nets.gnd)
+      return {
+        kind: 'supply_range',
+        severity: 'caution',
+        deviceId: this.id,
+        value: vss,
+        message:
+          this.nets.vss === undefined || vss < 0.5
+            ? `This bridge is enabled but Vss — the LOGIC supply, the "+5V" screw terminal — ` +
+              `is not connected. Without ${this.params.minLogicVolts}–${this.params.maxLogicVolts} V ` +
+              `there the chip's logic is dead and the outputs never switch, ` +
+              `whatever Vs is doing (${vs.toFixed(1)} V).`
+            : `${vss.toFixed(1)} V on Vss, outside the ` +
+              `${this.params.minLogicVolts}–${this.params.maxLogicVolts} V this chip's logic needs. ` +
+              `The bridge is enabled but its outputs cannot switch.`,
+      }
+    }
+    if (this.enableAsked && this.logicOk && !this.supplyOk) {
+      const vs =
+        this.nets.vs === undefined ? 0 : ctx.voltage(this.nets.vs) - ctx.voltage(this.nets.gnd)
+      return {
+        kind: 'supply_range',
+        severity: 'caution',
+        deviceId: this.id,
+        value: vs,
+        message:
+          `This bridge is enabled but Vs — the MOTOR supply — is ${vs.toFixed(1)} V. The output ` +
+          `stage needs at least VIH + ${this.params.supplyHeadroomVolts} V = ` +
+          `${this.minSupplyVolts.toFixed(1)} V, so nothing is driven. ` +
+          `Vs is the "+12V" screw terminal, not the "+5V" one.`,
       }
     }
 
@@ -1818,7 +2401,21 @@ export class UnipolarStepper implements Device {
  * asserts the model reproduces 1.2 V at 20 mA, so the constant cannot drift
  * away from its own derivation.
  */
-export const OPTO_LED: DiodeParams = { is: 1.2633e-13, n: 1.8 }
+export const OPTO_LED: DiodeParams = {
+  is: 1.2633e-13,
+  n: 1.8,
+  /**
+   * Sharp PC817 datasheet, absolute maximum ratings: forward current IF 50 mA,
+   * with the electro-optical characteristics all taken at IF = 20 mA. So 20 mA
+   * is the current the part is CHARACTERISED at (the caution) and 50 mA is the
+   * one it is destroyed above (the destruction) — the same two numbers
+   * RelayChannel.safety() already quotes for the opto, now on the junction
+   * itself so the two cannot disagree.
+   */
+  ratedAmps: 0.02,
+  maxAmps: 0.05,
+  label: 'an opto-coupler LED',
+}
 
 /**
  * A four-channel opto-isolated relay board, as sold for Arduino/Pi kits.

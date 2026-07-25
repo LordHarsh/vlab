@@ -15,6 +15,9 @@ import {
   NortonPort,
   RELAY_MODULE_4CH,
   Resistor,
+  SENSOR_SUPPLIES,
+  SensorPort,
+  SensorSupply,
   STEPPER_28BYJ48,
   ULN2003,
   UnipolarStepper,
@@ -23,7 +26,9 @@ import {
   createLED,
   createRelayModule,
   createULN2003,
+  type DarlingtonSink,
   type Diode,
+  type HBridgeChannel,
   type ReactiveDevice,
 } from '../devices'
 import type { NetId } from '../types'
@@ -65,6 +70,17 @@ export interface ShortedPin {
   volts: number
 }
 
+/**
+ * The channels of one driver IC, tagged by which kind it is.
+ *
+ * A discriminated union rather than two maps, because the reader
+ * (analog-state.ts) has to switch on the kind anyway to describe them, and two
+ * maps would let a part appear in neither or — worse — in both.
+ */
+export type DriverChannels =
+  | { kind: 'h_bridge'; channels: HBridgeChannel[] }
+  | { kind: 'darlington_array'; channels: DarlingtonSink[]; indices: number[] }
+
 export interface CompileResult {
   circuit: Circuit
   /** pinKey → solver net id. Ground is 0. */
@@ -86,6 +102,20 @@ export interface CompileResult {
    * resistors). Read after a solve; the value updates via Device.readback.
    */
   meters: Map<string, { readonly id: string; current: number }>
+  /**
+   * Part id → the switching channels of a driver IC, so the engine can report
+   * what the driver is DOING.
+   *
+   * These devices already compute everything a student needs — an
+   * HBridgeChannel's mode (coast/forward/reverse/brake) and its two supply
+   * verdicts, a DarlingtonSink's on/off and its collector current — on every
+   * single solve, and until this map existed all of it was thrown away. The
+   * result was two parts, both electrically excellent, that could not tell a
+   * student why their motor was not turning. Handed over by NAME for the same
+   * reason `reactive` is: the engine has a `Circuit` full of anonymous devices
+   * and no way back to the part the student can see.
+   */
+  drivers: Map<string, DriverChannels>
   /**
    * Part id → its capacitor or inductor.
    *
@@ -154,6 +184,16 @@ interface DeadLead {
   /** Breadboard holes this lead reaches, for channel-crossing detection. */
   coords: Array<{ bank: 'lower' | 'upper'; col: number; hole: string }>
 }
+
+/**
+ * Ground pin ids a sensor module may declare, in the order the supply check
+ * prefers them.
+ *
+ * Only the MCP3008 has more than one, and DGND leads because the digital supply
+ * current returns there — see the sensor branch of compile() for the rest of the
+ * reasoning. Every other part declares exactly `GND`, so the order costs nothing.
+ */
+const SENSOR_GROUND_PINS = ['GND', 'DGND', 'AGND'] as const
 
 class DSU {
   private parent = new Map<string, string>()
@@ -272,11 +312,24 @@ export function compile(doc: CircuitDoc): CompileResult {
 
   const net = (ref: PinRef): NetId | undefined => netOf.get(pinKeyOf(ref))
 
+  /**
+   * Is this pin ATTACHED to anything — i.e. does its net carry a second
+   * component terminal, so current could flow in one and out another?
+   *
+   * Topological, not a wire count: a jumper into a dead breadboard column is
+   * still unattached, which is also exactly what it is. This is the same rule
+   * the dangling-lead detection at the foot of compile() uses, hoisted so the
+   * relay board and the ULN2003 can share one definition of "wired up" with it.
+   */
+  const joined = (partId: string, pinId: string): boolean =>
+    (componentPins.get(dsu.find(pinKeyOf({ partId, pinId }))) ?? 0) >= 2
+
   // ─── Instantiate devices ───
   const mcuPorts = new Map<string, NortonPort>()
   const leds = new Map<string, Diode>()
   const motors = new Map<string, DCMotor>()
   const meters = new Map<string, { readonly id: string; current: number }>()
+  const drivers = new Map<string, DriverChannels>()
   const reactive = new Map<string, ReactiveDevice>()
   const analogNets = new Map<string, NetId>()
   const pinNets = new Map<string, NetId>()
@@ -332,14 +385,6 @@ export function compile(doc: CircuitDoc): CompileResult {
       // device readout reports the resistance this actually stamped.
       const ohms = variableResistorOhms(el.minOhms, el.maxOhms, Number(part.props.light ?? 60))
       const r = new Resistor(part.id, a, b, ohms)
-      circuit.add(r)
-      meters.set(part.id, r)
-    } else if (el.kind === 'load') {
-      const pins = def.pins
-      const a = net({ partId: part.id, pinId: pins[0].id })
-      const b = net({ partId: part.id, pinId: pins[1].id })
-      if (a === undefined || b === undefined) continue
-      const r = new Resistor(part.id, a, b, el.ohms)
       circuit.add(r)
       meters.set(part.id, r)
     } else if (el.kind === 'buzzer') {
@@ -401,9 +446,38 @@ export function compile(doc: CircuitDoc): CompileResult {
       // unused channels cost nothing; and a COM that never reached a net gets no
       // flyback diode, which is also what the hardware does.
       const com = net({ partId: part.id, pinId: 'COM' })
-      const { devices } = createULN2003(part.id, { in: ins, out: outs, com, gnd })
+      const { devices, channels } = createULN2003(part.id, { in: ins, out: outs, com, gnd })
       if (devices.length === 0) continue
       circuit.add(...devices)
+      /**
+       * WHICH channel each entry of `channels` IS.
+       *
+       * createULN2003 skips any channel whose input net is undefined, so the
+       * array is not necessarily 1..7 and `channels[0]` is not necessarily
+       * channel 1 — a readout that assumed it would report a 28BYJ-48 driven
+       * from IN4..IN7 as channels 1..4. Derived from the same condition
+       * createULN2003 itself tests, rather than assumed.
+       *
+       * In practice every channel IS built today, because a ULN2003 pin always
+       * earns a net of its own (a non-MCU pin makes its root active on its own),
+       * so `ins[k]` is never undefined. That is fine and costs a few conductance
+       * stamps; what it means is that "built" is not the same question as
+       * "wired", which is why the metering below asks the second one.
+       */
+      const indices: number[] = []
+      for (let k = 0; k < ins.length; k++) if (ins[k] !== undefined) indices.push(k + 1)
+      drivers.set(part.id, { kind: 'darlington_array', channels, indices })
+      /**
+       * Meter only the channels the student actually WIRED an input to.
+       *
+       * Metering all seven would put five rows of 0.00 mA in the Measurements
+       * panel of a correctly built stepper circuit — the same noise the
+       * dangling-lead detection already refuses to produce for the spare pins of
+       * a multi-channel driver, and for the same reason.
+       */
+      for (let k = 0; k < channels.length; k++) {
+        if (joined(part.id, `IN${indices[k]}`)) meters.set(`${part.id}.ch${indices[k]}`, channels[k])
+      }
     } else if (el.kind === 'h_bridge') {
       const gnd = net({ partId: part.id, pinId: 'GND' })
       if (gnd === undefined) continue
@@ -420,7 +494,7 @@ export function compile(doc: CircuitDoc): CompileResult {
        */
       const logic = (pinId: string): NetId => net({ partId: part.id, pinId }) ?? gnd
       const out = (pinId: string) => net({ partId: part.id, pinId })
-      const { devices } = createL298N(part.id, {
+      const { devices, channels } = createL298N(part.id, {
         in1: logic('IN1'),
         in2: logic('IN2'),
         ena: logic('ENA'),
@@ -436,6 +510,11 @@ export function compile(doc: CircuitDoc): CompileResult {
         gnd,
       })
       circuit.add(...devices)
+      drivers.set(part.id, { kind: 'h_bridge', channels })
+      // Per channel, keyed exactly as the channel's own fault deviceId is
+      // (`l298n_1.A`), so a milliamp figure in Measurements and a fault in
+      // Checks name the same thing.
+      for (const ch of channels) meters.set(ch.id, ch)
       limitations.push(
         'The motor driver is solved at a DC operating point. Its ~2.5 V transistor drop is ' +
           'modelled, but switching a motor off produces no inductive kick, so the flyback ' +
@@ -501,9 +580,6 @@ export function compile(doc: CircuitDoc): CompileResult {
       const vcc = net({ partId: part.id, pinId: 'VCC' })
       if (gnd === undefined || vcc === undefined) continue
 
-      const joined = (pinId: string): boolean =>
-        (componentPins.get(dsu.find(pinKeyOf({ partId: part.id, pinId }))) ?? 0) >= 2
-
       const ins: Array<NetId | undefined> = []
       const coms: Array<NetId | undefined> = []
       const nos: Array<NetId | undefined> = []
@@ -521,7 +597,10 @@ export function compile(doc: CircuitDoc): CompileResult {
         nos.push(net({ partId: part.id, pinId: `NO${k}` }))
         ncs.push(net({ partId: part.id, pinId: `NC${k}` }))
         const used =
-          joined(`IN${k}`) || joined(`COM${k}`) || joined(`NO${k}`) || joined(`NC${k}`)
+          joined(part.id, `IN${k}`) ||
+          joined(part.id, `COM${k}`) ||
+          joined(part.id, `NO${k}`) ||
+          joined(part.id, `NC${k}`)
         if (!used) {
           internal.push(undefined)
           continue
@@ -569,14 +648,57 @@ export function compile(doc: CircuitDoc): CompileResult {
         const n = net({ partId: part.id, pinId: pin.id })
         if (n !== undefined) nets[pin.id] = n
       }
-      // Each driven pin gets its own Norton port, permanently stamped and
-      // starting released (high impedance) so it cannot fight whatever else is
-      // on the wire before the model has decided anything.
+
+      /**
+       * THE SUPPLY PIN IS A DEVICE NOW, and that is what gives these seven parts
+       * a safety() at all.
+       *
+       * Until this branch stamped one, `kind:'sensor'` built Norton ports and
+       * nothing else — so a DHT11 on 12 V, or a DS18B20 with GND and VDD
+       * reversed, produced a green Checks panel. See SensorSupply in devices.ts.
+       *
+       * BOTH terminals are required. A supply pin with no ground return draws
+       * nothing and destroys nothing on a bench either — 12 V on a VCC whose GND
+       * is in the air is a floating island, not a dead sensor — so a part
+       * missing either one is stamped nothing and reports nothing, which is the
+       * honest answer rather than a convenient one.
+       *
+       * GROUND IS THE FIRST DECLARED GROUND PIN THAT REACHED A NET. Six of the
+       * seven have exactly one; the MCP3008 has two, and the order below is
+       * DGND first because that is the return the digital supply current
+       * actually flows in — and because MCP3008Device.supply() in behavioural.ts
+       * already reads `VDD − DGND`, so the safety check and the model agree
+       * about what "the supply" is by construction.
+       */
+      const supplyParams = SENSOR_SUPPLIES[el.protocol]
+      const supplyNet = supplyParams === undefined ? undefined : nets[supplyParams.supplyPin]
+      const groundNet = SENSOR_GROUND_PINS.map((p) => nets[p]).find((n) => n !== undefined)
+      if (supplyParams !== undefined && supplyNet !== undefined && groundNet !== undefined) {
+        circuit.add(new SensorSupply(`${part.id}.supply`, supplyNet, groundNet, supplyParams))
+      }
+
+      /**
+       * Each driven pin gets its own Norton port, permanently stamped and
+       * starting released (high impedance) so it cannot fight whatever else is
+       * on the wire before the model has decided anything.
+       *
+       * A SensorPort rather than a bare NortonPort, and the difference is not
+       * cosmetic: a NortonPort's safety() carries the ATmega328P's pad ratings
+       * and the ATmega328P's wording, so overloading an HC-SR04's ECHO used to
+       * report "…mA through a pin rated for 40 mA … this pin is destroyed"
+       * against `hcs_4.echo`. Wrong part, wrong datasheet, stated with total
+       * confidence. A protocol with no ratings row falls back to the plain port
+       * rather than inventing one.
+       */
       const ports: Record<string, NortonPort> = {}
       for (const signal of el.drives) {
         const n = nets[signal]
         if (n === undefined) continue
-        const port = new NortonPort(`${part.id}.${signal.toLowerCase()}`, 0, n, 1e-9, 0)
+        const id = `${part.id}.${signal.toLowerCase()}`
+        const port =
+          supplyParams === undefined
+            ? new NortonPort(id, 0, n, 1e-9, 0)
+            : new SensorPort(id, 0, n, 1e-9, 0, supplyParams, signal)
         circuit.add(port)
         ports[signal] = port
       }
@@ -886,6 +1008,7 @@ export function compile(doc: CircuitDoc): CompileResult {
     leds,
     motors,
     meters,
+    drivers,
     reactive,
     analogNets,
     pinNets,

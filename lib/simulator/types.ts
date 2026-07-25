@@ -109,7 +109,18 @@ export interface Device {
  * without pretending the maths failed.
  */
 export interface SolveFault {
-  kind: 'over_current' | 'over_power' | 'short_circuit'
+  /**
+   * `supply_range` is the odd one out and is here for an honesty reason.
+   *
+   * The other three all describe something being EXCEEDED. An L298N whose Vs
+   * sits below VIH + 2.5 V is not over anything — it is a part that has been
+   * told to drive and physically cannot, which is the single most useful thing
+   * the model knows about a motor that will not turn. Filing it under
+   * `over_power` put the words "OVER POWER" on the Checks badge of an
+   * UNDER-voltage, which is exactly the kind of confidently-wrong attribution
+   * the rest of this work exists to remove.
+   */
+  kind: 'over_current' | 'over_power' | 'short_circuit' | 'supply_range'
   /**
    * How far past the line the circuit is:
    *

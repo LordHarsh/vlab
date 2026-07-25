@@ -34,14 +34,26 @@ import {
   Buzzer,
   DCMotor,
   DIODE_1N4148,
+  Diode,
   HOBBY_MOTOR_6V,
+  LED_RED,
+  OPTO_LED,
+  Resistor,
+  SENSOR_SUPPLIES,
   VoltageSource,
+  type DiodeParams,
 } from '../devices'
 import {
   BuzzerMonitor,
+  DS18B20,
   FlowSensor,
   HCSR04,
+  HC_SR501,
+  HC_SR04,
+  MCP3008,
   PIRSensor,
+  PULSE_SENSOR,
+  YF_S201,
   type BehaviouralContext,
   type DeviceState,
   type DriveLevel,
@@ -1542,6 +1554,182 @@ group('9. The ANALOG parts report too — pot, LDR, diode, button')
     // the model does not pretend it is.
     near('and the current is set by the resistor, not the contact',
       Math.abs(closed.snapshot().currents.r) * 1e6, (5 / 10000.05) * 1e6, 1, 'µA')
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('10. every junction is judged against ITS OWN datasheet')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * `Diode.safety` used to carry ONE pair of thresholds — 20 mA caution, 30 mA
+   * destructive — hard-coded on the class. They are a 5 mm LED's, and they were
+   * right for as long as an LED was the only junction in the library. By the
+   * time three different junctions shared the class they were a wrong datasheet
+   * confidently applied to two of them, and the consequence was not academic: a
+   * CORRECTLY BUILT 1N4148 flyback or clamp circuit was reported as a destroyed
+   * component at a sixth of the part's real rating.
+   *
+   * Datasheet figures, restated here rather than imported:
+   *
+   *   1N4148   (NXP / ON)   IF 200 mA continuous, IFRM 500 mA repetitive peak
+   *   5 mm LED (Kingbright) IF 20 mA recommended, 30 mA absolute maximum
+   *   PC817    (Sharp)      characterised at IF 20 mA, IF 50 mA absolute maximum
+   */
+  /**
+   * Thermal voltage at 300.15 K (27 °C), the SPICE default — restated rather
+   * than imported, like every other constant in this file, so the bisection
+   * oracle below is independent of the model it is checking.
+   */
+  const VT = 0.025852
+
+  /** Relative-tolerance assert; this file's `near` is absolute. */
+  function nearRel(name: string, actual: number, expected: number, rel: number, unit = 'A'): void {
+    const scale = Math.max(Math.abs(actual), Math.abs(expected))
+    const r = scale === 0 ? 0 : Math.abs(actual - expected) / scale
+    record(name, Number.isFinite(actual) && r <= rel, `${fmt(expected)} ${unit} (rel ≤ ${rel})`,
+      `${fmt(actual)} ${unit}, rel ${r.toExponential(2)}`)
+  }
+
+  const JUNCTION_SHEET = {
+    d1n4148: { rated: 0.2, absMax: 0.5, params: DIODE_1N4148, names: /1N4148/ },
+    led: { rated: 0.02, absMax: 0.03, params: LED_RED, names: /LED/ },
+    opto: { rated: 0.02, absMax: 0.05, params: OPTO_LED, names: /opto-coupler/ },
+  }
+
+  /**
+   * The current a supply V drives through R into this junction, by BISECTION on
+   * the exact scalar KVL equation.
+   *
+   *   V = Vd + I·R,   I = Is·(exp(Vd/(n·VT)) − 1)
+   *
+   * An independent algorithm from Newton-on-a-companion-model, so the expected
+   * value is not the solver's own answer restated.
+   */
+  function junctionCurrent(volts: number, ohms: number, p: { is: number; n: number }): number {
+    const vte = p.n * VT
+    let lo = 0
+    let hi = volts
+    for (let k = 0; k < 200; k++) {
+      const vd = (lo + hi) / 2
+      const i = p.is * (Math.exp(vd / vte) - 1)
+      if (vd + i * ohms > volts) hi = vd
+      else lo = vd
+    }
+    return p.is * (Math.exp(((lo + hi) / 2) / vte) - 1)
+  }
+
+  /** One junction across a supply and a series resistor; returns its fault. */
+  function junctionFault(volts: number, ohms: number, p: DiodeParams) {
+    const c = new Circuit()
+    const n1 = c.allocNet()
+    const n2 = c.allocNet()
+    c.add(new VoltageSource('v', n1, 0, volts))
+    c.add(new Resistor('r', n1, n2, ohms))
+    c.add(new Diode('d', n2, 0, p))
+    return c.solve().faults.find((f) => f.deviceId === 'd') ?? null
+  }
+
+  for (const [name, sheet] of Object.entries(JUNCTION_SHEET)) {
+    /**
+     * A current in each band, and — the part that makes this a real check —
+     * one 1 % EITHER SIDE of both thresholds.
+     *
+     * Mid-band points alone are a weak test: moving a threshold by a factor of
+     * ten still leaves them in the right band about half the time. Straddling
+     * each declared number means any move of either one is a failure, which is
+     * what a mutation check is for.
+     */
+    const bands: Array<[string, number, number, 'none' | 'caution' | 'destructive']> = [
+      ['well under its rating', sheet.rated * 0.5, 0, 'none'],
+      ['a whisker UNDER its rating', sheet.rated * 0.99, 0, 'none'],
+      ['a whisker OVER its rating', sheet.rated * 1.01, 0, 'caution'],
+      ['between rating and absolute maximum', (sheet.rated + sheet.absMax) / 2, 0, 'caution'],
+      ['a whisker UNDER its absolute maximum', sheet.absMax * 0.99, 0, 'caution'],
+      ['a whisker OVER its absolute maximum', sheet.absMax * 1.01, 0, 'destructive'],
+      ['past its absolute maximum', sheet.absMax * 1.4, 0, 'destructive'],
+    ]
+    for (const band of bands) {
+      const target = band[1]
+      // Pick R so the target current falls out: Vd at that current plus I·R = V.
+      const vte = sheet.params.n * VT
+      const vd = vte * Math.log(target / sheet.params.is + 1)
+      const ohms = 100
+      const volts = vd + target * ohms
+      const i = junctionCurrent(volts, ohms, sheet.params)
+      nearRel(`${name} at ${(target * 1000).toFixed(0)} mA — the bisection agrees the band is right`,
+        i, target, 1e-6)
+      const f = junctionFault(volts, ohms, sheet.params)
+      const got = f === null ? 'none' : f.severity
+      truth(`${name} at ${(target * 1000).toFixed(0)} mA is ${band[3]}`,
+        got === band[3], band[3], got === 'none' ? 'no fault' : `${got}: ${f?.message}`)
+      if (f !== null) {
+        truth(`  ... and the message names the part, not "a part"`,
+          sheet.names.test(f.message) && !/through a part/.test(f.message),
+          `matches ${sheet.names}`, f.message)
+      }
+    }
+  }
+
+  /**
+   * The regression, stated as the number the audit put on it: a 1N4148 at
+   * 100 mA — a perfectly ordinary flyback current — used to be called DESTROYED
+   * because the LED's 30 mA absolute maximum was being applied to it. 200/30 is
+   * the 6.7x the audit measured.
+   */
+  {
+    const vte = DIODE_1N4148.n * VT
+    const vd = vte * Math.log(0.1 / DIODE_1N4148.is + 1)
+    const f = junctionFault(vd + 0.1 * 100, 100, DIODE_1N4148)
+    truth('a 1N4148 at 100 mA is silent, where the LED thresholds called it destroyed',
+      f === null, 'no fault', f === null ? 'no fault' : `${f.severity}: ${f.message}`)
+    nearRel('and the over-protection factor was exactly 200 mA / 30 mA',
+      0.2 / 0.03, 6.6667, 1e-4, 'x')
+  }
+
+  /**
+   * SENSOR SUPPLY WINDOWS agree with the behavioural models' own cut-offs.
+   *
+   * Two files now hold an opinion about the supply of the same part:
+   * SENSOR_SUPPLIES in devices.ts decides whether it is DAMAGED, and each
+   * behavioural model's own MIN/MAX_SUPPLY_VOLTS decides whether it ANSWERS.
+   * They are allowed to differ — the HC-SR04 and the flow sensor are
+   * deliberately more forgiving about answering than the sheet is about
+   * specifying — but not in a direction that would contradict the sheet.
+   *
+   * DAMAGE IS NOT LATCHED ANYWHERE IN THIS SIMULATOR, and that is a deliberate
+   * standing convention rather than an oversight here: an LED past its 30 mA
+   * absolute maximum still lights, a motor past 9 V still spins, and the fault
+   * is a REPORT about what a bench would do, not a state the model enters. So a
+   * sensor still answering above its absolute maximum is consistent with every
+   * other part; the three models below have no upper cut-off at all, and this
+   * asserts that fact rather than pretending otherwise.
+   */
+  {
+    const pairs: Array<[string, number, number]> = [
+      ['hc_sr04', HC_SR04.MIN_SUPPLY_VOLTS, Infinity],
+      ['pir', HC_SR501.MIN_SUPPLY_VOLTS, Infinity],
+      ['flow', YF_S201.MIN_SUPPLY_VOLTS, Infinity],
+      ['ds18b20', DS18B20.MIN_SUPPLY_VOLTS, DS18B20.MAX_SUPPLY_VOLTS],
+      ['pulse', PULSE_SENSOR.MIN_SUPPLY_VOLTS, PULSE_SENSOR.MAX_SUPPLY_VOLTS],
+      ['mcp3008', MCP3008.MIN_SUPPLY_VOLTS, MCP3008.MAX_SUPPLY_VOLTS],
+    ]
+    for (const [protocol, modelMin, modelMax] of pairs) {
+      const s = SENSOR_SUPPLIES[protocol]
+      truth(`${protocol}: where the model HAS a ceiling it is inside the absolute maximum`,
+        !Number.isFinite(modelMax) || modelMax <= s.absMaxVolts,
+        `unbounded, or ≤ ${s.absMaxVolts} V`,
+        Number.isFinite(modelMax) ? `${modelMax} V` : 'unbounded (damage is not latched)')
+      truth(`${protocol}: the model's own floor is not ABOVE the specified minimum`,
+        modelMin <= s.minVolts + 1e-9,
+        `≤ ${s.minVolts} V`, `${modelMin} V`)
+      // Whatever each model does about answering, the SUPPLY check has to fault
+      // once the part is past its absolute maximum — that is the whole point.
+      truth(`${protocol}: past ${s.absMaxVolts} V the supply check faults regardless`,
+        s.absMaxVolts > s.maxVolts && s.maxVolts >= s.minVolts,
+        'absMax > spec max ≥ spec min',
+        `${s.absMaxVolts} > ${s.maxVolts} ≥ ${s.minVolts}`)
+    }
   }
 }
 

@@ -983,6 +983,74 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
     }
   }
 
+  /**
+   * The L298N. Two independent bridges, reported independently.
+   *
+   * `mode` is what a bridge is DOING and `asked` is what it was TOLD to do. They
+   * only differ when the chip cannot drive — no logic supply, no motor supply —
+   * and that gap is the whole reason this row exists: the model has always known
+   * why a motor was not turning and the student could not see any of it.
+   */
+  if (el.kind === 'h_bridge') {
+    if (s.built !== true) {
+      return {
+        headline: 'not wired up',
+        detail: 'the GND terminal has to reach the rest of the circuit before the chip does anything',
+      }
+    }
+    const bridge = (mode: string, asked: string, amps: number): string => {
+      // A bridge told to drive that is not driving names the fault; one that was
+      // never enabled just says so.
+      if (mode === asked) {
+        return mode === 'coast'
+          ? 'coast'
+          : `${mode} · ${Math.abs(amps * 1000).toFixed(0)} mA`
+      }
+      return `${asked} asked — dead`
+    }
+    const headline =
+      `A ${bridge(String(s.modeA ?? 'coast'), String(s.askedA ?? 'coast'), num('ampsA'))} · ` +
+      `B ${bridge(String(s.modeB ?? 'coast'), String(s.askedB ?? 'coast'), num('ampsB'))}`
+    const supplies =
+      s.logicOk !== true
+        ? 'Vss (logic, the "+5V" screw) is outside 4.5–7 V — the logic is dead'
+        : s.supplyOk !== true
+          ? 'Vs (motor, the "+12V" screw) is under VIH + 2.5 V — the output stage cannot drive'
+          : 'Vss and Vs both in range'
+    return {
+      headline,
+      detail:
+        `${supplies} · enable ${s.enabledA === true ? 'A' : '–'}` +
+        `${s.enabledB === true ? 'B' : '–'}`,
+    }
+  }
+
+  /**
+   * The ULN2003. Seven independent open-collector sinks.
+   *
+   * `-` in the pattern is a channel whose IN pin reaches nothing, the same way
+   * the relay board's pattern marks a channel it never built: six of a
+   * 28BYJ-48's seven are legitimately unused, and printing those as a confident
+   * "off" would put six meaningless readings beside the four that matter.
+   */
+  if (el.kind === 'darlington_array') {
+    if (s.built !== true) {
+      return {
+        headline: 'no channels built',
+        detail: 'a channel exists once its IN pin is wired — and GND has to reach the circuit too',
+      }
+    }
+    const on = Math.round(num('energised'))
+    const conducting = String(s.conducting ?? '')
+    return {
+      headline: on === 0 ? 'all off' : `${on} sinking`,
+      detail:
+        `${String(s.pattern ?? '')} · ` +
+        (on === 0 ? 'no channel conducting' : `IN${conducting.replace(/, /g, ', IN')} on`) +
+        ` · ${(num('amps') * 1000).toFixed(0)} mA total`,
+    }
+  }
+
   // A part whose model reports a shape this panel has never seen still gets its
   // numbers shown, rather than an empty row that looks like a broken sensor.
   const pairs = Object.entries(s).map(
@@ -1012,6 +1080,12 @@ const REPORTS_STATE = new Set([
   'variable_resistor',
   'diode',
   'button',
+  // The two driver ICs. Both compute everything a student needs on every solve
+  // — an HBridgeChannel's mode and both supply verdicts, every DarlingtonSink's
+  // on/off — and until they were added here all of it was thrown away, so the
+  // only way to see an L298N working was to look at the motor on the end of it.
+  'h_bridge',
+  'darlington_array',
 ])
 
 /**

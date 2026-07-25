@@ -23,9 +23,9 @@
  * on a Pico is a bug nobody would find for months.
  */
 
-import type { ReactiveDevice } from './devices'
+import { ULN2003, type ReactiveDevice } from './devices'
 import type { DeviceState } from './behavioural'
-import type { CompiledNet } from './model/compile'
+import type { CompiledNet, DriverChannels } from './model/compile'
 import type { CircuitDoc } from './model/document'
 import { pinKeyOf } from './model/document'
 import { getPart, potentiometerLegs, variableResistorOhms } from './model/parts'
@@ -59,6 +59,18 @@ export interface AnalogStateInputs {
   voltages: Float64Array
   /** Part id → its capacitor or inductor, from the same compile. */
   reactive: Map<string, ReactiveDevice>
+  /**
+   * Part id → the switching channels of a driver IC, from the same compile.
+   *
+   * These are the ONE thing here that is not read out of the node voltages: an
+   * HBridgeChannel's mode and a DarlingtonSink's on/off are hysteretic — they
+   * depend on the previous iterate, not only on the present solution — so the
+   * device is the only thing that knows them. Reading the device rather than
+   * re-deriving the thresholds here is deliberate and is the same rule the rest
+   * of this file follows: the panel must describe what the solver stamped, not a
+   * second copy of the decision.
+   */
+  drivers: Map<string, DriverChannels>
   /** True while the engine is integrating in time rather than solving DC. */
   transient: boolean
 }
@@ -249,6 +261,102 @@ export function analogDeviceStates(inp: AnalogStateInputs): Record<string, Devic
         pressed: Number(part.props.pressed ?? 0) >= 0.5,
         connected,
         volts: connected ? (a as number) - (b as number) : 0,
+      }
+      continue
+    }
+
+    /**
+     * THE TWO DRIVER ICs.
+     *
+     * Both are electrically complete and were, until this branch existed,
+     * completely mute: an L298N knew whether each bridge was coasting, driving
+     * forward, driving in reverse or braking, and whether its two supplies were
+     * in their windows, and none of it reached the student. The only way to see
+     * an L298N work was to look at the motor on the end of it — and the only way
+     * to see it NOT work was to guess.
+     *
+     * Reported per CHANNEL, because the parts are per channel: an L298N has two
+     * independent bridges and a ULN2003 has seven independent sinks, and "the
+     * driver is on" is not a statement either of them can make.
+     */
+    if (el.kind === 'h_bridge' || el.kind === 'darlington_array') {
+      const driver = inp.drivers.get(part.id)
+      if (driver === undefined) {
+        // Compiled to nothing: no ground net (h-bridge), or no channel had a
+        // wired input (ULN2003). Both are real states a student can create and
+        // both need saying, or the part vanishes from the panel and looks broken.
+        out[part.id] = { built: false, channels: 0 }
+        continue
+      }
+
+      if (driver.kind === 'h_bridge') {
+        const [a, b] = driver.channels
+        out[part.id] = {
+          built: true,
+          channels: driver.channels.length,
+          // Both supply verdicts are per channel in the model but identical in
+          // practice — the two bridges share Vs and Vss — so they are reported
+          // once, off channel A, as a property of the CHIP.
+          logicOk: a.logicOk,
+          supplyOk: a.supplyOk,
+          // What each bridge is DOING, and what it was TOLD to do. They differ
+          // exactly when a supply is missing, which is the case worth naming.
+          modeA: a.mode,
+          modeB: b.mode,
+          askedA: a.commandedMode,
+          askedB: b.commandedMode,
+          enabledA: a.enableAsked,
+          enabledB: b.enableAsked,
+          ampsA: a.current,
+          ampsB: b.current,
+        }
+        continue
+      }
+
+      /**
+       * A ULN2003 pattern, one character per channel of the package:
+       *   `#` conducting, `·` off, `-` its IN pin reaches nothing.
+       *
+       * THE DASH IS ABOUT WIRING, NOT ABOUT INSTANTIATION. Every channel is
+       * stamped — a ULN2003 pin always earns a net of its own, so compile()
+       * builds all seven whatever the student wired — but a channel whose input
+       * reaches nothing is off for a reason the student needs distinguishing
+       * from "your code set it low". Six of a 28BYJ-48's seven are legitimately
+       * unused, and printing those as `·` would put six confident "off" readings
+       * next to the four that mean something.
+       *
+       * `live` is compile()'s own two-terminals rule, recovered from the nets it
+       * published — the same test the dangling-lead detection uses.
+       */
+      const on: number[] = []
+      let pattern = ''
+      let wired = 0
+      const byIndex = new Map<number, number>()
+      driver.indices.forEach((ch, i) => byIndex.set(ch, i))
+      let amps = 0
+      for (let ch = 1; ch <= ULN2003.channels; ch++) {
+        const i = byIndex.get(ch)
+        if (i === undefined || voltageOf(inp, live, part.id, `IN${ch}`) === undefined) {
+          pattern += '-'
+          continue
+        }
+        wired++
+        const channel = driver.channels[i]
+        pattern += channel.on ? '#' : '·'
+        amps += Math.abs(channel.current)
+        if (channel.on) on.push(ch)
+      }
+      out[part.id] = {
+        built: wired > 0,
+        channels: wired,
+        pattern,
+        // The channel NUMBERS that are conducting, so the readout can name them
+        // rather than making the student count characters.
+        conducting: on.join(', '),
+        energised: on.length,
+        // Total collector current across every wired channel — the figure the
+        // package's own thermal limit is about.
+        amps,
       }
       continue
     }
