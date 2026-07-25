@@ -201,6 +201,22 @@ export interface PartDefinition {
    * way to leave a button pressed while looking at something else.
    */
   momentary?: MomentaryControl
+  /**
+   * A draggable object OUT IN FRONT of a sensor, which is what the sensor reads.
+   *
+   * The last of Tinkercad's four canvas controls and the only one with no
+   * analogue anywhere in our code (TINKERCAD_DEVICE_PARITY.md §A, "the one
+   * structural idea worth stealing"). A knob, a slider and a button are all
+   * controls ON the part; this one is a control the part is POINTED AT, and the
+   * difference is the whole teaching point — "how far away is the wall" stops
+   * being a number in a side panel and becomes a thing you can see and move.
+   *
+   * Same contract as the other three, without exception: the declared `range`
+   * props keep their panel sliders, the drag writes those same props, and the
+   * document stays the single source of truth so the value survives a recompile
+   * and a save.
+   */
+  target?: TargetControl
 }
 
 /**
@@ -324,6 +340,82 @@ export interface MomentaryControl {
    * indicator over it.
    */
   pressedVar?: string
+}
+
+/**
+ * A draggable target in front of a sensor, drawn on the canvas.
+ *
+ * POLAR, not cartesian, and that is the load-bearing choice. Tinkercad stores
+ * `Target X` and `Target Y` as two hidden props, which works for it because its
+ * inspector never shows them; ours has to, because the canvas is pointer-only
+ * and the panel is the keyboard path to the same value. "Distance 137 cm" and
+ * "bearing 20° off axis" are two numbers a student can read, type and reason
+ * about; "target X = 41.3" is not, and neither of them is a quantity the
+ * datasheet talks about.
+ *
+ * ANGLES ARE DEGREES CLOCKWISE FROM THE SENSOR'S FACING AXIS, which in part-local
+ * units points at −y — straight up, away from the pin row. That is deliberately
+ * the same convention KnobControl uses ("degrees clockwise from twelve
+ * o'clock"), so `atan2(dx, −dy)` is the one angle rule in this file rather than
+ * two that could drift apart. The target is drawn inside the part's own
+ * transform group, so a rotated part carries its target and its cone round with
+ * it for free — the same way its pins move.
+ */
+export interface TargetControl {
+  /** The `range` prop the target's DISTANCE drives. Must be declared in `props`. */
+  key: string
+  /**
+   * The `range` prop the target's BEARING drives, when the target has two
+   * degrees of freedom. Absent means the target slides along the facing axis
+   * only, which is the honest answer for a sensor whose model does not read a
+   * bearing — a control that moves in a direction nothing simulates is the
+   * dead-control failure this project has shipped twice.
+   */
+  bearingKey?: string
+  /**
+   * A 0/1 `range` prop held at 1 for as long as the target is being dragged.
+   *
+   * The PIR's `motion` is the case: a passive infra-red sensor detects MOVEMENT,
+   * so moving the target IS the stimulus, and letting go is the moment movement
+   * stops. Exactly the momentary button's contract — 1 on grab, 0 on release —
+   * and it is what finally makes the datasheet's hold time (Tx) visible, because
+   * the output stays high for `hold` seconds after the drag ends.
+   */
+  movingKey?: string
+  /** The sensor's face in part-local units: where distance is measured FROM. */
+  cx: number
+  cy: number
+  /**
+   * Part-local units drawn per one unit of `key`, in whatever unit that prop
+   * declares.
+   *
+   * A DRAWING SCALE and never a distance. An HC-SR04 ranges to 400 cm, which at
+   * 1:1 would put the target 400 units above a module 98 units tall — off screen
+   * at any zoom a student can also see the wiring at. The readout above the
+   * marker always states the true figure, so the compression is in the picture
+   * and never in the number.
+   */
+  scale: number
+  /** Marker radius in part-local units. Also the grab target. */
+  r: number
+  /** The detection field to draw, when the part declares one. */
+  cone?: TargetCone
+}
+
+/**
+ * A sensor's detection field, in the same units its distance prop declares.
+ *
+ * DECLARED HERE RATHER THAN CHOSEN IN THE RENDERER, and that is the point: the
+ * canvas draws the wedge from these two numbers and the behavioural model gates
+ * detection on the same two, so a field that is drawn cannot disagree with the
+ * field that is simulated. A cone the student can see but the physics ignores
+ * would be the LED-colour bug with a nicer picture.
+ */
+export interface TargetCone {
+  /** Half the field of view, degrees either side of the facing axis. */
+  halfAngleDeg: number
+  /** How far the field reaches, in the distance prop's own unit. */
+  range: number
 }
 
 /**
@@ -1166,6 +1258,27 @@ const buzzer: PartDefinition = {
   `,
 }
 
+/**
+ * Where the live rpm reading is painted on the motor's body.
+ *
+ * Declared here beside the artwork it has to sit on, exactly as LCD1602_SCREEN
+ * is: the canvas draws the plate and the number from these figures, so moving
+ * the motor's art moves its readout with it rather than leaving a label floating
+ * over a body that has shifted underneath.
+ *
+ * The plate covers the lower third of the 42 × 30 case (y 4…34) and the bottom
+ * of the `M` roundel (a circle of r 9 at y 19, so its foot is at y 28). Covering
+ * it is deliberate — a readout looks like something bolted on, and the `M` above
+ * it still reads.
+ */
+export const DC_MOTOR_READOUT = {
+  plate: { x: 7, y: 23.5, w: 36, h: 10.5, rx: 2 },
+  /** Baseline of the centred text. */
+  x: 25,
+  y: 31,
+  fontSize: 7.5,
+} as const
+
 const dcMotor: PartDefinition = {
   type: 'dc_motor',
   label: 'DC motor',
@@ -1227,6 +1340,20 @@ const diode: PartDefinition = {
  */
 const GND_IS_A_REAL_WIRE = { GND: 'passive' } as const
 
+/**
+ * Units of canvas drawn per centimetre of ultrasonic range.
+ *
+ * 1/3, so the datasheet's 400 cm limit lands 133 units above the module's face —
+ * about one and a half times its own height, and still on screen beside the
+ * board it is wired to. See TargetControl.scale for why a drawing scale is the
+ * honest answer here and a 1:1 mapping is not.
+ */
+const HC_SR04_TARGET_SCALE = 1 / 3
+
+const hcsr04Art = wokwiGeometry('hc-sr04', {
+  types: { ...GND_IS_A_REAL_WIRE, TRIG: 'digital', ECHO: 'digital' },
+})
+
 const hcsr04: PartDefinition = {
   type: 'hc_sr04',
   label: 'HC-SR04 ultrasonic',
@@ -1244,19 +1371,96 @@ const hcsr04: PartDefinition = {
       step: 1,
       unit: ' cm',
       default: 50,
+      hint: 'Or drag the target in front of the module on the canvas.',
     },
   ],
-  ...wokwiGeometry('hc-sr04', {
-    types: { ...GND_IS_A_REAL_WIRE, TRIG: 'digital', ECHO: 'digital' },
-  }),
+  /**
+   * The target slides ALONG THE BEAM and nowhere else — no `bearingKey`.
+   *
+   * Not a shortcut; the datasheet is the reason. An HC-SR04's "measuring angle"
+   * is 15°, so a target even slightly off the axis returns nothing at all, and a
+   * two-axis target on this part would be a control that mostly reads "no echo"
+   * while looking as though it should read a distance. The PIR is the opposite
+   * case — a 100° field — and gets the second axis for exactly that reason.
+   *
+   * The face is the top edge at mid-width: the pins are along the bottom, so up
+   * is the direction the transducers look, and distance is measured from the
+   * front of the module the way the datasheet measures it.
+   */
+  target: {
+    key: 'distance',
+    cx: hcsr04Art.width / 2,
+    cy: 0,
+    scale: HC_SR04_TARGET_SCALE,
+    r: 7,
+  },
+  ...hcsr04Art,
 }
+
+/**
+ * The HC-SR501's detection field, from the datasheet, and the drawing scale for
+ * it. ONE DECLARATION FEEDING BOTH READERS — the canvas draws the wedge from
+ * these numbers and PIRSensor in behavioural.ts gates detection on them, the
+ * same contract RESISTOR_DEFAULT_OHMS has with compile.ts. Two copies would be
+ * two chances for the picture to promise a field the simulation does not have.
+ *
+ *   "Sensing angle: < 100° cone angle"      → a 50° half-angle off the axis.
+ *   "Detection distance: 3 m – 7 m (adjustable)" → 7 m is as far as the on-board
+ *   sensitivity pot reaches, so it is the edge of the field; 3 m is the other
+ *   end of that adjustment and makes the natural place to start the target.
+ */
+export const HC_SR501_FIELD = {
+  HALF_ANGLE_DEG: 50,
+  RANGE_CM: 700,
+  DEFAULT_TARGET_CM: 300,
+  /** Units of canvas per centimetre — see TargetControl.scale. */
+  UNITS_PER_CM: 0.15,
+} as const
+
+const pirArt = wokwiGeometry('pir-motion-sensor', {
+  types: { ...GND_IS_A_REAL_WIRE, OUT: 'digital' },
+})
 
 const pirMotion: PartDefinition = {
   type: 'pir_motion',
   label: 'PIR motion sensor',
   electrical: { kind: 'sensor', protocol: 'pir', drives: ['OUT'] },
   props: [
-    { key: 'motion', label: 'Motion in front', type: 'range', min: 0, max: 1, step: 1, default: 0 },
+    {
+      key: 'motion',
+      label: 'Motion in front',
+      type: 'range',
+      min: 0,
+      max: 1,
+      step: 1,
+      default: 0,
+      hint: 'Or drag the target on the canvas — moving it IS the movement.',
+    },
+    {
+      key: 'distance',
+      label: 'Target distance',
+      type: 'range',
+      // Past the 700 cm the sensitivity pot can reach, on purpose: a student has
+      // to be able to put the target OUTSIDE the field, or the boundary the
+      // datasheet describes is one they can never see.
+      min: 10,
+      max: 1000,
+      step: 10,
+      unit: ' cm',
+      default: HC_SR501_FIELD.DEFAULT_TARGET_CM,
+    },
+    {
+      key: 'bearing',
+      label: 'Target bearing',
+      type: 'range',
+      // ±90° for the same reason: the field ends at ±50°, and a control that
+      // stopped there could never demonstrate walking out of shot.
+      min: -90,
+      max: 90,
+      step: 5,
+      unit: '°',
+      default: 0,
+    },
     // Tx on a real HC-SR501 goes to 200 s; nobody sits through that, and the
     // teaching point is made anywhere in this range.
     { key: 'hold', label: 'Hold time (Tx)', type: 'range', min: 1, max: 30, step: 1, unit: ' s', default: 5 },
@@ -1264,9 +1468,21 @@ const pirMotion: PartDefinition = {
     // induction lockout is off unless the student asks for it.
     { key: 'warmup', label: 'Warm-up', type: 'range', min: 0, max: 60, step: 5, unit: ' s', default: 0 },
   ],
-  ...wokwiGeometry('pir-motion-sensor', {
-    types: { ...GND_IS_A_REAL_WIRE, OUT: 'digital' },
-  }),
+  /**
+   * Two axes and a drawn field, because a PIR has a wide one and because the
+   * question "is the person in shot" is the whole of what this part does.
+   */
+  target: {
+    key: 'distance',
+    bearingKey: 'bearing',
+    movingKey: 'motion',
+    cx: pirArt.width / 2,
+    cy: 0,
+    scale: HC_SR501_FIELD.UNITS_PER_CM,
+    r: 7,
+    cone: { halfAngleDeg: HC_SR501_FIELD.HALF_ANGLE_DEG, range: HC_SR501_FIELD.RANGE_CM },
+  },
+  ...pirArt,
 }
 
 /**
@@ -2383,21 +2599,108 @@ export function sliderValueFor(
 ): number {
   const min = prop.min ?? 0
   const max = prop.max ?? 100
-  const step = prop.step ?? 1
   const dx = slider.x2 - slider.x1
   const dy = slider.y2 - slider.y1
   const len2 = dx * dx + dy * dy
   // A zero-length track has no direction to project onto. propDeclarationProblems
   // rejects one, so this is a guard against division by zero, not a behaviour.
   const t = len2 > 0 ? ((px - slider.x1) * dx + (py - slider.y1) * dy) / len2 : 0
-  const snapped = step > 0 ? Math.round((min + t * (max - min)) / step) * step : min + t * (max - min)
-  /**
-   * THE END STOPS. Dragging past either end must HOLD at that end — the same
-   * job the knob's dead zone does, and needed for the same reason: a control
-   * that wrapped from 100 % to 0 % as the pointer ran off the track is worse
-   * than one that does not move at all.
-   */
+  return snapToRange(prop, min + t * (max - min))
+}
+
+/**
+ * A raw value put on a prop's own step grid and held inside its own ends.
+ *
+ * THE END STOPS live here. Dragging past either end must HOLD at that end — the
+ * same job the knob's dead zone does, and needed for the same reason: a control
+ * that wrapped from 100 % to 0 % as the pointer ran off the track is worse than
+ * one that does not move at all.
+ *
+ * One copy, shared by every canvas control that turns a pointer position into a
+ * prop value, so a new control cannot arrive with subtly different ends.
+ */
+function snapToRange(prop: PropSpec, raw: number): number {
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const step = prop.step ?? 1
+  const snapped = step > 0 ? Math.round(raw / step) * step : raw
   return Math.min(max, Math.max(min, Number(snapped.toFixed(6))))
+}
+
+// ─── Target geometry ──────────────────────────────────────────────────────────
+
+/**
+ * Where a sensor's target marker sits, in part-local units.
+ *
+ * `sin`/`−cos` rather than `cos`/`sin`: the bearing is measured clockwise from
+ * the facing axis, which points at −y, and SVG's y axis points down. It is the
+ * same frame `knobAngleFor` works in and the exact inverse of the `atan2(dx, −dy)`
+ * below.
+ */
+export function targetPointFor(
+  target: TargetControl,
+  distance: number,
+  bearingDeg: number,
+): { x: number; y: number } {
+  const a = (bearingDeg * Math.PI) / 180
+  const d = distance * target.scale
+  return { x: target.cx + d * Math.sin(a), y: target.cy - d * Math.cos(a) }
+}
+
+/**
+ * The distance and bearing a pointer at part-local (px, py) is asking for.
+ *
+ * Both come back already snapped to their own prop's step and clamped to its own
+ * declared ends, which is what stops a drag widening a range the datasheet set:
+ * an HC-SR04 target dragged 900 units up still writes 420 cm, the top of the
+ * prop, and the module still answers with its 38 ms no-echo pulse.
+ *
+ * With no bearing prop the target has one degree of freedom and the pointer is
+ * PROJECTED onto the facing axis — the distance is still `hypot`, so pulling
+ * sideways pulls the target further away rather than jamming it, which is the
+ * same forgiveness `sliderValueFor` extends to a pointer that drifts off a track.
+ */
+export function targetValuesFor(
+  target: TargetControl,
+  prop: PropSpec,
+  bearingProp: PropSpec | undefined,
+  px: number,
+  py: number,
+): { distance: number; bearing: number } {
+  const dx = px - target.cx
+  const dy = py - target.cy
+  const scale = target.scale > 0 ? target.scale : 1
+  const distance = snapToRange(prop, Math.hypot(dx, dy) / scale)
+  if (!bearingProp) return { distance, bearing: 0 }
+  return {
+    distance,
+    bearing: snapToRange(bearingProp, (Math.atan2(dx, -dy) * 180) / Math.PI),
+  }
+}
+
+/**
+ * The two edges of the drawn detection wedge, degrees from the facing axis.
+ *
+ * THE CONE RE-AIMS AT THE TARGET AND NEVER LEAVES THE DECLARED FIELD, which are
+ * two requirements that look like they fight and do not. The axis follows the
+ * bearing, so the wedge swings to point at wherever the target has been dragged;
+ * both edges are then clamped to the field, so the wedge narrows as it swings
+ * out and the picture never claims coverage the sensor does not have. Push the
+ * target past the field edge and the wedge stops at that edge — visibly no
+ * longer containing the target, which is exactly the moment detection stops.
+ */
+export function targetConeEdges(
+  cone: TargetCone,
+  bearingDeg: number,
+): { fromDeg: number; toDeg: number } {
+  const h = Math.abs(cone.halfAngleDeg)
+  const aim = Math.min(h, Math.max(-h, bearingDeg))
+  return { fromDeg: Math.max(-h, aim - h), toDeg: Math.min(h, aim + h) }
+}
+
+/** Whether a target at this distance and bearing is inside the declared field. */
+export function targetInField(cone: TargetCone, distance: number, bearingDeg: number): boolean {
+  return distance <= cone.range && Math.abs(bearingDeg) <= Math.abs(cone.halfAngleDeg)
 }
 
 // ─── Declaration self-check ───────────────────────────────────────────────────
@@ -2551,6 +2854,78 @@ export function propDeclarationProblems(): string[] {
       }
       if (!(momentary.r > 0)) {
         out.push(`${type}'s momentary control has no radius, so there is nothing to press.`)
+      }
+    }
+
+    /**
+     * A target has up to three props and a field, and every one of them has a
+     * way of being declared that renders a control which cannot work:
+     *
+     *   - a distance on a prop that is not a `range` has no ends to clamp to,
+     *   - a `movingKey` that is not the 0/1 shape would have the grab jump some
+     *     unrelated value to 1 (the momentary's trap, one control along),
+     *   - a zero or negative `scale` collapses the whole travel onto the face,
+     *   - a cone reaching further than the distance prop can be dragged draws a
+     *     field with a region in it the student can never put the target.
+     */
+    const target = def.target
+    if (target) {
+      const distance = (def.props ?? []).find((p) => p.key === target.key)
+      if (!distance) {
+        out.push(`${type} declares a target on "${target.key}", which is not one of its props.`)
+      } else if (distance.type !== 'range') {
+        out.push(
+          `${type}'s target drives "${target.key}", a \`${distance.type}\` prop — a target ` +
+            `sweeps a \`range\`, and the panel control has to be the same value.`,
+        )
+      }
+      if (target.bearingKey !== undefined) {
+        const bearing = (def.props ?? []).find((p) => p.key === target.bearingKey)
+        if (!bearing) {
+          out.push(
+            `${type} declares a target bearing on "${target.bearingKey}", which is not one of its props.`,
+          )
+        } else if (bearing.type !== 'range') {
+          out.push(
+            `${type}'s target bearing drives "${target.bearingKey}", a \`${bearing.type}\` prop ` +
+              `rather than a \`range\`.`,
+          )
+        }
+      }
+      if (target.movingKey !== undefined) {
+        const moving = (def.props ?? []).find((p) => p.key === target.movingKey)
+        if (!moving) {
+          out.push(
+            `${type} declares a target "moving" prop "${target.movingKey}", which it does not declare.`,
+          )
+        } else if (moving.type !== 'range' || moving.min !== 0 || moving.max !== 1) {
+          out.push(
+            `${type}'s target holds "${target.movingKey}" at 1 while it is dragged, but that is ` +
+              `not a 0/1 \`range\` — every other value would be a jump to 1.`,
+          )
+        }
+      }
+      if (!(target.scale > 0)) {
+        out.push(`${type}'s target has no scale, so every distance would be drawn at the sensor face.`)
+      }
+      if (!(target.r > 0)) {
+        out.push(`${type}'s target has no radius, so there is nothing to grab.`)
+      }
+      const cone = target.cone
+      if (cone) {
+        if (!(cone.halfAngleDeg > 0) || cone.halfAngleDeg >= 180) {
+          out.push(
+            `${type}'s detection cone has a half-angle of ${cone.halfAngleDeg}°, which is not a field.`,
+          )
+        }
+        if (!(cone.range > 0)) {
+          out.push(`${type}'s detection cone has no range, so it reaches nothing.`)
+        } else if (distance?.max !== undefined && cone.range > distance.max) {
+          out.push(
+            `${type}'s cone reaches ${cone.range} but "${target.key}" stops at ${distance.max}, so ` +
+              `part of the drawn field is somewhere the target can never be dragged.`,
+          )
+        }
       }
     }
   }

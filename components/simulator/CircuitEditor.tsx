@@ -1270,6 +1270,31 @@ export function CircuitEditor({
     return { doc, past: [], future: [] }
   })
   const [selected, setSelected] = useState<string | null>(null)
+  /**
+   * The selected WIRE, and the two selections are mutually exclusive.
+   *
+   * Wires became selectable when double-click stopped deleting them: a
+   * double-click is a click twice, and once the first of the two selects a wire,
+   * having the pair destroy it is a gesture nobody would design on purpose. So
+   * deletion moved to the key that already deletes the selected part — which
+   * only works if exactly one thing is ever selected. Delete guessing between a
+   * highlighted part and a highlighted wire would be worse than either.
+   *
+   * The two setters below are the ONLY place that rule lives. The canvas reports
+   * "a part was clicked" and "a wire was clicked" and does not know about the
+   * exclusion, so there is no second copy of it to fall out of step.
+   */
+  const [selectedWire, setSelectedWire] = useState<string | null>(null)
+  const selectPart = useCallback((id: string | null) => {
+    setSelected(id)
+    setSelectedWire(null)
+  }, [])
+  const selectWire = useCallback((id: string | null) => {
+    setSelectedWire(id)
+    // Only a real selection clears the part. A `null` here is the canvas saying
+    // "the wire you had is gone", which must not also deselect a part.
+    if (id !== null) setSelected(null)
+  }, [])
   const [hexUrl, setHexUrl] = useState(FIRMWARE[0].url)
   /**
    * Copy/paste buffer. Deliberately NOT the system clipboard: reading that
@@ -1298,8 +1323,8 @@ export function CircuitEditor({
         props: { ...src.props },
       },
     })
-    setSelected(id)
-  }, [])
+    selectPart(id)
+  }, [selectPart])
 
   /**
    * Keyboard shortcuts for the canvas.
@@ -1329,6 +1354,12 @@ export function CircuitEditor({
       }
       const mod = e.ctrlKey || e.metaKey
       const part = selected ? (state.doc.parts.find((p) => p.id === selected) ?? null) : null
+      // Resolved against the document, not trusted from state: a wire whose part
+      // was deleted takes its wires with it, and a stale id must not make Delete
+      // dispatch a removal for something that is not there.
+      const wire = selectedWire
+        ? (state.doc.wires.find((w) => w.id === selectedWire) ?? null)
+        : null
 
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault()
@@ -1348,10 +1379,20 @@ export function CircuitEditor({
           placeCopy(clipboard)
         }
       } else if (!mod && (e.key === 'Delete' || e.key === 'Backspace')) {
+        /**
+         * THE ONLY WAY TO DELETE A WIRE, since double-click started adding a
+         * bend instead. `part` and `wire` cannot both be set — see selectPart /
+         * selectWire above — so this is not a precedence rule, and the `else if`
+         * is here to say that out loud rather than to arbitrate.
+         */
         if (part) {
           e.preventDefault()
           dispatch({ type: 'removePart', id: part.id })
           setSelected(null)
+        } else if (wire) {
+          e.preventDefault()
+          dispatch({ type: 'removeWire', id: wire.id })
+          setSelectedWire(null)
         }
       } else if (!mod && (e.key === 'r' || e.key === 'R')) {
         if (part) dispatch({ type: 'rotatePart', id: part.id })
@@ -1365,7 +1406,7 @@ export function CircuitEditor({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, clipboard, state.doc, placeCopy])
+  }, [selected, selectedWire, clipboard, state.doc, placeCopy])
 
   /**
    * The experiment's AUTHORED program — what "Reset to starter" goes back to,
@@ -2343,7 +2384,9 @@ export function CircuitEditor({
             deviceStates={snapshot.deviceStates}
             netOf={netOf}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectPart}
+            selectedWire={selectedWire}
+            onSelectWire={selectWire}
           />
 
           {/*

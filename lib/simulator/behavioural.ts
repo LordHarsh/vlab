@@ -23,6 +23,7 @@ import {
   type StepperParams,
 } from './devices'
 import { lcdChar, packLcdRow } from './lcd-font'
+import { HC_SR501_FIELD } from './model/parts'
 
 const CLOCK_HZ = 16_000_000
 const VCC = 5
@@ -395,7 +396,15 @@ export class HCSR04 implements BehaviouralDevice {
 
 // ─── HC-SR501 PIR motion sensor ───────────────────────────────────────────────
 
-/** HC-SR501 datasheet figures. */
+/**
+ * HC-SR501 datasheet figures.
+ *
+ * The FIELD figures — the 100° cone angle and the 7 m reach — are not here; they
+ * are `HC_SR501_FIELD` in model/parts.ts, because the canvas has to draw the
+ * same wedge this model gates on and one declaration read by both is the only
+ * arrangement in which the picture cannot promise a field the physics does not
+ * have. Same contract RESISTOR_DEFAULT_OHMS has with compile.ts.
+ */
 export const HC_SR501 = {
   /** "Output: High 3.3 V / Low 0 V" — TTL, and NOT the 5 V supply rail. */
   OUTPUT_HIGH_VOLTS: 3.3,
@@ -469,7 +478,25 @@ export class PIRSensor implements BehaviouralDevice {
     const warmupCycles = warmupSeconds * CLOCK_HZ
     const warming = now < warmupCycles
     const holdSeconds = Math.max(0.3, numProp(p, 'hold', HC_SR501.DEFAULT_HOLD_SECONDS))
-    const motion = numProp(p, 'motion', 0) >= 0.5
+    /**
+     * WHERE the movement is, not just whether there is any.
+     *
+     * A real HC-SR501 sees a 100° cone out to about 7 m and nothing outside it,
+     * and that boundary is the single most useful thing about the part: it is
+     * why a sensor pointed at a doorway does not trigger on the street. The
+     * canvas draws the same wedge from the same declaration, so a target the
+     * student can see is outside the cone is one this model also refuses.
+     *
+     * The fallbacks are the prop defaults, which is what keeps a document
+     * written before this existed behaving exactly as it did: 3 m dead ahead is
+     * inside the field, so `motion` alone still decides everything.
+     */
+    const distanceCm = Math.max(0, numProp(p, 'distance', HC_SR501_FIELD.DEFAULT_TARGET_CM))
+    const bearingDeg = numProp(p, 'bearing', 0)
+    const inField =
+      distanceCm <= HC_SR501_FIELD.RANGE_CM &&
+      Math.abs(bearingDeg) <= HC_SR501_FIELD.HALF_ANGLE_DEG
+    const motion = numProp(p, 'motion', 0) >= 0.5 && inField
 
     if (!powered) {
       this.high = false
@@ -495,6 +522,12 @@ export class PIRSensor implements BehaviouralDevice {
       warmupRemaining: warming ? (warmupCycles - now) / CLOCK_HZ : 0,
       holdSeconds,
       powered,
+      // Where the model believes the target is, so the canvas paints the cone
+      // this poll actually used rather than re-deriving it from the document and
+      // hoping the two agree.
+      distanceCm,
+      bearingDeg,
+      inField,
     })
   }
 }
