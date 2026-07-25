@@ -543,7 +543,11 @@ export function CodePanel({
           ) : (
             <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
           )}
-          Serial monitor
+          {/* Named for what it actually is on each track. On the Pico this is
+              the USB REPL — it carries MicroPython's own banner and prompt as
+              well as the script's output — and the parts rail has always called
+              it "REPL output". Two names for one stream taught nothing. */}
+          {isCpp ? 'Serial monitor' : 'REPL output'}
           {failed && (
             <span
               data-testid="code-error-badge"
@@ -665,7 +669,7 @@ export function CodePanel({
             <pre
               ref={serialRef}
               data-testid="code-serial"
-              aria-label="Serial monitor output"
+              aria-label={isCpp ? 'Serial monitor output' : 'REPL output'}
               tabIndex={0}
               className="mx-3 mb-3 h-32 overflow-auto whitespace-pre-wrap break-all border border-[#dfe3e8] bg-[#f1f1f3] p-2 font-mono text-[10px] text-[#34495e]"
             >
@@ -801,6 +805,121 @@ export function useCodeWidth(): [number, (next: number) => void] {
     for (const fn of widthListeners) fn()
   }, [])
   return [width, setWidth]
+}
+
+/* ── Whether each side panel is open, remembered across reloads ─────────── */
+
+/**
+ * The two docked panels' open/closed state, stored exactly where the width is.
+ *
+ * localStorage rather than the document, for the reason `CODE_WIDTH_KEY` gives:
+ * which panels a student has open is a property of them and the screen in front
+ * of them, not of the circuit. Syncing it into the graph would push one
+ * student's laptop layout onto another student's phone and make "I closed the
+ * parts rail" an edit to their work.
+ *
+ * TRI-STATE, and that is the point of returning `boolean | null` rather than a
+ * plain boolean. `null` means NOBODY HAS SAID, which is different from "closed":
+ * the code panel's unset default is decided by the viewport (open beside the
+ * circuit on a laptop, closed on a phone where the two cannot share the screen —
+ * see useIsNarrow), and collapsing that to `false` would take the docked editor
+ * away from every laptop that has never pressed the button.
+ */
+export const CODE_OPEN_KEY = 'vlab.sim.codeOpen'
+export const RAIL_OPEN_KEY = 'vlab.sim.railOpen'
+
+/**
+ * Whatever localStorage handed back, as a decision or "never made".
+ *
+ * Anything unrecognised is `null` rather than `false`, so a key corrupted by
+ * devtools, a half-written value or a future format lands back on the viewport
+ * default instead of silently hiding a panel with no obvious way to notice why.
+ */
+export function parsePanelOpen(raw: string | null): boolean | null {
+  if (raw === '1' || raw === 'true') return true
+  if (raw === '0' || raw === 'false') return false
+  return null
+}
+
+export function readPanelOpen(key: string): boolean | null {
+  try {
+    return parsePanelOpen(globalThis.localStorage?.getItem(key) ?? null)
+  } catch {
+    // Safari in private mode throws rather than returning null; see readCodeWidth.
+    return null
+  }
+}
+
+export function writePanelOpen(key: string, open: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(key, open ? '1' : '0')
+  } catch {
+    /* see readCodeWidth */
+  }
+}
+
+/**
+ * One cache and one listener set PER KEY, for the same reason the width store
+ * caches: `useSyncExternalStore` calls the snapshot during render and compares
+ * with `Object.is`, so an uncached read would hit a synchronous disk-backed
+ * store on every render.
+ *
+ * `Map.has` rather than a null check is what tells "not read yet" apart from
+ * "read, and nobody has decided" — both of which are `null` as a value.
+ */
+const openCache = new Map<string, boolean | null>()
+const openListeners = new Map<string, Set<() => void>>()
+
+/** No localStorage on the server, so "nobody has said" is the only honest answer. */
+function getPanelOpenServerSnapshot(): boolean | null {
+  return null
+}
+
+/**
+ * A panel's remembered open/closed choice, and a setter that persists it.
+ *
+ * The `storage` subscription is the same bonus the width store gets: a student
+ * with the lab open in two tabs sees the same panels in both.
+ */
+export function usePanelOpen(key: string): [boolean | null, (next: boolean) => void] {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const listeners = openListeners.get(key) ?? new Set<() => void>()
+      openListeners.set(key, listeners)
+      listeners.add(onChange)
+      // Fired by OTHER tabs only, which is exactly the cross-tab case.
+      const onStorage = (e: StorageEvent) => {
+        if (e.key !== null && e.key !== key) return
+        openCache.delete(key)
+        onChange()
+      }
+      window.addEventListener('storage', onStorage)
+      return () => {
+        listeners.delete(onChange)
+        window.removeEventListener('storage', onStorage)
+      }
+    },
+    [key],
+  )
+
+  const getSnapshot = useCallback(() => {
+    if (!openCache.has(key)) openCache.set(key, readPanelOpen(key))
+    return openCache.get(key) ?? null
+  }, [key])
+
+  const choice = useSyncExternalStore(subscribe, getSnapshot, getPanelOpenServerSnapshot)
+
+  const setChoice = useCallback(
+    (next: boolean) => {
+      if (openCache.get(key) === next) return
+      openCache.set(key, next)
+      writePanelOpen(key, next)
+      for (const fn of openListeners.get(key) ?? []) fn()
+    },
+    [key],
+  )
+
+  return [choice, setChoice]
 }
 
 /* ── Whether there is room for the panel and the circuit at once ────────── */

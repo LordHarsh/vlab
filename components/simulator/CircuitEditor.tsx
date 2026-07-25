@@ -8,10 +8,19 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from 'react'
-import { Code2, Loader2, Minimize2 } from 'lucide-react'
+import { Blocks, Code2, Loader2, Minimize2, X } from 'lucide-react'
 import { CircuitCanvas } from './CircuitCanvas'
-import { CodePanel, CodePanelResizer, useCodeWidth, useIsNarrow } from './CodePanel'
+import {
+  CODE_OPEN_KEY,
+  CodePanel,
+  CodePanelResizer,
+  RAIL_OPEN_KEY,
+  useCodeWidth,
+  useIsNarrow,
+  usePanelOpen,
+} from './CodePanel'
 import { useFullscreenGate } from './FullscreenGate'
 import { detectBoard } from '@/lib/simulator/model/boards'
 import {
@@ -142,6 +151,60 @@ const BTN =
 const SECTION_LABEL = 'text-[10px] uppercase tracking-wider text-[#566573]'
 
 /**
+ * One of the two toolbar switches that open and close a docked panel.
+ *
+ * ONE COMPONENT FOR BOTH, because the code toggle used to be written out twice
+ * — once in the AVR branch, once in the Pico branch — with the same
+ * `data-testid` and the same eleven classes copied between them. Only ever one
+ * rendered, so nothing was visibly wrong; but the AVR copy sat inside
+ * `!noFirmwareFor`, which meant a board with no PREBUILT .hex was refused the
+ * editor it could perfectly well compile its own sketch into. Whether a fixture
+ * image exists has nothing to do with whether there is a program to write.
+ *
+ * `aria-pressed`, not `aria-expanded`: this is a control that stays on screen
+ * with a sticky on/off state, and the region it governs is a sibling layout
+ * column rather than something it contains. `aria-controls` still names the
+ * region so the relationship is announced.
+ */
+function PanelToggle({
+  testId,
+  label,
+  controls,
+  open,
+  onToggle,
+  buttonRef,
+  children,
+}: {
+  testId: string
+  label: string
+  controls: string
+  open: boolean
+  onToggle: () => void
+  buttonRef?: React.Ref<HTMLButtonElement>
+  children: ReactNode
+}) {
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      data-testid={testId}
+      onClick={onToggle}
+      aria-pressed={open}
+      aria-controls={controls}
+      title={`${open ? 'Hide' : 'Show'} the ${label.toLowerCase()} panel`}
+      className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+        open
+          ? 'border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
+          : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#1477d1]'
+      }`}
+    >
+      {children}
+      {label}
+    </button>
+  )
+}
+
+/**
  * Where a newly picked part lands.
  *
  * The old rule stepped by the part count, which stacked new parts on top of
@@ -223,7 +286,10 @@ function PartsPalette({
 
   return (
     <div className="px-4 py-4 border-b border-[#dfe3e8]">
-      <div className={`${SECTION_LABEL} mb-2`}>Components</div>
+      {/* "Add a part", not "Components": the rail itself is now headed
+          Components, and two identical headings a row apart read as a mistake.
+          This one names the ACTION the grid below performs. */}
+      <div className={`${SECTION_LABEL} mb-2`}>Add a part</div>
 
       <input
         type="search"
@@ -1124,19 +1190,70 @@ export function CircuitEditor({
   const draft = code.draft
   const script = code.loaded
   /**
-   * Whether the code panel is showing — the student's choice, or the layout's.
+   * Whether each docked panel is showing — the student's choice, or the layout's.
    *
-   * `null` means "nobody has said", and then the VIEWPORT decides: open beside
-   * the circuit on a laptop, closed on a phone where the two cannot share the
-   * screen (see useIsNarrow, which records the 387×0 canvas that made this
-   * necessary). An explicit press of `Code` wins from then on, in either
-   * direction, and keeps winning if the window is resized — a student who
-   * opened the editor on a narrow window did mean it.
+   * `null` means "nobody has said", and then the DEFAULT decides. For the code
+   * panel that default is the viewport: open beside the circuit on a laptop,
+   * closed on a phone where the two cannot share the screen (see useIsNarrow,
+   * which records the 387×0 canvas that made this necessary). For the parts rail
+   * it is simply open — that is where the palette, the inspector and the Checks
+   * list live, and a student who has never pressed anything should land on all
+   * three.
+   *
+   * An explicit press wins from then on, in either direction, and keeps winning
+   * if the window is resized — a student who opened the editor on a narrow
+   * window did mean it. It also SURVIVES A RELOAD, in localStorage beside the
+   * panel width: which panels are open is a property of the person and the
+   * screen in front of them, not of the circuit, so it does not belong in the
+   * document (usePanelOpen says this at length).
    */
   const isNarrow = useIsNarrow()
-  const [codeOpenChoice, setCodeOpenChoice] = useState<boolean | null>(null)
+  const [codeOpenChoice, setCodeOpenChoice] = usePanelOpen(CODE_OPEN_KEY)
+  const [railOpenChoice, setRailOpenChoice] = usePanelOpen(RAIL_OPEN_KEY)
   const codeOpen = codeOpenChoice ?? !isNarrow
-  const toggleCode = useCallback(() => setCodeOpenChoice((v) => !(v ?? !isNarrow)), [isNarrow])
+  const railOpen = railOpenChoice ?? true
+  /**
+   * BELOW `md`, THE TWO PANELS ARE MUTUALLY EXCLUSIVE, and that is a measured
+   * constraint rather than a preference.
+   *
+   * Three stacked regions do not fit in one phone-width column. The canvas needs
+   * a floor (it was measured at 387×0 before it had one), and a code panel or a
+   * parts rail squeezed into what is left of a 390×844 screen after a 48 px
+   * header and a wrapped toolbar has room for its chrome and nothing else — the
+   * editor's own textarea would be the thing crushed to zero instead of the
+   * canvas, which is not an improvement.
+   *
+   * So opening one CLOSES the other, explicitly, in the stored state — not by
+   * quietly hiding it behind a `max-md:hidden` the way this layout used to. The
+   * difference matters because there is now a switch on screen claiming to
+   * describe the rail: a button reading "pressed" over a panel CSS has hidden is
+   * a lie to everyone, and to a screen-reader user it is the only thing they
+   * have to go on.
+   *
+   * `railVisible` carries the same rule at render time, for the one case the
+   * handlers cannot catch: a window resized (or a phone rotated) while both were
+   * open on a wide screen. From `md` up nothing here applies and both panels
+   * live side by side.
+   */
+  const toggleCode = useCallback(() => {
+    const next = !codeOpen
+    setCodeOpenChoice(next)
+    if (next && isNarrow) setRailOpenChoice(false)
+  }, [codeOpen, isNarrow, setCodeOpenChoice, setRailOpenChoice])
+
+  /**
+   * Where focus goes when a panel disappears.
+   *
+   * Closing a region that CONTAINS the focused element — the panel's own ✕, or
+   * the board being deleted out from under an open editor — leaves the browser
+   * with nothing focused and dumps it on <body>, which strands a keyboard user
+   * at the top of the document with no idea what just happened. Sending focus to
+   * the switch that governs the region is the ARIA convention and, more to the
+   * point, is where they will want to press next.
+   */
+  const codeToggleRef = useRef<HTMLButtonElement>(null)
+  const railToggleRef = useRef<HTMLButtonElement>(null)
+  const railRef = useRef<HTMLElement>(null)
 
   /**
    * Forward references, so the restore effect below can reach two things that
@@ -1187,6 +1304,82 @@ export function CircuitEditor({
   const boardTrack = useMemo(() => detectBoard(doc).board?.track ?? null, [doc])
   const isPico = boardTrack === 'rp2040'
   const isAvr = boardTrack === 'avr'
+
+  /**
+   * WHETHER THE CODE PANEL IS OFFERED AT ALL.
+   *
+   * `detectBoard` returns a board only when there is EXACTLY ONE. No board and
+   * two boards both come back null — the second deliberately, because two CPUs
+   * with two independent clocks cannot be co-simulated by one engine — and in
+   * both cases there is no program to edit and nothing that could run it. A
+   * `Code` switch there would open an editor bound to nothing, so it is not
+   * offered; the Checks panel and the toolbar say which of the two it is, in the
+   * board detector's own words.
+   *
+   * The PARTS RAIL is deliberately NOT gated the same way. Placing components is
+   * meaningful in every document there can be — including, and especially, the
+   * two this gate refuses: an empty canvas needs the rail to get its first
+   * board, and a canvas with two boards needs the inspector's Delete to get back
+   * to one. Gating it on a board would make both states unrecoverable from
+   * inside the editor.
+   */
+  const canRunCode = boardTrack !== null
+  const codeVisible = canRunCode && codeOpen
+  /** See toggleCode: one column cannot hold the canvas and both panels. */
+  const railVisible = railOpen && !(isNarrow && codeVisible)
+  const toggleRail = useCallback(() => {
+    const next = !railVisible
+    setRailOpenChoice(next)
+    if (next && isNarrow) setCodeOpenChoice(false)
+  }, [railVisible, isNarrow, setCodeOpenChoice, setRailOpenChoice])
+
+  /**
+   * Rescue focus from a region that has just been removed.
+   *
+   * Two ways a student can be standing inside a panel when it vanishes: the
+   * panel's own ✕, and — for the code panel — deleting the board, which
+   * withdraws the whole editor because there is no longer a program to edit.
+   * React unmounts the focused node either way, and the browser's only response
+   * is to drop focus onto <body>: the tab ring disappears and the next Tab
+   * starts again from the top of the page.
+   *
+   * WHICH SIGNAL, and it differs between the two panels because they disappear
+   * by different mechanisms — this was measured, not assumed.
+   *
+   * The code panel is UNMOUNTED, so React has already detached the focused node
+   * by the time effects run and `activeElement` is `<body>`. The rail is only
+   * HIDDEN (`display: none`, to keep the palette's search box), and the browser
+   * does not drop focus out of it until it next recalculates style — which is
+   * after this effect. Asked for `activeElement` at that moment it still answers
+   * with the input inside the now-invisible rail, so the body check alone missed
+   * it and focus really did end up on `<body>` a frame later. Asking the region
+   * whether it contains the focused element is exact in both orders.
+   *
+   * Either way it is CHECKED rather than assumed: closing a panel from the
+   * TOOLBAR leaves focus exactly where it was — on the switch — and stealing it
+   * back to the same button would be a no-op at best and, if the student had
+   * already tabbed on, a theft.
+   *
+   * The rail's switch is the fallback for the one case where the code panel's
+   * own switch went away with it (the board was deleted), so focus never ends up
+   * nowhere.
+   */
+  const wasCodeVisible = useRef(codeVisible)
+  const wasRailVisible = useRef(railVisible)
+  useEffect(() => {
+    const active = document.activeElement
+    const stranded =
+      active === null ||
+      active === document.body ||
+      (!railVisible && railRef.current?.contains(active) === true)
+    const codeClosed = wasCodeVisible.current && !codeVisible
+    const railClosed = wasRailVisible.current && !railVisible
+    wasCodeVisible.current = codeVisible
+    wasRailVisible.current = railVisible
+    if (!stranded) return
+    if (codeClosed) (codeToggleRef.current ?? railToggleRef.current)?.focus({ preventScroll: true })
+    else if (railClosed) railToggleRef.current?.focus({ preventScroll: true })
+  }, [codeVisible, railVisible])
   /** Which language the panel edits, and therefore how Run behaves. */
   const codeLanguage: CodeLanguage = isAvr ? 'arduino_c' : 'micropython'
   /** Both tracks store a program; only the file name and language differ. */
@@ -1764,28 +1957,6 @@ export function CircuitEditor({
               </>
             )}
 
-            {/* The same `Code` button the Pico track has had, over an Arduino.
-                The note that used to stand here said an equivalent button would
-                "open an editor whose contents could never be compiled or run" —
-                true while the only compiler was one we could not lawfully ship
-                to a browser, and untrue since the toolchain moved to the
-                server behind app/api/compile. */}
-            <button
-              type="button"
-              data-testid="code-toggle"
-              onClick={toggleCode}
-              aria-expanded={codeOpen}
-              aria-controls="code-panel-region"
-              className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors ${
-                codeOpen
-                  ? 'border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
-                  : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#1477d1]'
-              }`}
-            >
-              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Code
-            </button>
-
             {/* Compiling is seconds, not instant, so it is said out loud. */}
             {sketch.status === 'compiling' && (
               <span
@@ -1821,25 +1992,6 @@ export function CircuitEditor({
             <span className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-[#dfe3e8] bg-white text-[#34495e]">
               MicroPython
             </span>
-            {/* Opens the docked editor, exactly as Tinkercad's `Code` does. Only
-                on this track: there is no in-browser avr-gcc, so an equivalent
-                button over an Arduino would open an editor whose contents could
-                never be compiled or run. */}
-            <button
-              type="button"
-              data-testid="code-toggle"
-              onClick={toggleCode}
-              aria-expanded={codeOpen}
-              aria-controls="code-panel-region"
-              className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors ${
-                codeOpen
-                  ? 'border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
-                  : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#1477d1]'
-              }`}
-            >
-              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Code
-            </button>
             <span className="text-[11px] text-[#566573]" data-testid="repl-phase">
               {REPL_LABEL[sim.snapshot.repl]}
             </span>
@@ -1853,6 +2005,48 @@ export function CircuitEditor({
             )}
           </div>
         )}
+
+        {/* THE TWO PANEL SWITCHES.
+
+            One group, outside the per-track blocks, because these are about the
+            LAYOUT rather than about the board — and because the code switch used
+            to be written twice, once per track, with the AVR copy nested inside
+            `!noFirmwareFor` and therefore withheld from any board that happened
+            to ship no prebuilt .hex.
+
+            `Code` appears only when there is exactly one board to run; see
+            `canRunCode`. `Components` is unconditional: adding parts is the one
+            thing that is meaningful in every document, including the two the
+            code switch refuses. */}
+        <div
+          className="flex items-center gap-2 shrink-0"
+          role="group"
+          aria-label="Panels"
+          data-testid="panel-toggles"
+        >
+          {canRunCode && (
+            <PanelToggle
+              testId="code-toggle"
+              label="Code"
+              controls="code-panel-region"
+              open={codeVisible}
+              onToggle={toggleCode}
+              buttonRef={codeToggleRef}
+            >
+              <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </PanelToggle>
+          )}
+          <PanelToggle
+            testId="rail-toggle"
+            label="Components"
+            controls="parts-rail-region"
+            open={railVisible}
+            onToggle={toggleRail}
+            buttonRef={railToggleRef}
+          >
+            <Blocks className="h-3.5 w-3.5" aria-hidden="true" />
+          </PanelToggle>
+        </div>
 
         <div className="hidden md:block w-px h-6 shrink-0 bg-[#dfe3e8]" />
 
@@ -1935,8 +2129,12 @@ export function CircuitEditor({
             know which they are working on right now.
 
             Below md it stacks under the canvas at a fixed height, because a
-            three-column layout on a phone gives every column nothing. */}
-        {(sim.track === 'rp2040' || sim.track === 'avr') && codeOpen && (
+            three-column layout on a phone gives every column nothing.
+
+            The track check is what NARROWS `sim` for `sim.board.label` below;
+            `codeVisible` is the gate, and the two agree by construction — both
+            are `detectBoard(doc).board !== null`. */}
+        {(sim.track === 'rp2040' || sim.track === 'avr') && codeVisible && (
           <>
             <CodePanelResizer width={codeWidth} onWidth={setCodeWidth} />
             <div
@@ -1999,16 +2197,40 @@ export function CircuitEditor({
           </>
         )}
 
-        {/* The parts rail steps aside for the editor on a phone — three stacked
-            regions do not fit in one column, and a student who has opened the
-            code panel is writing code, not dragging components. Closing the
-            panel brings it straight back. Unchanged from md up, where all three
-            are side by side and there is room. */}
+        {/* The parts rail. Closable now, from the toolbar switch or from its own
+            ✕, and it remembers which it was — a student on a laptop who wants
+            the whole width for a breadboard should not have to reclaim it on
+            every reload.
+
+            `hidden` rather than an unmounted branch, unlike the code panel: the
+            palette holds a search box, and unmounting would silently throw away
+            what the student had typed into it every time they gave the canvas
+            the width for a moment. `display: none` takes it out of the layout
+            just as completely — the canvas reclaims every pixel — and out of the
+            tab order and the accessibility tree with it. */}
         <aside
+          ref={railRef}
+          id="parts-rail-region"
+          aria-label="Components and readouts"
           className={`w-full h-[45dvh] shrink-0 border-t border-[#dfe3e8] md:h-auto md:w-80 md:border-t-0 md:border-l bg-white overflow-y-auto text-sm ${
-            codeOpen && (sim.track === 'rp2040' || sim.track === 'avr') ? 'max-md:hidden' : ''
+            railVisible ? '' : 'hidden'
           }`}
         >
+          {/* The way out, where the code panel keeps its own. Sticky so it is
+              still reachable after a scroll down a long rail. */}
+          <div className="sticky top-0 z-10 flex h-11 shrink-0 items-center gap-2 border-b border-[#dfe3e8] bg-white px-3">
+            <span className={SECTION_LABEL}>Components</span>
+            <button
+              type="button"
+              data-testid="rail-close"
+              aria-label="Close the components panel"
+              onClick={toggleRail}
+              className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1]"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+
           {/* A native experiment whose circuits.role='starter' row is missing
               (or whose load failed) lands on the empty seed board. Saying so is
               better than letting the student wonder where the parts went. */}
@@ -2182,7 +2404,7 @@ export function CircuitEditor({
               ) : script ? (
                 <p className="text-xs text-[#566573] leading-snug" data-testid="pico-script-state">
                   {script.split('\n').length} lines loaded on the board.{' '}
-                  {codeOpen ? 'Edit it in the code panel.' : 'Press Code to edit it.'}
+                  {codeVisible ? 'Edit it in the code panel.' : 'Press Code to edit it.'}
                 </p>
               ) : (
                 <p className="text-xs text-[#566573] leading-snug" data-testid="pico-no-script">
