@@ -2345,6 +2345,114 @@ export function CircuitEditor({
             selected={selected}
             onSelect={setSelected}
           />
+
+          {/*
+           * THE INSPECTOR, AND WHY IT IS NOT IN THE PARTS RAIL.
+           *
+           * It used to live at the top of the Components rail, above "Add a
+           * part". That put two unrelated things in one panel under one
+           * heading: what you are EDITING and what you can ADD. Selecting a
+           * resistor made its properties appear inside the parts drawer, which
+           * reads as though the drawer itself had changed, and closing the
+           * drawer to get canvas width also took away the only way to change
+           * the selected part's value.
+           *
+           * So it floats over the canvas instead, next to the thing it
+           * describes, and the rail goes back to being only a palette. It is
+           * absolutely positioned inside the canvas wrapper — which is already
+           * `relative` — so it costs the canvas no layout width and needs no
+           * change to CircuitCanvas itself. Only its own box takes pointer
+           * events; the canvas keeps the rest.
+           */}
+          {selectedPart && selectedDef && (
+            <div
+              data-testid="inspector"
+              aria-label={`${selectedDef.label} properties`}
+              className="absolute top-3 right-3 z-20 w-56 md:w-60 max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-[4px] border border-[#dfe3e8] bg-white/95 shadow-lg backdrop-blur-sm"
+            >
+              <div className="sticky top-0 flex h-9 items-center gap-2 border-b border-[#dfe3e8] bg-white px-3">
+                <span className={SECTION_LABEL}>Selected</span>
+                <button
+                  type="button"
+                  data-testid="inspector-close"
+                  aria-label="Deselect this part"
+                  onClick={() => setSelected(null)}
+                  className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1]"
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="px-3 py-3">
+                <div className="mb-3 font-semibold text-[#34495e]">{selectedDef.label}</div>
+
+                {selectedDef.props?.map((prop) => (
+                  <PropControl
+                    /**
+                     * Keyed by PART as well as by prop, so selecting a different
+                     * resistor remounts the field. The value/unit control holds
+                     * the half-typed figure in its own state, and without the id
+                     * in the key React would reuse the mounted instance and show
+                     * the previous resistor's draft over the new one's value.
+                     */
+                    key={`${selectedPart.id}:${prop.key}`}
+                    prop={prop}
+                    /**
+                     * The engine falls back to the declared default when a part
+                     * carries no value for a prop, so the control shows that same
+                     * default — otherwise the panel and the simulation disagree
+                     * before the student has touched anything.
+                     *
+                     * `?? prop.options?.[0]` USED TO BE THE NEXT LINK IN THIS
+                     * CHAIN and it was the bug. A resistor's options start at 0 Ω
+                     * — "none (wire)" — so a resistor arriving from a saved
+                     * document, an authored starter or `loadInto` without an
+                     * explicit `ohms` displayed "none (wire)" while compile.ts
+                     * solved it at its 220 Ω default. Inventing a value from the
+                     * options list is what let the two drift; the declaration is
+                     * now the only source, and parts.ts's
+                     * propDeclarationProblems() shouts if a prop omits one. The
+                     * trailing `?? 0` only satisfies Number() and is unreachable
+                     * while that check is clean.
+                     */
+                    value={selectedPart.props[prop.key] ?? prop.default ?? 0}
+                    onChange={(value) =>
+                      dispatch({ type: 'setProp', id: selectedPart.id, key: prop.key, value })
+                    }
+                  />
+                ))}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => dispatch({ type: 'rotatePart', id: selectedPart.id })}
+                    title="Rotate 90° (R)"
+                    className={`${BTN} flex-1`}
+                  >
+                    Rotate
+                  </button>
+                  <button
+                    onClick={() => placeCopy(selectedPart)}
+                    data-testid="duplicate-part"
+                    title="Duplicate (Ctrl+D)"
+                    className={`${BTN} flex-1`}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    onClick={() => {
+                      dispatch({ type: 'removePart', id: selectedPart.id })
+                      setSelected(null)
+                    }}
+                    data-testid="delete-part"
+                    title="Delete (Del)"
+                    className="h-8 flex-1 rounded-[3px] border border-red-200 bg-white px-2.5 text-xs text-red-600 transition-colors hover:border-red-500"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* The code panel DOCKS beside the circuit rather than covering it: the
@@ -2472,79 +2580,6 @@ export function CircuitEditor({
           {error && (
             <div className="px-4 py-3 bg-red-50 text-red-700 text-xs" data-testid="error">
               {error}
-            </div>
-          )}
-
-          {/* Selected part */}
-          {selectedPart && selectedDef && (
-            <div className="px-4 py-4 border-b border-[#dfe3e8]">
-              <div className={`${SECTION_LABEL} mb-2`}>Selected</div>
-              <div className="text-[#34495e] font-semibold mb-3">{selectedDef.label}</div>
-
-              {selectedDef.props?.map((prop) => (
-                <PropControl
-                  /**
-                   * Keyed by PART as well as by prop, so selecting a different
-                   * resistor remounts the field. The value/unit control holds
-                   * the half-typed figure in its own state, and without the id
-                   * in the key React would reuse the mounted instance and show
-                   * the previous resistor's draft over the new one's value.
-                   */
-                  key={`${selectedPart.id}:${prop.key}`}
-                  prop={prop}
-                  /**
-                   * The engine falls back to the declared default when a part
-                   * carries no value for a prop, so the control shows that same
-                   * default — otherwise the panel and the simulation disagree
-                   * before the student has touched anything.
-                   *
-                   * `?? prop.options?.[0]` USED TO BE THE NEXT LINK IN THIS
-                   * CHAIN and it was the bug. A resistor's options start at 0 Ω
-                   * — "none (wire)" — so a resistor arriving from a saved
-                   * document, an authored starter or `loadInto` without an
-                   * explicit `ohms` displayed "none (wire)" while compile.ts
-                   * solved it at its 220 Ω default. Inventing a value from the
-                   * options list is what let the two drift; the declaration is
-                   * now the only source, and parts.ts's
-                   * propDeclarationProblems() shouts if a prop omits one. The
-                   * trailing `?? 0` only satisfies Number() and is unreachable
-                   * while that check is clean.
-                   */
-                  value={selectedPart.props[prop.key] ?? prop.default ?? 0}
-                  onChange={(value) =>
-                    dispatch({ type: 'setProp', id: selectedPart.id, key: prop.key, value })
-                  }
-                />
-              ))}
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => dispatch({ type: 'rotatePart', id: selectedPart.id })}
-                  title="Rotate 90° (R)"
-                  className={`${BTN} flex-1`}
-                >
-                  Rotate
-                </button>
-                <button
-                  onClick={() => placeCopy(selectedPart)}
-                  data-testid="duplicate-part"
-                  title="Duplicate (Ctrl+D)"
-                  className={`${BTN} flex-1`}
-                >
-                  Duplicate
-                </button>
-                <button
-                  onClick={() => {
-                    dispatch({ type: 'removePart', id: selectedPart.id })
-                    setSelected(null)
-                  }}
-                  data-testid="delete-part"
-                  title="Delete (Del)"
-                  className="h-8 flex-1 px-2.5 rounded-[3px] text-xs border border-red-200 bg-white text-red-600 transition-colors hover:border-red-500"
-                >
-                  Delete
-                </button>
-              </div>
             </div>
           )}
 
