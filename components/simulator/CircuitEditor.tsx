@@ -38,6 +38,7 @@ import {
   OHM_UNITS,
   PALETTE,
   PART_LIBRARY,
+  PITCH,
   formatValueUnit,
   getPart,
   parseValueUnit,
@@ -58,6 +59,7 @@ import {
   snap,
   type CircuitDoc,
   type DocAction,
+  type PlacedPart,
 } from '@/lib/simulator/model/document'
 import { useAutosave, type RemoteTarget } from '@/lib/simulator/useAutosave'
 import { BLANK, EXAMPLES, EXPERIMENT_01 } from '@/lib/simulator/model/examples'
@@ -1216,8 +1218,101 @@ export function CircuitEditor({
   })
   const [selected, setSelected] = useState<string | null>(null)
   const [hexUrl, setHexUrl] = useState(FIRMWARE[0].url)
+  /**
+   * Copy/paste buffer. Deliberately NOT the system clipboard: reading that
+   * needs a permission prompt, and writing our part JSON into it would clobber
+   * whatever a student had copied to paste into their sketch.
+   */
+  const [clipboard, setClipboard] = useState<PlacedPart | null>(null)
 
   const doc = state.doc
+
+  /**
+   * Drop a copy of a part two grid cells down-right of its source — the way
+   * every canvas editor does it, because landing it exactly on top would look
+   * like nothing had happened. Shared by the Duplicate button and by Ctrl+D /
+   * Ctrl+V so the three cannot drift apart.
+   */
+  const placeCopy = useCallback((src: PlacedPart) => {
+    const id = newId(src.type.slice(0, 3) + '_')
+    dispatch({
+      type: 'addPart',
+      part: {
+        ...src,
+        id,
+        x: snap(src.x + 2 * PITCH),
+        y: snap(src.y + 2 * PITCH),
+        props: { ...src.props },
+      },
+    })
+    setSelected(id)
+  }, [])
+
+  /**
+   * Keyboard shortcuts for the canvas.
+   *
+   * Rotate and delete existed only as inspector buttons and undo/redo only as
+   * toolbar buttons, so every edit needed a pointer — a real accessibility
+   * hole, and Tinkercad binds all of these to keys that students arrive
+   * already expecting.
+   *
+   * THE GUARD MATTERS MORE THAN THE BINDINGS. The code editor is a textarea in
+   * this same document, so an unguarded Ctrl+C would duplicate a resistor
+   * instead of copying the line a student had selected, and Backspace would
+   * delete their Arduino instead of a character. Anything focus-bearing gets
+   * the event untouched.
+   *
+   * Escape is bubble-phase on purpose. The canvas cancels a half-drawn wire
+   * from a CAPTURE listener that stops propagation, so while a draft is up
+   * this never runs and Escape means "put the wire down" — only once there is
+   * no draft does it mean "deselect".
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t) {
+        const tag = t.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return
+      }
+      const mod = e.ctrlKey || e.metaKey
+      const part = selected ? (state.doc.parts.find((p) => p.id === selected) ?? null) : null
+
+      if (mod && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        dispatch({ type: e.shiftKey ? 'redo' : 'undo' })
+      } else if (mod && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault()
+        dispatch({ type: 'redo' })
+      } else if (mod && (e.key === 'd' || e.key === 'D')) {
+        // Ctrl+D is "bookmark this page" if we let it through.
+        e.preventDefault()
+        if (part) placeCopy(part)
+      } else if (mod && (e.key === 'c' || e.key === 'C')) {
+        if (part) setClipboard(part)
+      } else if (mod && (e.key === 'v' || e.key === 'V')) {
+        if (clipboard) {
+          e.preventDefault()
+          placeCopy(clipboard)
+        }
+      } else if (!mod && (e.key === 'Delete' || e.key === 'Backspace')) {
+        if (part) {
+          e.preventDefault()
+          dispatch({ type: 'removePart', id: part.id })
+          setSelected(null)
+        }
+      } else if (!mod && (e.key === 'r' || e.key === 'R')) {
+        if (part) dispatch({ type: 'rotatePart', id: part.id })
+      }
+      // No Escape binding here on purpose. Escape is already spoken for TWICE
+      // — the canvas cancels a half-drawn wire with it, and the fullscreen gate
+      // (plus the browser itself) leaves fullscreen on it. Adding "deselect"
+      // would mean one key doing three things, and the one a student would
+      // actually hit is being thrown out of the editor. Clicking empty canvas
+      // already deselects.
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, clipboard, state.doc, placeCopy])
 
   /**
    * The experiment's AUTHORED program — what "Reset to starter" goes back to,
@@ -1937,6 +2032,7 @@ export function CircuitEditor({
           onClick={() => dispatch({ type: 'undo' })}
           disabled={state.past.length === 0}
           data-testid="undo"
+          title="Undo (Ctrl+Z)"
           className={BTN}
         >
           Undo
@@ -1945,6 +2041,7 @@ export function CircuitEditor({
           onClick={() => dispatch({ type: 'redo' })}
           disabled={state.future.length === 0}
           data-testid="redo"
+          title="Redo (Ctrl+Shift+Z)"
           className={BTN}
         >
           Redo
@@ -2369,9 +2466,18 @@ export function CircuitEditor({
               <div className="flex gap-2">
                 <button
                   onClick={() => dispatch({ type: 'rotatePart', id: selectedPart.id })}
+                  title="Rotate 90° (R)"
                   className={`${BTN} flex-1`}
                 >
                   Rotate
+                </button>
+                <button
+                  onClick={() => placeCopy(selectedPart)}
+                  data-testid="duplicate-part"
+                  title="Duplicate (Ctrl+D)"
+                  className={`${BTN} flex-1`}
+                >
+                  Duplicate
                 </button>
                 <button
                   onClick={() => {
@@ -2379,6 +2485,7 @@ export function CircuitEditor({
                     setSelected(null)
                   }}
                   data-testid="delete-part"
+                  title="Delete (Del)"
                   className="h-8 flex-1 px-2.5 rounded-[3px] text-xs border border-red-200 bg-white text-red-600 transition-colors hover:border-red-500"
                 >
                   Delete
