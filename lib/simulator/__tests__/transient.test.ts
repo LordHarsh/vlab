@@ -21,7 +21,22 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { Circuit } from '../solver'
-import { Capacitor, Inductor, Resistor, VoltageSource } from '../devices'
+import {
+  Capacitor,
+  DCMotor,
+  Diode,
+  DIODE_1N4148,
+  DIODE_L298N_FREEWHEEL,
+  HOBBY_MOTOR_6V,
+  Inductor,
+  RELAY_MODULE_4CH,
+  Resistor,
+  STEPPER_28BYJ48,
+  VoltageSource,
+  Winding,
+  createL298N,
+  type MotorParams,
+} from '../devices'
 import { GROUND } from '../types'
 import { compile } from '../model/compile'
 import { SimulationEngine, parseIntelHex } from '../engine'
@@ -1278,6 +1293,562 @@ group('11. a capacitor REPORTS its charge, and an inductor its current')
   near('and the 10 mH one is at 2τ on its own curve',
     iSmall * 1e3, beRise(2e-4) * 1e3, 0.05, 'mA')
 }
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('12. WINDINGS — a coil is a series R–L branch, not a resistor')
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Motors, relay coils and stepper phases were all stamped as bare conductances,
+// so `Circuit.hasReactive` stayed false for every one of them and the transient
+// loop — which HAS been coupled into the engine for a while — never ran on the
+// circuits it was most needed for. They are `RLBranch` companions now:
+//
+//   i = Geq·v + Ieq       Geq = k/(1 + k·R),  Ieq = i_prev/(1 + k·R),  k = h/L
+//
+// Every number below is derived on paper from R, L and V. Nothing is captured
+// from the engine's own output.
+
+// ── 12.1 THE DC DEGENERACY ────────────────────────────────────────────────────
+//
+// THE TRAP THIS PINS: at h = 0 the companion formula gives k = 0 and therefore
+// Geq = 0/(1 + 0) = 0 — an OPEN CIRCUIT, which is the one thing a winding is
+// not. Every steady-state assertion in every other suite goes through the DC
+// path (a plain solve() sets no step), so a winding that took the formula
+// literally would silently stop conducting the moment the transient loop was
+// off: a motor reading 0 A, a relay that never pulls in, and 2 691 assertions
+// failing for a reason that has nothing to do with any of them. DC is written
+// out separately as Geq = 1/R, Ieq = 0, and this is what holds it there.
+{
+  const RSERIES = 100
+  const RM = new DCMotor('probe', GROUND, GROUND, 0).effectiveOhms // 6/0.07 = 85.714 Ω
+
+  // Two circuits identical but for the element under test: the winding, and the
+  // plain resistor it replaced. A DC solve must not be able to tell them apart.
+  const build = (winding: boolean) => {
+    const c = new Circuit()
+    const top = c.allocNet()
+    const mid = c.allocNet()
+    c.add(new VoltageSource('v', top, GROUND, VCC))
+    c.add(new Resistor('rs', top, mid, RSERIES))
+    c.add(winding ? new DCMotor('m', mid, GROUND, 0) : new Resistor('m', mid, GROUND, RM))
+    return { c, res: c.solve(), mid }
+  }
+  const wound = build(true)
+  const plain = build(false)
+
+  truth('a motor makes its circuit reactive — the whole point',
+    wound.c.hasReactive && !plain.c.hasReactive,
+    'motor reactive, resistor not',
+    `${wound.c.hasReactive} / ${plain.c.hasReactive}`)
+  // v = V·R/(R + Rs) = 5·85.714/185.714 = 2.30769 V, from the divider alone.
+  const vDivider = (VCC * RM) / (RM + RSERIES)
+  near('at DC the winding solves to the plain resistive divider',
+    wound.res.voltages[wound.mid], vDivider, 1e-9)
+  near('   — to the last bit of the resistor it replaced',
+    wound.res.voltages[wound.mid], plain.res.voltages[plain.mid], 1e-12)
+  /**
+   * And it is emphatically NOT the open the naive formula gives. An open would
+   * put the whole 5 V on the node (nothing but gmin to pull it down), so this
+   * separates the two answers by 2.7 V rather than by a tolerance.
+   */
+  truth('   and NOT the open circuit k/(1+kR) degenerates to at k = 0',
+    Math.abs(wound.res.voltages[wound.mid] - VCC) > 2,
+    `far from ${VCC} V`,
+    `${wound.res.voltages[wound.mid].toFixed(5)} V`)
+
+  // The same, for the Winding class a relay coil and a stepper phase are built from.
+  const coilR = RELAY_MODULE_4CH.coilOhms
+  const cw = new Circuit()
+  const nw = cw.allocNet()
+  cw.add(new VoltageSource('v', nw, GROUND, VCC))
+  const coil = new Winding('coil', nw, GROUND, coilR, RELAY_MODULE_4CH.coilHenries)
+  cw.add(coil)
+  cw.solve()
+  near('a relay coil at DC draws V/R = 71.43 mA',
+    coil.current * 1e3, (VCC / coilR) * 1e3, 1e-9, 'mA')
+}
+
+// ── 12.2 INRUSH: i(t) = (V/R)·(1 − e^(−tR/L)) ─────────────────────────────────
+{
+  /**
+   * The relay coil driven straight off a 5 V source, so the branch resistance is
+   * the winding's own 70 Ω and nothing else:
+   *
+   *   τ = L/R = 50 mH / 70 Ω = 714.286 µs      i(∞) = 5/70 = 71.4286 mA
+   *
+   * Backward Euler on this branch collapses to the SAME geometric recurrence the
+   * bare inductor gives in group 3.3, which is the independent oracle:
+   *
+   *   i_new = (k·V + i_prev)/(1 + k·R),  k = h/L
+   *         ⇒  i_new − i(∞) = (i_prev − i(∞))/(1 + h/τ)
+   *         ⇒  i(n·h) = i(∞)·(1 − ρ^n),  ρ = 1/(1 + h/τ)
+   */
+  const R = RELAY_MODULE_4CH.coilOhms
+  const L = RELAY_MODULE_4CH.coilHenries
+  const tau = L / R
+  const iFinal = VCC / R
+  const h = tau / 50
+  const rho = 1 / (1 + h / tau)
+  const beRise = (n: number) => iFinal * (1 - Math.pow(rho, n))
+
+  const c = new Circuit()
+  const n = c.allocNet()
+  c.add(new VoltageSource('v', n, GROUND, VCC))
+  const coil = new Winding('coil', n, GROUND, R, L)
+  c.add(coil)
+
+  near('τ of a 70 Ω / 50 mH coil on a stiff rail is 714.29 µs',
+    (c.smallestTimeConstant() ?? 0) * 1e6, tau * 1e6, 1e-6, 'µs')
+
+  c.beginTransient()
+  truth('a winding starts at zero current, like the coil of a cold relay',
+    coil.current === 0, '0 A', `${coil.current} A`)
+
+  for (let k = 0; k < 50; k++) c.transientStep(h)
+  near('i(τ) matches the exact backward-Euler recurrence',
+    coil.current * 1e3, beRise(50) * 1e3, 1e-9, 'mA')
+  near('   and is within 0.6 % of the continuous (V/R)(1 − e^−1) = 45.15 mA',
+    coil.current * 1e3, iFinal * (1 - Math.exp(-1)) * 1e3, 0.3, 'mA')
+
+  for (let k = 0; k < 200; k++) c.transientStep(h)
+  near('i(5τ) has all but arrived at V/R = 71.43 mA',
+    coil.current * 1e3, beRise(250) * 1e3, 1e-9, 'mA')
+  // 1 - rho^250 = 1 - 1.02^-250 = 0.992926, so backward Euler is 0.707 % shy of
+  // the DC answer after 5 tau. Both figures are on paper; neither is captured.
+  nearRel('   which is the DC answer the resistor gave, to 0.71 %',
+    coil.current, iFinal, 7.1e-3, 'A')
+
+  /**
+   * THE STEP SIZE ONLY COSTS ACCURACY, NEVER CORRECTNESS. A step five times the
+   * time constant lands on the same steady state. That is the L-stability the
+   * 20 µs floor in engine.ts is justified by.
+   */
+  const c2 = new Circuit()
+  const n2 = c2.allocNet()
+  c2.add(new VoltageSource('v', n2, GROUND, VCC))
+  const coil2 = new Winding('coil', n2, GROUND, R, L)
+  c2.add(coil2)
+  c2.beginTransient()
+  for (let k = 0; k < 25; k++) c2.transientStep(5 * tau)
+  nearRel('a step 5x the time constant still lands on the same steady state',
+    coil2.current, iFinal, 1e-6, 'A')
+}
+
+// ── 12.3 FLYBACK: the diode carries the coil current on release ───────────────
+{
+  /**
+   * A coil across a 5 V rail with a switch on its low side and a 1N4148 flyback
+   * diode from that node up to the rail — the relay board's own topology.
+   *
+   * While the switch is closed the diode is reverse-biased and the coil settles
+   * at 5/70 = 71.4 mA. Open the switch and the current has nowhere else to go:
+   * it must continue through the diode, which forces the coil's low side ABOVE
+   * the rail by exactly the diode's forward drop at that current.
+   */
+  const R = RELAY_MODULE_4CH.coilOhms
+  const L = RELAY_MODULE_4CH.coilHenries
+  const c = new Circuit()
+  const rail = c.allocNet()
+  const low = c.allocNet()
+  c.add(new VoltageSource('v', rail, GROUND, VCC))
+  const coil = new Winding('coil', rail, low, R, L)
+  const fly = new Diode('dfly', low, rail, DIODE_1N4148)
+  const sw = new Resistor('sw', low, GROUND, 1e-3)
+  c.add(coil, fly, sw)
+
+  const tau = L / R
+  const h = tau / 50
+  c.beginTransient()
+  for (let k = 0; k < 400; k++) c.transientStep(h)
+  const iOn = coil.current
+  nearRel('coil energised at 71.4 mA', iOn, VCC / R, 1e-3, 'A')
+  truth('   with the flyback diode reverse-biased and inert',
+    Math.abs(fly.current) < 1e-8, '|i| < 10 nA', `${(fly.current * 1e9).toFixed(2)} nA`)
+
+  // Open the switch. One step.
+  ;(sw as unknown as { ohms: number }).ohms = 1e9
+  const rOff = c.transientStep(h)
+  truth('on release the diode conducts — it is not inert any more',
+    fly.current > 0.9 * iOn,
+    `> ${(0.9 * iOn * 1e3).toFixed(1)} mA`,
+    `${(fly.current * 1e3).toFixed(3)} mA`)
+  /**
+   * Kirchhoff at the open node: with the switch gone the coil branch and the
+   * diode branch are the same loop, so the two currents are one current. They
+   * agree to a few parts in ten thousand rather than exactly, because the diode
+   * makes this a NONLINEAR solve that stops at Newton's reltol of 1e-3 — the
+   * same reason onewire.test.ts loosens its ULN2003 chain tolerances.
+   */
+  nearRel('   and it carries the WHOLE coil current — Kirchhoff at the open node',
+    fly.current, coil.current, 2e-3, 'A')
+  /**
+   * The clamp voltage is the diode equation solved at that current, computed
+   * here from the 1N4148 constants rather than read off the node:
+   *   v_low = VCC + n·VT·ln(i/Is + 1)
+   */
+  const vf = DIODE_1N4148.n * 0.025852 * Math.log(fly.current / DIODE_1N4148.is + 1)
+  near('   pushing the coil node one forward drop ABOVE the 5 V rail',
+    rOff.voltages[low], VCC + vf, 2e-3)
+  truth('   which is above the rail, not below it — the sign of the kick',
+    rOff.voltages[low] > VCC, `> ${VCC} V`, `${rOff.voltages[low].toFixed(4)} V`)
+
+  const iAfter1 = coil.current
+  for (let k = 0; k < 50; k++) c.transientStep(h)
+  truth('and the stored current then decays away through it',
+    coil.current < iAfter1 / 2 && coil.current > 0,
+    `0 < i < ${(iAfter1 * 500).toFixed(1)} mA`,
+    `${(coil.current * 1e3).toFixed(3)} mA`)
+}
+
+// ── 12.4 THE L298N's FREEWHEEL DIODES ─────────────────────────────────────────
+{
+  /**
+   * The limitation this replaces said the bridge's flyback diodes "never conduct
+   * and the bridge is never seen doing the job it is there for". They never
+   * conducted for two reasons, both now fixed: the model had no diodes at all,
+   * and its load could not store energy.
+   *
+   * Forward-drive a fully loaded motor from a 9 V supply, then drop the enable.
+   * Both legs go open, the armature current keeps flowing, and one diode in each
+   * leg has to pick it up: OUT_A is dragged BELOW ground and OUT_B ABOVE Vs.
+   */
+  const VS = 9
+  const c = new Circuit()
+  const vs = c.allocNet()
+  const vss = c.allocNet()
+  const o1 = c.allocNet()
+  const o2 = c.allocNet()
+  const in1 = c.allocNet()
+  const in2 = c.allocNet()
+  const en = c.allocNet()
+  c.add(new VoltageSource('vs', vs, GROUND, VS))
+  c.add(new VoltageSource('vss', vss, GROUND, VCC))
+  c.add(new VoltageSource('pin1', in1, GROUND, VCC))
+  c.add(new VoltageSource('pin2', in2, GROUND, 0))
+  const pEn = new VoltageSource('pen', en, GROUND, VCC)
+  c.add(pEn)
+  const { devices, channels } = createL298N('l1', {
+    in1,
+    in2,
+    ena: en,
+    in3: c.allocNet(),
+    in4: c.allocNet(),
+    enb: c.allocNet(),
+    out1: o1,
+    out2: o2,
+    vs,
+    vss,
+    gnd: GROUND,
+  })
+  c.add(...devices)
+  const m = new DCMotor('m', o1, o2, 1)
+  c.add(m)
+  const byId = (id: string) => devices.find((d) => d.id === id) as Diode
+  const dloA = byId('l1.dlo1')
+  const dhiB = byId('l1.dhi2')
+
+  truth('the board carries two freewheel diodes per wired output',
+    devices.filter((d) => /^l1\.d(lo|hi)/.test(d.id)).length === 4,
+    '4 for 2 wired outputs',
+    String(devices.filter((d) => /^l1\.d(lo|hi)/.test(d.id)).length))
+
+  const dc = c.solve()
+  truth('at a DC operating point every one of them is reverse-biased',
+    Math.abs(dloA.current) < 1e-9 && Math.abs(dhiB.current) < 1e-9,
+    '|i| < 1 nA each',
+    `${(dloA.current * 1e9).toFixed(3)} nA, ${(dhiB.current * 1e9).toFixed(3)} nA`)
+  truth('   so adding them changed no DC answer: the bridge still drives forward',
+    dc.ok && channels[0].mode === 'forward',
+    'ok / forward',
+    `${dc.ok} / ${channels[0].mode}`)
+
+  const tau = HOBBY_MOTOR_6V.henries / m.effectiveOhms
+  const h = tau / 50
+  c.beginTransient()
+  for (let k = 0; k < 400; k++) c.transientStep(h)
+  const iRun = m.current
+  truth('the motor runs', iRun > 0.5, '> 500 mA', `${(iRun * 1e3).toFixed(1)} mA`)
+
+  pEn.volts = 0
+  const rOff = c.transientStep(h)
+  truth('dropping the enable coasts the bridge',
+    channels[0].mode === 'coast', 'coast', channels[0].mode)
+  truth('   and BOTH freewheel diodes conduct the armature current',
+    dloA.current > 0.9 * iRun && dhiB.current > 0.9 * iRun,
+    `both > ${(0.9 * iRun * 1e3).toFixed(0)} mA`,
+    `${(dloA.current * 1e3).toFixed(1)} mA, ${(dhiB.current * 1e3).toFixed(1)} mA`)
+  truth('   clamping OUT_A below ground and OUT_B above Vs, which is the job',
+    rOff.voltages[o1] < 0 && rOff.voltages[o2] > VS,
+    `v(OUT_A) < 0 < ${VS} < v(OUT_B)`,
+    `${rOff.voltages[o1].toFixed(3)} V / ${rOff.voltages[o2].toFixed(3)} V`)
+  /**
+   * By exactly one forward drop each, computed from the diode's own constants —
+   * Is derived in DIODE_L298N_FREEWHEEL from the L298 datasheet's "VF <= 1.2 V
+   * at 2 A" line. That is what makes this the flyback path and not merely two
+   * nodes that happen to have moved.
+   */
+  const vfFly = (i: number) =>
+    DIODE_L298N_FREEWHEEL.n * 0.025852 * Math.log(i / DIODE_L298N_FREEWHEEL.is + 1)
+  near('   by exactly one diode drop below 0 V',
+    rOff.voltages[o1], -vfFly(dloA.current), 3e-3)
+  near('   and one diode drop above Vs',
+    rOff.voltages[o2], VS + vfFly(dhiB.current), 3e-3)
+  /**
+   * The clamp puts −(Vs + 2·Vf) ≈ −11 V across a 6 V motor for a step or two.
+   * That is what a freewheel path DOES, and reporting it as a destroyed winding
+   * would be the simulator failing a correctly built circuit — which is why
+   * DCMotor.safety() measures the winding's own i·R rather than its terminals.
+   */
+  truth('   without the correctly built flyback path being called a dead motor',
+    !rOff.faults.some((f) => f.deviceId === 'm' && f.severity === 'destructive'),
+    'no destructive motor fault',
+    rOff.faults.map((f) => `${f.deviceId}:${f.severity}`).join(',') || '(none)')
+
+  const iFirst = m.current
+  for (let k = 0; k < 20; k++) c.transientStep(h)
+  truth('and the armature current decays through them',
+    m.current < iFirst / 2,
+    `< ${(iFirst * 500).toFixed(0)} mA`,
+    `${(m.current * 1e3).toFixed(1)} mA`)
+}
+
+// ── 12.5 THE INDUCTANCE REACHES THE SOLVER ────────────────────────────────────
+//
+// The LED-colour defect in one sentence: a fully commented, fully tested
+// datasheet table that no stamp() ever read. `henries` is a new field on
+// MotorParams and it could fail exactly the same way, silently. Asserted by
+// DIFFERENCE, the way prop-reachability.ts does it: change only that number and
+// the answer has to move — while the DC answer must not move at all.
+{
+  const withL = (h: number): MotorParams => ({ ...HOBBY_MOTOR_6V, henries: h })
+  const rig = (params: MotorParams) => {
+    const c = new Circuit()
+    const n = c.allocNet()
+    c.add(new VoltageSource('v', n, GROUND, VCC))
+    const m = new DCMotor('m', n, GROUND, 0, params)
+    c.add(m)
+    return { c, m }
+  }
+  const fast = rig(withL(2e-3))
+  const slow = rig(withL(20e-3))
+
+  fast.c.solve()
+  slow.c.solve()
+  near('ten times the inductance is the SAME motor at DC',
+    fast.m.current * 1e3, slow.m.current * 1e3, 1e-12, 'mA')
+
+  const R = fast.m.effectiveOhms
+  const tauFast = 2e-3 / R
+  const h = tauFast / 20
+  fast.c.beginTransient()
+  slow.c.beginTransient()
+  for (let k = 0; k < 20; k++) {
+    fast.c.transientStep(h)
+    slow.c.transientStep(h)
+  }
+  // At t = τ_fast the 2 mH motor is at ~63 % and the 20 mH one at 1 − e^−0.1 ≈ 9.5 %.
+  truth('   but a different motor in time — 10x L is 10x the rise time',
+    fast.m.current > 4 * slow.m.current,
+    'i(2 mH) > 4·i(20 mH)',
+    `${(fast.m.current * 1e3).toFixed(3)} mA vs ${(slow.m.current * 1e3).toFixed(3)} mA`)
+  nearRel('   and each sits on its own closed-form curve at that instant',
+    fast.m.current,
+    (VCC / R) * (1 - Math.pow(1 / (1 + h / tauFast), 20)),
+    1e-9,
+    'A')
+  nearRel('   (the slow one likewise)',
+    slow.m.current,
+    (VCC / R) * (1 - Math.pow(1 / (1 + h / (20e-3 / R)), 20)),
+    1e-9,
+    'A')
+}
+
+// ── 12.6 THE TIMESTEP SEES THE NEW INDUCTANCES ────────────────────────────────
+{
+  /**
+   * A motor straight off a pin. Whatever the pin is doing, the driving-point
+   * resistance can only ADD to the armature's own 85.7 Ω, so
+   *
+   *   τ  ≤  L/R  =  2 mH / 85.714 Ω  =  23.33 µs
+   *   τ/STEPS_PER_TAU  ≤  0.467 µs   <  MIN_STEP = 20 µs
+   *
+   * so the engine is REQUIRED to clamp to the floor here, and the assertion is
+   * the inequality rather than a captured number. That is not a defect:
+   * backward Euler is L-stable, so h > τ collapses to the steady state instead
+   * of ringing, and a 23 µs electrical rise is orders below anything a student
+   * can watch. What the winding buys on a motor is the switch-off kick.
+   */
+  const motorDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('m', 'dc_motor', { load: 0 })],
+    wires: [w(['m', '1'], ['uno', 'D9']), w(['m', '2'], ['uno', 'GND.1'])],
+  }
+  const cm = compile(motorDoc)
+  const tauMotor = cm.circuit.smallestTimeConstant()
+  const tauCeiling = HOBBY_MOTOR_6V.henries / (6 / 0.07)
+  truth('a compiled motor makes its circuit reactive',
+    cm.circuit.hasReactive, 'true', String(cm.circuit.hasReactive))
+  truth('   and the probe measures a real time constant for it',
+    tauMotor !== null && tauMotor > 0 && tauMotor <= tauCeiling,
+    `0 < τ ≤ L/R = ${(tauCeiling * 1e6).toFixed(2)} µs`,
+    tauMotor === null ? 'null' : `${(tauMotor * 1e6).toFixed(3)} µs`)
+  const engM = new SimulationEngine(firmware('blink.hex'), motorDoc)
+  engM.run(1000)
+  near('   the engine steps it at the 20 µs floor, as τ/50 < 20 µs demands',
+    (engM.snapshot().transientStep ?? 0) * 1e6, MIN_STEP * 1e6, 1e-9, 'µs')
+
+  /**
+   * A stepper is the case where the probe changes the answer. Each phase is
+   * 50 Ω / 300 mH, and RLBranch clamps the external rTh at the winding's own R
+   * (see its note), so a de-energised phase reports
+   *
+   *   τ = L/(R + R) = 300 mH / 100 Ω = 3.000 ms      h = τ/50 = 60 µs
+   *
+   * — three times the floor, i.e. the engine does a third of the work it would
+   * do if a switched-off coil were allowed to demand the smallest step there is.
+   */
+  const stepperDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('u', 'uln2003'), placeP('s', 'stepper_28byj48')],
+    wires: [
+      w(['u', 'GND'], ['uno', 'GND.1']),
+      w(['u', 'COM'], ['uno', '5V']),
+      w(['s', 'COM'], ['uno', '5V']),
+      w(['u', 'IN1'], ['uno', 'D8']),
+      w(['u', 'OUT1'], ['s', 'A']),
+      w(['u', 'OUT2'], ['s', 'B']),
+      w(['u', 'OUT3'], ['s', 'C']),
+      w(['u', 'OUT4'], ['s', 'D']),
+    ],
+  }
+  const cs = compile(stepperDoc)
+  truth('a compiled stepper contributes FOUR reactive windings, one per phase',
+    [...cs.reactive.keys()].filter((k) => k.startsWith('s.phase')).length === 4,
+    '4',
+    [...cs.reactive.keys()].filter((k) => k.startsWith('s.phase')).join(',') || '(none)')
+  cs.circuit.solve()
+  const tauStep = cs.circuit.smallestTimeConstant() ?? 0
+  near('   whose time constant is L/(R + R) = 3.000 ms with the rTh clamp',
+    tauStep * 1e3,
+    (STEPPER_28BYJ48.phaseHenries / (2 * STEPPER_28BYJ48.phaseOhms)) * 1e3,
+    1e-9,
+    'ms')
+  const engS = new SimulationEngine(firmware('blink.hex'), stepperDoc)
+  engS.run(1000)
+  const hStep = engS.snapshot().transientStep ?? 0
+  near('   so the engine steps a stepper at 60 µs, NOT at the floor',
+    hStep * 1e6, stepFor(tauStep) * 1e6, 1e-9, 'µs')
+  truth('   which is three times the floor — the probe is doing real work',
+    hStep > MIN_STEP * 2, `> ${(MIN_STEP * 2e6).toFixed(0)} µs`, `${(hStep * 1e6).toFixed(2)} µs`)
+
+  /**
+   * A relay board's coil, likewise: 70 Ω / 50 mH de-energised gives
+   * 50 mH/140 Ω = 357 µs under the same clamp. τ/50 = 7 µs is under the floor,
+   * so a relay board runs at 20 µs — the price of the flyback being real.
+   */
+  const relayDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('r', 'relay_4ch', { activeLow: 1 })],
+    wires: [
+      w(['r', 'VCC'], ['uno', '5V']),
+      w(['r', 'GND'], ['uno', 'GND.1']),
+      w(['r', 'IN1'], ['uno', 'D7']),
+      w(['r', 'COM1'], ['uno', 'GND.2']),
+      w(['r', 'NO1'], ['uno', 'D2']),
+    ],
+  }
+  const cr = compile(relayDoc)
+  truth('a relay board contributes its coil as a reactive winding',
+    cr.reactive.has('r.coil1'), 'r.coil1', [...cr.reactive.keys()].join(',') || '(none)')
+  cr.circuit.solve()
+  const tauRelay = cr.circuit.smallestTimeConstant() ?? 0
+  near('   at τ = L/(R + R) = 357 µs with the coil driver off',
+    tauRelay * 1e6,
+    (RELAY_MODULE_4CH.coilHenries / (2 * RELAY_MODULE_4CH.coilOhms)) * 1e6,
+    1e-6,
+    'µs')
+  truth('   which is under the floor once divided by 50, so a relay runs at 20 µs',
+    stepFor(tauRelay) === MIN_STEP,
+    `${(MIN_STEP * 1e6).toFixed(0)} µs`,
+    `${(stepFor(tauRelay) * 1e6).toFixed(2)} µs`)
+}
+
+// ── 12.7 THE STALE CLAIMS ARE GONE FROM THE COMPILED LIMITATIONS ──────────────
+//
+// Four limitation strings told the student that a transient "needs transient
+// simulation, which the interactive engine does not run yet". The engine has run
+// one since `this.transient = this.compiled.circuit.hasReactive` landed. A false
+// warning is its own kind of wrong answer, and it is asserted away here rather
+// than merely deleted, so it cannot come back.
+{
+  const motorDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('m', 'dc_motor', { load: 0 })],
+    wires: [w(['m', '1'], ['uno', 'D9']), w(['m', '2'], ['uno', 'GND.1'])],
+  }
+  const relayDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('r', 'relay_4ch', { activeLow: 1 })],
+    wires: [
+      w(['r', 'VCC'], ['uno', '5V']),
+      w(['r', 'GND'], ['uno', 'GND.1']),
+      w(['r', 'IN1'], ['uno', 'D7']),
+      w(['r', 'COM1'], ['uno', 'GND.2']),
+      w(['r', 'NO1'], ['uno', 'D2']),
+    ],
+  }
+  const stepperDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('u', 'uln2003'), placeP('s', 'stepper_28byj48')],
+    wires: [
+      w(['u', 'GND'], ['uno', 'GND.1']),
+      w(['u', 'COM'], ['uno', '5V']),
+      w(['s', 'COM'], ['uno', '5V']),
+      w(['u', 'IN1'], ['uno', 'D8']),
+      w(['u', 'OUT1'], ['s', 'A']),
+      w(['u', 'OUT2'], ['s', 'B']),
+      w(['u', 'OUT3'], ['s', 'C']),
+      w(['u', 'OUT4'], ['s', 'D']),
+    ],
+  }
+  const bridgeDoc: CircuitDoc = {
+    parts: [placeP('uno', 'arduino_uno'), placeP('l', 'l298n'), placeP('m', 'dc_motor')],
+    wires: [
+      w(['l', 'VSS'], ['uno', '5V']),
+      w(['l', 'GND'], ['uno', 'GND.1']),
+      w(['l', 'VS'], ['uno', '5V']),
+      w(['l', 'ENA'], ['uno', 'D9']),
+      w(['l', 'IN1'], ['uno', 'D8']),
+      w(['l', 'IN2'], ['uno', 'D7']),
+      w(['l', 'OUT1'], ['m', '1']),
+      w(['l', 'OUT2'], ['m', '2']),
+    ],
+  }
+  const docs: Array<[string, CircuitDoc]> = [
+    ['motor', motorDoc],
+    ['relay', relayDoc],
+    ['stepper', stepperDoc],
+    ['l298n', bridgeDoc],
+  ]
+  for (const [name, doc] of docs) {
+    const lim = compile(doc).limitations
+    truth(`${name}: no limitation still claims the engine cannot run a transient`,
+      !lim.some((l) => /does not run yet/i.test(l) || /solved at (a|its) /i.test(l)),
+      'no stale DC-only claim',
+      lim.join(' | ') || '(none)')
+  }
+  const l298 = compile(bridgeDoc).limitations
+  truth('l298n: the flyback-diodes-never-conduct warning is gone entirely',
+    !l298.some((l) => /flyback/i.test(l)),
+    'no flyback warning',
+    l298.join(' | ') || '(none)')
+  const relay = compile(relayDoc).limitations
+  truth('relay: but the PULL-IN DELAY warning survives — mechanical, not electrical',
+    relay.some((l) => /pull-in/i.test(l) && /bounce/i.test(l)),
+    'still warns about pull-in and bounce',
+    relay.join(' | ') || '(none)')
+  const stepper = compile(stepperDoc).limitations
+  truth('stepper: and the lost-steps warning survives for the same reason',
+    stepper.some((l) => /inductance/i.test(l) && /losing steps/i.test(l)),
+    'inductance modelled, torque still not',
+    stepper.join(' | ') || '(none)')
+}
+
 
 // ─── Report ───────────────────────────────────────────────────────────────────
 

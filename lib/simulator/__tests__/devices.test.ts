@@ -1051,10 +1051,24 @@ function place(id: string, type: string, props: Record<string, number | string> 
     'over_current / destructive',
     f ? `${f.kind} / ${f.severity}` : '(no fault)',
   )
+  /**
+   * The motor's limitation used to say it was "solved at its steady state" and
+   * that inrush "needs transient simulation, which the interactive engine does
+   * not run yet". Both halves are now false — the armature is a series R-L
+   * branch and the engine integrates it — so this asserts the pair of claims
+   * that ARE true: the winding inductance is modelled, and the ROTOR INERTIA
+   * that actually produces a real motor's start-up surge is not.
+   */
   truth(
-    '   the motor also states what it cannot show (no inertia, no inrush)',
-    c.limitations.some((l) => /transient/i.test(l) && /steady state/i.test(l)),
-    'a transient limitation',
+    '   the motor states the inductance it now has and the inertia it still lacks',
+    c.limitations.some((l) => /inductance/i.test(l) && /inertia/i.test(l)),
+    'names winding inductance AND rotor inertia',
+    c.limitations.join(' | ') || '(none)',
+  )
+  truth(
+    '   and no longer claims the engine cannot run a transient',
+    !c.limitations.some((l) => /does not run yet/i.test(l) || /solved at (its|a) /i.test(l)),
+    'no stale DC-only claim',
     c.limitations.join(' | ') || '(none)',
   )
 }

@@ -20,11 +20,12 @@ import {
   SensorSupply,
   STEPPER_28BYJ48,
   ULN2003,
-  UnipolarStepper,
   VoltageSource,
+  Winding,
   createL298N,
   createLED,
   createRelayModule,
+  createStepper,
   createULN2003,
   type DarlingtonSink,
   type Diode,
@@ -117,7 +118,8 @@ export interface CompileResult {
    */
   drivers: Map<string, DriverChannels>
   /**
-   * Part id → its capacitor or inductor.
+   * Name → every element that stores energy: capacitors, inductors, and the
+   * WINDINGS inside motors, relay coils and stepper phases.
    *
    * The engine needs these by NAME, not just as anonymous members of the
    * circuit, for one reason: compile() runs on every document edit and builds a
@@ -126,6 +128,13 @@ export interface CompileResult {
    * half-charged capacitor across an edit, and dragging the part two pixels
    * would silently dump its charge — the PIR-hold-timer defect again, in the
    * analog half of the engine.
+   *
+   * THE KEY IS THE PART ID where the part IS the element (a capacitor, an
+   * inductor, a motor) and the DEVICE id where one part holds several (a relay
+   * board's four coils, a stepper's four phases: `relay_1.coil1`,
+   * `stepper_1.phaseA`). Both are stable across a recompile of the same
+   * document, which is all the carry-over needs; `analog-state.ts` only ever
+   * looks this map up for `kind: 'reactive'` parts, where the key is the part id.
    */
   reactive: Map<string, ReactiveDevice>
   /** Analog pin name (A0…A5) → the net it reads, for the ADC. */
@@ -406,10 +415,27 @@ export function compile(doc: CircuitDoc): CompileResult {
         ports: {},
       })
       if (passive) {
+        /**
+         * THE ONE COIL-LIKE PART THAT WAS NOT GIVEN A REACTIVE MODEL, and the
+         * reason is the timestep rather than the physics.
+         *
+         * A 10 nF piezo on a driving pin (25 Ω) has τ = 250 ns. The engine's
+         * floor is 20 µs — eighty times coarser — so a Capacitor here would
+         * transfer the right CHARGE per edge (backward Euler conserves it) and
+         * report it as a current spread over one whole step: about 2.5 mA for
+         * 20 µs where the real part draws 200 mA for 250 ns. The average would
+         * be right and the reading would be off by eighty. Modelling it would
+         * also put every tone() circuit into the transient loop to produce a
+         * number nobody can use. So the element stays a 1e-12 S open, the
+         * limitation says what that costs, and the pitch — which is what the
+         * part is for — comes from the behavioural monitor.
+         */
         limitations.push(
-          'A passive buzzer is a piezo element — a capacitor — so no DC current flows ' +
-            'through it. The pitch it is being driven at is reported, but the current ' +
-            'reads zero because that is its true DC steady state.',
+          'A passive buzzer is a bare piezo element: about 10 nF of capacitance and no DC ' +
+            'path at all, so the current through it reads zero. Its real current is a ' +
+            'displacement spike lasting a few hundred nanoseconds on each edge of the drive ' +
+            'waveform — far shorter than the timestep this simulator runs at, so there is no ' +
+            'honest reading of it to show. The pitch it is being driven at is reported instead.',
         )
       }
     } else if (el.kind === 'motor') {
@@ -421,10 +447,18 @@ export function compile(doc: CircuitDoc): CompileResult {
       circuit.add(m)
       meters.set(part.id, m)
       motors.set(part.id, m)
+      reactive.set(part.id, m)
+      /**
+       * The armature's INDUCTANCE is modelled and integrated, so the current
+       * ramps in and the switch-off kick is real. Rotor INERTIA is not, and the
+       * two are different things — this note now says only the second, because
+       * the first stopped being a limitation when DCMotor became a winding.
+       */
       limitations.push(
-        'The motor is solved at its steady state. Start-up inrush, rotor inertia and ' +
-          'the inductive spike when it is switched off all need transient simulation, ' +
-          'which the interactive engine does not run yet.',
+        'The motor winding has real inductance, so its current ramps up and it kicks back ' +
+          'when switched off. Rotor inertia is not modelled: speed still follows current ' +
+          'instantly, so the large start-up current surge a real motor draws while its ' +
+          'shaft is still stationary does not appear.',
       )
     } else if (el.kind === 'darlington_array') {
       /**
@@ -515,20 +549,34 @@ export function compile(doc: CircuitDoc): CompileResult {
       // (`l298n_1.A`), so a milliamp figure in Measurements and a fault in
       // Checks name the same thing.
       for (const ch of channels) meters.set(ch.id, ch)
-      limitations.push(
-        'The motor driver is solved at a DC operating point. Its ~2.5 V transistor drop is ' +
-          'modelled, but switching a motor off produces no inductive kick, so the flyback ' +
-          'diodes never conduct and the bridge is never seen doing the job it is there for. ' +
-          'That needs transient simulation, which the interactive engine does not run yet.',
-      )
+      /**
+       * NO LIMITATION IS PUSHED HERE ANY MORE.
+       *
+       * The one that used to be here said the flyback diodes never conduct,
+       * because nothing ever produced an inductive kick for them to catch. Both
+       * halves of that are now false: the
+       * board's eight freewheel diodes are stamped (createL298N), the motor on
+       * the output is a winding, and switching the bridge off drives the output
+       * past a rail until one diode in each leg conducts and carries the decay.
+       * The ~2.5 V transistor drop the note also mentioned was never a
+       * limitation — it is modelled, and it is the lesson.
+       */
     } else if (el.kind === 'stepper') {
       const com = net({ partId: part.id, pinId: 'COM' })
       // No common tap on a net means no winding has a return path, so there is
       // nothing to stamp and no position to report.
       if (com === undefined) continue
       const phases = ['A', 'B', 'C', 'D'].map((p) => net({ partId: part.id, pinId: p }))
-      const st = new UnipolarStepper(part.id, com, phases, STEPPER_28BYJ48)
-      circuit.add(st)
+      // The four phase windings are separate reactive devices; see the note on
+      // UnipolarStepper for why they cannot be folded into one.
+      const { devices: stepperDevices, stepper: st } = createStepper(
+        part.id,
+        com,
+        phases,
+        STEPPER_28BYJ48,
+      )
+      circuit.add(...stepperDevices)
+      for (const coil of st.coils) if (coil !== undefined) reactive.set(coil.id, coil)
       // The total current out of the common tap. The four coil currents are not
       // separately metered: they are what the driver's channels sink, and the
       // shaft position the monitor reports is the reading that matters.
@@ -546,12 +594,19 @@ export function compile(doc: CircuitDoc): CompileResult {
         if (n !== undefined) stepperNets[pin.id] = n
       }
       behavioural.push({ partId: part.id, protocol: 'stepper', nets: stepperNets, ports: {} })
+      /**
+       * The ELECTRICAL half of the old warning is gone — each phase is a 50 Ω /
+       * 300 mH winding now, integrated in time, so there is a rise time and
+       * there is a kick. What survives is the MECHANICAL half, which no amount
+       * of circuit solving reaches: this model has no rotor and no torque, so it
+       * reports the angle the sequence commanded whatever the current did.
+       */
       limitations.push(
-        'The stepper is solved at a DC operating point: the angle reported is the one the ' +
-          'coil sequence commands. Winding inductance is not modelled, so there is no coil ' +
-          'rise time, no torque falling away as the step rate climbs, and no inductive kick ' +
-          'when a phase switches off — a real 28BYJ-48 starts losing steps long before this ' +
-          'model would.',
+        'Each stepper winding has real inductance (50 Ω, 300 mH), so the phase current takes ' +
+          'about 6 ms to build and kicks back into the driver when the phase switches off. ' +
+          'The shaft, though, is not simulated: the angle reported is the one the coil ' +
+          'sequence commands, so this model still keeps up at step rates where a real ' +
+          '28BYJ-48 would run out of torque and start losing steps.',
       )
     } else if (el.kind === 'relay_module') {
       /**
@@ -625,11 +680,20 @@ export function compile(doc: CircuitDoc): CompileResult {
       )
       if (devices.length > 0) {
         circuit.add(...devices)
+        for (const d of devices) if (d instanceof Winding) reactive.set(d.id, d)
+        /**
+         * WHAT SURVIVES IS THE MECHANICS. The coil is a 70 Ω / 50 mH winding
+         * now, so the flyback diode really does carry the release current — that
+         * clause is deleted rather than softened. But pull-in delay and contact
+         * bounce were never electrical: the coil reaches its pull-in current in
+         * L/R = 714 µs and the armature takes the datasheet's 10 ms to move,
+         * which is thirteen times longer. Adding inductance does not buy them.
+         */
         limitations.push(
-          'The relay is solved at a DC operating point: the contact is where the coil current ' +
-            'says it should be. Coil inductance is not modelled, so there is no 5–10 ms pull-in ' +
-            'delay, no contact bounce, and the flyback diode is never seen absorbing the ' +
-            'inductive kick it is there for — all of which need transient simulation.',
+          'The relay coil is a real winding (70 Ω, 50 mH), so it charges and its flyback ' +
+            'diode carries the current when the coil is switched off. The ARMATURE is not ' +
+            'simulated: the contact moves the instant the coil current says it should, with ' +
+            'none of the 10 ms pull-in delay, 5 ms release or contact bounce a real relay has.',
         )
       }
       /**

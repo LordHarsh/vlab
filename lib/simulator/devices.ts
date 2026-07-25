@@ -957,6 +957,259 @@ export class Inductor implements ReactiveDevice {
   }
 }
 
+// ─── Windings: series R–L in ONE branch ───────────────────────────────────────
+
+/**
+ * The companion model for a real coil — a resistance and an inductance IN
+ * SERIES, stamped as a single two-terminal element.
+ *
+ * Every coil in this library is one of these: a motor armature, a relay coil, a
+ * stepper phase. None of them is a bare inductor, and none of them may be built
+ * by putting an `Inductor` in series with a `Resistor`, because that needs an
+ * internal node between the two — and the current these devices report through
+ * `readback()` is then the RESISTOR's current, which during the ramp is not the
+ * branch current at all. `engine.ts` turns a motor's reported current straight
+ * into rpm, so that error would come out as a wrong speed and say nothing.
+ *
+ * Backward Euler on L·di/dt = v − i·R over a step h, writing k = h/L:
+ *
+ *   L·(i − i_prev)/h = v − i·R
+ *   i·(1 + k·R) = k·v + i_prev
+ *   i = Geq·v + Ieq       with   Geq = k/(1 + k·R),  Ieq = i_prev/(1 + k·R)
+ *
+ * — a conductance Geq in parallel with a current source Ieq pushing a → b,
+ * which is the same Norton form `Inductor` stamps, with the winding resistance
+ * folded into both terms.
+ *
+ * ─── THE DC CASE IS NOT THE LIMIT OF THAT FORMULA ─────────────────────────────
+ *
+ * At h = 0 the expression gives k = 0, hence Geq = 0 and Ieq = 0: an OPEN, which
+ * is the one thing a winding is not. Every steady-state assertion in the suite
+ * goes through this path (a plain `solve()` never sets a step), so a winding that
+ * went open at DC would silently stop drawing current the moment the transient
+ * loop was off — a motor reading 0 A, a relay that never pulls in. DC is
+ * therefore written out explicitly as Geq = 1/R, Ieq = 0, which is exactly what
+ * the resistor these classes replace used to stamp. Group 12.1 of
+ * transient.test.ts pins it, by solving the same divider twice — once with the
+ * winding and once with the resistor — and demanding the same answer.
+ *
+ * The h → ∞ limit of the same expression IS 1/R, which is what makes backward
+ * Euler collapse a winding to its steady state within a step or two when h ≫ τ
+ * instead of ringing — the property `MIN_STEP_SECONDS` in engine.ts relies on.
+ */
+export class RLBranch {
+  /** Timestep in seconds for the NEXT stamp; <= 0 means DC. */
+  private h = 0
+  /** Branch current at the end of the previous accepted step, amps, a → b. */
+  private i = 0
+
+  constructor(public henries: number) {}
+
+  setStep(h: number): void {
+    this.h = h
+  }
+
+  /** True while a transient step is in force. DC stamps a bare resistor. */
+  get stepping(): boolean {
+    return this.h > 0
+  }
+
+  /** Stored branch current, amps. Carried across recompiles; see ReactiveDevice.state. */
+  get current(): number {
+    return this.i
+  }
+  set current(a: number) {
+    this.i = Number.isFinite(a) ? a : 0
+  }
+
+  reset(): void {
+    this.i = 0
+  }
+
+  /** Norton conductance of the companion, siemens. */
+  geq(ohms: number): number {
+    const r = Math.max(ohms, MIN_RESISTANCE)
+    if (!(this.h > 0)) return Math.min(1 / r, MAX_CONDUCTANCE)
+    const k = this.h / this.henries
+    return Math.min(k / (1 + k * r), MAX_CONDUCTANCE)
+  }
+
+  /** Norton source current, amps, pushing a → b. Zero at DC. */
+  ieq(ohms: number): number {
+    if (!(this.h > 0)) return 0
+    const k = this.h / this.henries
+    return this.i / (1 + k * Math.max(ohms, MIN_RESISTANCE))
+  }
+
+  /** Branch current a → b implied by a terminal voltage `v`, amps. */
+  currentFor(v: number, ohms: number): number {
+    return this.geq(ohms) * v + this.ieq(ohms)
+  }
+
+  /** Take the converged terminal voltage as the end of this step. */
+  advance(v: number, ohms: number): void {
+    this.i = this.currentFor(v, ohms)
+  }
+
+  /**
+   * Time constant of this winding, seconds, given the resistance `rTh` the rest
+   * of the network presents across its terminals.
+   *
+   * τ = L/(R + rTh), NOT the plain inductor's L/rTh. The current runs round a
+   * loop that contains the winding's own copper as well as everything outside
+   * it, and `Circuit.smallestTimeConstant()` measures rTh with the reactive
+   * elements taken OUT of the probe matrix — so R is not in the number it hands
+   * over and has to be put back here. For a free-running hobby motor (R = 86 Ω)
+   * on a driving pin (rTh = 25 Ω) the two formulas differ by 4.4x.
+   *
+   * ─── WHY rTh IS CLAMPED AT R ──────────────────────────────────────────────
+   *
+   * Because a coil that is switched OFF would otherwise pin the engine at its
+   * 20 µs floor forever. With the driver off, rTh across the winding is the
+   * off-state leakage — 1e12 Ω — and L/(R + 1e12) is picoseconds, so a relay
+   * board sitting idle, or the three de-energised phases of any stepper, would
+   * ask for the smallest step the engine allows while drawing no current at all.
+   *
+   * There is nothing there to resolve. A branch whose external path is open
+   * carries no current one step later whatever h is, and backward Euler reaches
+   * that answer exactly in a single step because it is L-stable. Everything the
+   * student can actually observe is governed by the winding's own L/R: the rise
+   * when the coil is switched on, and the decay when it is switched off — which
+   * runs through a CONDUCTING flyback diode and therefore has a small rTh again.
+   * Clamping keeps the probe's influence where it means something (a network
+   * stiffer than the coil itself shortens τ, by at most half) and drops it where
+   * it does not.
+   */
+  timeConstant(ohms: number, rTh: number): number {
+    const r = Math.max(ohms, MIN_RESISTANCE)
+    const external = Math.min(Math.max(rTh, 0), r)
+    return this.henries / (r + external)
+  }
+
+  /** Reject an unusable inductance rather than reinterpreting it. See Resistor.stamp. */
+  validate(id: string, what: string): void {
+    if (!Number.isFinite(this.henries) || this.henries <= 0) {
+      throw new Error(
+        `${what} "${id}" has an invalid winding inductance (${this.henries}). ` +
+          `Inductance must be a finite, positive number.`,
+      )
+    }
+  }
+}
+
+/** Stamp a winding's companion between two nets. The one place that maths lands. */
+function stampWinding(
+  ctx: StampContext,
+  a: NetId,
+  b: NetId,
+  rl: RLBranch,
+  ohms: number,
+): void {
+  stampConductance(ctx, a, b, rl.geq(ohms))
+  if (rl.stepping) stampCurrent(ctx, a, b, rl.ieq(ohms))
+}
+
+/**
+ * A coil on its own: the drop-in replacement for a `Resistor` that was standing
+ * in for one. Used for a relay coil and for a stepper phase.
+ *
+ * It keeps `Resistor`'s power check verbatim, because that check is already
+ * written in terms of the branch CURRENT (p = i²R) and so stays honest during a
+ * transient: a coil whose supply has just been switched off is dumping its
+ * stored energy into a diode, not dissipating a steady i²R in its own copper.
+ */
+export class Winding implements ReactiveDevice {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Last solved current, amps, a → b. */
+  current = 0
+
+  /** Power rating in watts. Set it from the coil's own datasheet, not a resistor's. */
+  rating = 0.25
+
+  readonly terminals: readonly [NetId, NetId]
+  private readonly rl: RLBranch
+
+  constructor(
+    readonly id: string,
+    private a: NetId,
+    private b: NetId,
+    /** DC resistance of the winding, ohms. */
+    readonly ohms: number,
+    henries: number,
+    /** What to call this in a fault message, e.g. "Relay coil". */
+    private readonly label = 'Coil',
+  ) {
+    this.rl = new RLBranch(henries)
+    this.terminals = [a, b]
+  }
+
+  get henries(): number {
+    return this.rl.henries
+  }
+
+  stamp(ctx: StampContext): void {
+    if (!Number.isFinite(this.ohms) || this.ohms < 0) {
+      throw new Error(
+        `${this.label} "${this.id}" has an invalid resistance (${this.ohms}). ` +
+          `Resistance must be a finite, non-negative number.`,
+      )
+    }
+    this.rl.validate(this.id, this.label)
+    stampWinding(ctx, this.a, this.b, this.rl, this.ohms)
+  }
+
+  /** Current a→b implied by the converged voltages. */
+  currentThrough(ctx: StampContext): number {
+    return this.rl.currentFor(ctx.voltage(this.a) - ctx.voltage(this.b), this.ohms)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.currentThrough(ctx)
+  }
+
+  timeConstant(rTh: number): number {
+    return this.rl.timeConstant(this.ohms, rTh)
+  }
+
+  get state(): number {
+    return this.rl.current
+  }
+  set state(i: number) {
+    this.rl.current = i
+    this.current = i
+  }
+
+  setStep(h: number): void {
+    this.rl.setStep(h)
+  }
+
+  resetTransient(): void {
+    this.rl.reset()
+    this.current = 0
+  }
+
+  advance(ctx: TransientContext): void {
+    this.rl.advance(ctx.voltage(this.a) - ctx.voltage(this.b), this.ohms)
+    this.current = this.rl.current
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const i = this.currentThrough(ctx)
+    const p = i * i * Math.max(this.ohms, MIN_RESISTANCE)
+    if (p <= this.rating) return null
+    return {
+      kind: 'over_power',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: p,
+      message: `${this.label} is dissipating ${p.toFixed(2)} W — it is rated for ${this.rating} W and would burn out.`,
+    }
+  }
+}
+
 // ─── Nonlinear devices ────────────────────────────────────────────────────────
 
 export interface DiodeParams {
@@ -1213,6 +1466,17 @@ export function createLED(
  *             operating point correctly reports ~0 A and the pitch is whatever
  *             the driving square wave is. Modelled as the same 1e-12 S open the
  *             Capacitor stamps at DC.
+ *
+ * `piezoFarads` IS NOT STAMPED, and that is deliberate now rather than pending.
+ * When the coils in this file were given their real inductance, this was the one
+ * energy-storing part left as a stub — because unlike a winding, its time
+ * constant is BELOW what the engine can resolve. 10 nF behind a 25 Ω driving pin
+ * is τ = 250 ns against a 20 µs floor, so a companion model would move the right
+ * charge on each edge and report it smeared over a whole step: ~2.5 mA for 20 µs
+ * where the part really draws ~200 mA for 250 ns. The average would be right and
+ * the instantaneous reading — the one a student sees — would be off by eighty.
+ * The constant is kept because it is the correct datasheet value and it is what
+ * a finer timestep would need.
  */
 export interface BuzzerParams {
   /** Rated DC supply, volts. */
@@ -1336,17 +1600,29 @@ export class Buzzer implements Device {
  *     one puts a kink at V = L·Vn, and Newton can ping-pong across a kink
  *     forever; that model was written first and rejected for exactly that.
  *
- * HONEST LIMITATIONS, both structural:
+ * THE ARMATURE IS A WINDING, so the element is a series R–L branch rather than a
+ * bare conductance (see RLBranch). V = L·di/dt + i/G. The engine integrates it,
+ * so the current now RISES into a switched-on motor instead of appearing, and
+ * switching one off drives whatever clamp is on the wire — the point of a
+ * flyback diode, which had nothing to do before.
+ *
+ * HONEST LIMITATIONS, all structural:
  *
  *   - The load is PROPORTIONAL to the applied voltage — a fan or a pump, whose
  *     torque falls away as the motor slows. A constant-torque load (a weight on
  *     a winch) can stall a motor at low voltage while still drawing locked-rotor
  *     current; that is not modelled. At full load this model is stalled at every
  *     voltage, which is the case that matters.
- *   - This is the STEADY state only. Rotor inertia, the start-up inrush and the
- *     inductive spike when the motor is switched off all need transient
- *     simulation. Circuit.transientStep() exists but the interactive engine does
- *     not drive it yet, so none of those appear.
+ *   - ROTOR INERTIA IS NOT MODELLED, and that is a different thing from the
+ *     winding inductance which now is. Speed is still algebraically tied to
+ *     current, so the model spins up in the electrical time constant L/R
+ *     (23 µs free-running, 267 µs stalled) rather than the mechanical one
+ *     (tens of ms). The consequence is specific and worth naming: the ~10x
+ *     START-UP CURRENT SURGE of a real motor is a MECHANICAL effect — the
+ *     current runs to V/Ra because a stationary rotor makes no back-EMF, and
+ *     falls back as the shaft picks up speed — so it still does not appear.
+ *     What the inductance buys is the electrical rise time and the switch-off
+ *     kick, not the inrush peak.
  */
 export interface MotorParams {
   /** Nominal supply, volts. */
@@ -1357,6 +1633,28 @@ export interface MotorParams {
   noLoadAmps: number
   /** Locked-rotor current at ratedVolts, amps. */
   stallAmps: number
+  /**
+   * Armature (terminal) inductance, henries.
+   *
+   * BE HONEST ABOUT WHERE THIS ONE COMES FROM. It is NOT off a datasheet, and
+   * unlike every other number in this file it cannot be: the Mabuchi-class cans
+   * sold in Arduino kits publish four figures — nominal voltage, no-load speed,
+   * no-load current, stall current — and winding inductance is never one of
+   * them. The motor makers who DO characterise the winding (maxon and the like)
+   * quote small brushed cans in the fraction-of-a-millihenry to few-millihenry
+   * band, and 2 mH is taken as representative of that class.
+   *
+   * What matters is that the CONSEQUENCE is checkable without believing the
+   * henries. 2 mH asserts an electrical time constant of L/Ra = 2e-3/7.5 =
+   * 267 µs at locked rotor and L·G = 23 µs free-running. Both sit in the
+   * sub-millisecond band, and both are one to two orders BELOW the tens of
+   * milliseconds a rotor takes to come up to speed — which is the whole reason
+   * the mechanical effects named above, not this number, dominate the start-up
+   * of a real motor. Getting 2 mH wrong by a factor of two moves the rise time
+   * by a factor of two and moves nothing a student can observe; the model would
+   * have to be wrong by a factor of a thousand for the ordering to change.
+   */
+  henries: number
 }
 
 /**
@@ -1368,9 +1666,10 @@ export const HOBBY_MOTOR_6V: MotorParams = {
   noLoadRpm: 6000,
   noLoadAmps: 0.07,
   stallAmps: 0.8,
+  henries: 2e-3,
 }
 
-export class DCMotor implements Device {
+export class DCMotor implements ReactiveDevice {
   readonly nonlinear = false
   readonly extraUnknowns = 0
   branchIndex = -1
@@ -1381,6 +1680,9 @@ export class DCMotor implements Device {
   /** Mechanical load as a fraction of stall torque, 0..1. */
   readonly load: number
 
+  readonly terminals: readonly [NetId, NetId]
+  private readonly rl: RLBranch
+
   constructor(
     readonly id: string,
     private a: NetId,
@@ -1389,6 +1691,8 @@ export class DCMotor implements Device {
     readonly params: MotorParams = HOBBY_MOTOR_6V,
   ) {
     this.load = Math.min(1, Math.max(0, load))
+    this.rl = new RLBranch(params.henries)
+    this.terminals = [a, b]
   }
 
   /** Armature (coil) resistance, ohms: Ra = Vn/Is, the locked-rotor figure. */
@@ -1416,8 +1720,21 @@ export class DCMotor implements Device {
     return 1 / this.conductance
   }
 
+  /**
+   * The armature is stamped as ONE series R–L branch, with R = effectiveOhms.
+   *
+   * effectiveOhms, not coilOhms, and the choice is forced: the DC stamp has
+   * always been the terminal conductance G(L), which already carries the
+   * back-EMF, and the transient model has to reduce to exactly that when no step
+   * is set. Writing the branch as V = L·di/dt + i/G keeps every steady-state
+   * answer byte-identical and adds the one term that was missing. It also says
+   * plainly what is NOT in it: with speed still slaved to current, the R in the
+   * ramp is the running resistance, not the locked-rotor Ra a stationary rotor
+   * would present — see the class note on inertia.
+   */
   stamp(ctx: StampContext): void {
-    stampConductance(ctx, this.a, this.b, this.conductance)
+    this.rl.validate(this.id, 'Motor')
+    stampWinding(ctx, this.a, this.b, this.rl, this.effectiveOhms)
   }
 
   /** Terminal voltage at the converged solution, volts. */
@@ -1425,8 +1742,45 @@ export class DCMotor implements Device {
     return ctx.voltage(this.a) - ctx.voltage(this.b)
   }
 
+  /**
+   * Armature current at the converged solution, amps. At DC this is exactly
+   * v·G — the companion degenerates to the conductance — so every steady-state
+   * number this device has ever reported is unchanged.
+   */
+  currentThrough(ctx: StampContext): number {
+    return this.rl.currentFor(this.voltsAcross(ctx), this.effectiveOhms)
+  }
+
   readback(ctx: StampContext): void {
-    this.current = this.voltsAcross(ctx) * this.conductance
+    this.current = this.currentThrough(ctx)
+  }
+
+  /** τ = L/(1/G + rTh). See RLBranch.timeConstant. */
+  timeConstant(rTh: number): number {
+    return this.rl.timeConstant(this.effectiveOhms, rTh)
+  }
+
+  /** Armature current carried between compiles. See ReactiveDevice.state. */
+  get state(): number {
+    return this.rl.current
+  }
+  set state(i: number) {
+    this.rl.current = i
+    this.current = i
+  }
+
+  setStep(h: number): void {
+    this.rl.setStep(h)
+  }
+
+  resetTransient(): void {
+    this.rl.reset()
+    this.current = 0
+  }
+
+  advance(ctx: TransientContext): void {
+    this.rl.advance(ctx.voltage(this.a) - ctx.voltage(this.b), this.effectiveOhms)
+    this.current = this.rl.current
   }
 
   /**
@@ -1442,9 +1796,23 @@ export class DCMotor implements Device {
   }
 
   safety(ctx: StampContext): SolveFault | null {
-    const v = this.voltsAcross(ctx)
-    const av = Math.abs(v)
-    const i = v * this.conductance
+    const i = this.currentThrough(ctx)
+    /**
+     * THE WINDING'S OWN DROP, i·R — not the terminal voltage, and only since the
+     * armature became a winding is there a difference.
+     *
+     * The two are identical at every steady state (i = v·G, so i/G = v), which
+     * is what keeps every existing assertion here exact. They part company for
+     * one step at a time during a switch-off, when the inductance drives the
+     * terminals to whatever the clamp on the wire allows — an L298N's freewheel
+     * diodes hold the motor at −(Vs + 2·Vf), which on a 12 V bridge is 14 V
+     * across a 6 V motor. Reporting that as "the winding insulation fails" would
+     * be the simulator calling a CORRECTLY built flyback path a destroyed part,
+     * which is the exact failure DIODE_1N4148's note was written about. What
+     * cooks a winding is the energy in its copper, and that is i²R; a coil
+     * dumping its stored current into a diode has a bounded i and a falling one.
+     */
+    const av = Math.abs(i) * this.effectiveOhms
 
     // Over-voltage burns the winding insulation. 1.5x nominal is the usual
     // "absolute maximum" headroom quoted for small brushed motors.
@@ -2078,7 +2446,60 @@ export class HBridgeChannel implements Device {
   }
 }
 
-/** Both halves of an L298N, wired from one part's pins. */
+/**
+ * The freewheel (flyback) diode an L298N output leg needs, and that the board
+ * modelled here carries eight of.
+ *
+ * THE CHIP HAS NONE. The L298 datasheet's own application circuit puts eight
+ * external fast diodes around the two bridges and states the requirement in one
+ * line — "VF <= 1.2 V at I = 2 A, trr <= 200 ns" — because without them the
+ * energy stored in the motor's inductance has nowhere to go when the outputs
+ * switch off and the output transistors take the whole of it. The red L298N
+ * breakout every kit ships (which is what `l298n` in the part library draws, VS
+ * and VSS screw terminals and all) has those eight diodes on it.
+ *
+ * `is` is DERIVED from that single datasheet line rather than fitted, the same
+ * way OPTO_LED's is, so it cannot drift away from its own justification:
+ *
+ *   Vf = n*VT*ln(If/Is)  =>  Is = If*exp(-Vf/(n*VT))
+ *      = 2 * exp(-1.2 / (1.9 * 0.025852))
+ *      = 2 * exp(-24.4269)  =  4.90e-11 A
+ *
+ * n = 1.9 is a power rectifier at amps rather than a signal diode at
+ * milliamps — high-level injection puts the ideality factor near 2, and the
+ * consequence that matters is that the reverse leakage is ~50 pA, four orders
+ * below anything a bridge measures, so adding eight of these changes no DC
+ * answer the model gave before them.
+ *
+ * The ratings are the ones the same line implies: the diode has to carry the
+ * bridge's own 2 A continuous rating and its 3 A non-repetitive peak, since in a
+ * freewheel path it carries exactly the current the motor was already drawing.
+ */
+export const DIODE_L298N_FREEWHEEL: DiodeParams = {
+  is: 4.9e-11,
+  n: 1.9,
+  ratedAmps: 2,
+  maxAmps: 3,
+  label: 'an L298N freewheel diode',
+}
+
+/**
+ * Both halves of an L298N, wired from one part's pins, plus the board's eight
+ * freewheel diodes.
+ *
+ * Two per output: one from GND up to OUT (the lower clamp) and one from OUT up
+ * to VS (the upper). At any DC operating point all eight are reverse-biased —
+ * a driven output sits a saturation drop INSIDE the rails by construction — so
+ * they cost nothing and change nothing until the bridge switches off with
+ * current still flowing in the winding, which is the moment they exist for.
+ * Then the inductance drives OUT past whichever rail it has to and one diode in
+ * each leg conducts, clamping the motor at −(Vs + 2·Vf) and returning the stored
+ * energy to the supply while the current decays.
+ *
+ * The diodes are omitted when VS is not wired: with no rail to clamp to, the
+ * upper diode would point at a floating node, and a board whose motor supply is
+ * missing has no freewheel path in reality either.
+ */
 export function createL298N(
   id: string,
   nets: {
@@ -2126,7 +2547,22 @@ export function createL298N(
     },
     params,
   )
-  return { devices: [a, b], channels: [a, b] }
+  const devices: Device[] = [a, b]
+  const vs = nets.vs
+  if (vs !== undefined) {
+    const outs: Array<[string, NetId | undefined]> = [
+      ['1', nets.out1],
+      ['2', nets.out2],
+      ['3', nets.out3],
+      ['4', nets.out4],
+    ]
+    for (const [k, out] of outs) {
+      if (out === undefined) continue
+      devices.push(new Diode(`${id}.dlo${k}`, nets.gnd, out, DIODE_L298N_FREEWHEEL))
+      devices.push(new Diode(`${id}.dhi${k}`, out, vs, DIODE_L298N_FREEWHEEL))
+    }
+  }
+  return { devices, channels: [a, b] }
 }
 
 // ─── Unipolar stepper ─────────────────────────────────────────────────────────
@@ -2136,6 +2572,19 @@ export interface StepperParams {
   ratedVolts: number
   /** DC resistance of ONE phase, COM to a phase lead, ohms. */
   phaseOhms: number
+  /**
+   * Inductance of ONE phase, COM to a phase lead, henries.
+   *
+   * The 28BYJ-48 datasheet does not print it either — it prints DC resistance
+   * and nothing else about the winding — and 300 mH is the figure this file
+   * already quoted in prose before anything integrated it. It is a measured
+   * hobbyist number rather than a manufacturer's, and what it asserts is an
+   * electrical time constant L/R of 300e-3/50 = 6 ms, which is the honest
+   * headline: a 28BYJ-48 driven faster than about one half-step per 6 ms never
+   * gets its full phase current, and that — not friction — is why the part goes
+   * limp and starts skipping somewhere above a few hundred steps per second.
+   */
+  phaseHenries: number
   /** Stride angle at the MOTOR shaft, degrees per half-step. */
   strideDegrees: number
   /** Internal gear reduction between motor shaft and output shaft. */
@@ -2167,13 +2616,15 @@ export interface StepperParams {
  *     falls about 0.5 % short (it takes ~4076 half-steps, not 4096). The model
  *     follows the datasheet, so a student's "step(4096) = one turn" arithmetic
  *     works out exactly here and would be half a degree out on the bench.
- *   - Windings are modelled by their DC resistance only. The ~300 mH of phase
- *     inductance is what limits the top step rate on real hardware; with no
- *     transient loop there is no rise time, so this model will happily follow a
- *     step sequence far faster than the part can, and it does not model the
- *     torque falling away with speed.
+ *   - The four phases share one magnetic circuit, so on a real motor they are
+ *     MUTUALLY coupled: energising one induces a voltage in its neighbours.
+ *     Each winding here is an independent series R–L, which gets the rise time
+ *     and the switch-off kick of a single phase right and models none of the
+ *     coupling between them.
  *   - Torque, holding torque and losing steps under load are not modelled. The
- *     model reports the position the COIL SEQUENCE commands.
+ *     model reports the position the COIL SEQUENCE commands, so a step rate the
+ *     phase current cannot keep up with still produces the commanded angle —
+ *     the current is right, the shaft is optimistic.
  *
  * `maxVolts` is 1.5x rated, the same convention DCMotor uses for a winding, and
  * is a judgement call rather than a datasheet line — the datasheet gives no
@@ -2182,6 +2633,7 @@ export interface StepperParams {
 export const STEPPER_28BYJ48: StepperParams = {
   ratedVolts: 5,
   phaseOhms: 50,
+  phaseHenries: 300e-3,
   strideDegrees: 5.625,
   gearRatio: 64,
   maxVolts: 7.5,
@@ -2294,6 +2746,23 @@ export class StepTracker {
  * That really is all a unipolar stepper is to the circuit — the position is a
  * property of the SEQUENCE in time, which a DC operating point cannot hold, so
  * it lives in the behavioural StepperMonitor exactly as a buzzer's pitch does.
+ *
+ * ─── WHY THE WINDINGS ARE SEPARATE DEVICES ────────────────────────────────────
+ *
+ * This class no longer stamps anything. Each phase is a `Winding` of its own,
+ * built by `createStepper()` and added to the circuit alongside the stepper,
+ * because a winding with inductance is a REACTIVE element and the reactive
+ * contract is per-element: `Circuit.smallestTimeConstant()` drives a test
+ * current between one element's `terminals` to size the step, and the engine
+ * carries one element's `state` across a recompile. Four coils folded into one
+ * device would have to answer both questions with one pair of nets and one
+ * number, which would mean three of the four phases silently losing their
+ * current on every canvas edit and only one of them ever being measured.
+ *
+ * Building the coils inside the constructor and handing them out through
+ * `coils` is what stops that being a footgun: there is no way to construct a
+ * stepper without them, and `createStepper()` returns the whole set as the
+ * device list to add — the same shape `createRelayModule` and `createL298N` use.
  */
 export class UnipolarStepper implements Device {
   readonly nonlinear = false
@@ -2305,31 +2774,52 @@ export class UnipolarStepper implements Device {
   /** Total current out of the common tap, amps. */
   current = 0
 
+  /**
+   * The four phase windings in phase order, `undefined` where the lead reached
+   * no net. THESE MUST BE ADDED TO THE CIRCUIT — use `createStepper()`.
+   */
+  readonly coils: ReadonlyArray<Winding | undefined>
+
   constructor(
     readonly id: string,
     private com: NetId,
     private phases: Array<NetId | undefined>,
     readonly params: StepperParams = STEPPER_28BYJ48,
-  ) {}
+  ) {
+    if (!Number.isFinite(params.phaseOhms) || params.phaseOhms <= 0) {
+      throw new Error(
+        `Stepper "${id}" has an invalid phase resistance (${params.phaseOhms}). ` +
+          `Winding resistance must be a finite, positive number.`,
+      )
+    }
+    this.coils = [0, 1, 2, 3].map((k) => {
+      const p = phases[k]
+      if (p === undefined) return undefined
+      const w = new Winding(
+        `${id}.phase${'ABCD'[k]}`,
+        com,
+        p,
+        params.phaseOhms,
+        params.phaseHenries,
+        'Stepper winding',
+      )
+      // The winding's rating is the WINDING's, not a quarter-watt resistor's: a
+      // 28BYJ-48 phase at its rated 5 V already dissipates 0.5 W, so the
+      // Resistor default would have called a correctly driven stepper burnt out.
+      // Above maxVolts the coil really is over-driven, and this class's own
+      // safety() names that fault properly, so the two cannot double-report.
+      w.rating = (params.maxVolts * params.maxVolts) / params.phaseOhms
+      return w
+    })
+  }
 
   /** Current one phase draws at its rated voltage, amps. */
   get ratedPhaseAmps(): number {
     return this.params.ratedVolts / Math.max(this.params.phaseOhms, MIN_RESISTANCE)
   }
 
-  stamp(ctx: StampContext): void {
-    if (!Number.isFinite(this.params.phaseOhms) || this.params.phaseOhms <= 0) {
-      throw new Error(
-        `Stepper "${this.id}" has an invalid phase resistance (${this.params.phaseOhms}). ` +
-          `Winding resistance must be a finite, positive number.`,
-      )
-    }
-    const g = 1 / Math.max(this.params.phaseOhms, MIN_RESISTANCE)
-    for (const p of this.phases) {
-      if (p === undefined) continue
-      stampConductance(ctx, this.com, p, g)
-    }
-  }
+  /** The windings carry the electricity. See the class note. */
+  stamp(): void {}
 
   /** Voltage across one winding, COM − phase. An open lead reads 0. */
   phaseVolts(ctx: StampContext, k: number): number {
@@ -2338,11 +2828,22 @@ export class UnipolarStepper implements Device {
     return ctx.voltage(this.com) - ctx.voltage(p)
   }
 
+  /**
+   * Current through one winding, COM → phase lead, amps.
+   *
+   * Computed from the winding's own companion rather than read off
+   * `Winding.current`, so it does not depend on whether the solver happened to
+   * call the coil's readback() before this one's.
+   */
+  phaseCurrent(ctx: StampContext, k: number): number {
+    const coil = this.coils[k]
+    return coil === undefined ? 0 : coil.currentThrough(ctx)
+  }
+
   readback(ctx: StampContext): void {
-    const r = Math.max(this.params.phaseOhms, MIN_RESISTANCE)
     let total = 0
     for (let k = 0; k < this.phaseCurrents.length; k++) {
-      const i = this.phaseVolts(ctx, k) / r
+      const i = this.phaseCurrent(ctx, k)
       this.phaseCurrents[k] = i
       total += i
     }
@@ -2350,9 +2851,20 @@ export class UnipolarStepper implements Device {
   }
 
   safety(ctx: StampContext): SolveFault | null {
+    /**
+     * The WINDING's own drop, i·R, for the reason DCMotor.safety() uses it: the
+     * two are identical at every steady state, and they differ only while an
+     * inductance is driving the terminals during a switch-off. A ULN2003's
+     * flyback diodes clamp a phase lead to COM + Vf, so a correctly wired
+     * stepper never sees more than a diode drop of reverse voltage — but a
+     * student who leaves COM unwired has no clamp at all, and reporting the
+     * unbounded L·di/dt that follows as "the insulation fails" would be a
+     * destructive verdict fired by the timestep rather than by the circuit.
+     */
+    const r = Math.max(this.params.phaseOhms, MIN_RESISTANCE)
     let worst = 0
     for (let k = 0; k < this.phaseCurrents.length; k++) {
-      worst = Math.max(worst, Math.abs(this.phaseVolts(ctx, k)))
+      worst = Math.max(worst, Math.abs(this.phaseCurrent(ctx, k)) * r)
     }
     if (worst <= this.params.ratedVolts) return null
     if (worst <= this.params.maxVolts) {
@@ -2360,7 +2872,7 @@ export class UnipolarStepper implements Device {
         kind: 'over_power',
         severity: 'caution',
         deviceId: this.id,
-        value: (worst * worst) / Math.max(this.params.phaseOhms, MIN_RESISTANCE),
+        value: (worst * worst) / r,
         message:
           `${worst.toFixed(1)} V across a winding rated for ${this.params.ratedVolts} V. ` +
           `It turns, but a stepper holds its coils energised continuously and this one is ` +
@@ -2371,12 +2883,28 @@ export class UnipolarStepper implements Device {
       kind: 'over_power',
       severity: 'destructive',
       deviceId: this.id,
-      value: (worst * worst) / Math.max(this.params.phaseOhms, MIN_RESISTANCE),
+      value: (worst * worst) / r,
       message:
         `${worst.toFixed(1)} V across a ${this.params.ratedVolts} V winding. ` +
         `On real hardware the insulation fails.`,
     }
   }
+}
+
+/**
+ * A stepper and the four windings that carry its current — the whole electrical
+ * part, as one device list to add. See the note on UnipolarStepper.
+ */
+export function createStepper(
+  id: string,
+  com: NetId,
+  phases: Array<NetId | undefined>,
+  params: StepperParams = STEPPER_28BYJ48,
+): { devices: Device[]; stepper: UnipolarStepper } {
+  const stepper = new UnipolarStepper(id, com, phases, params)
+  const devices: Device[] = [stepper]
+  for (const coil of stepper.coils) if (coil !== undefined) devices.push(coil)
+  return { devices, stepper }
 }
 
 // ─── Opto-isolated relay module ───────────────────────────────────────────────
@@ -2479,6 +3007,23 @@ export interface RelayModuleParams {
   coilVolts: number
   /** Coil DC resistance, ohms. */
   coilOhms: number
+  /**
+   * Coil inductance, henries.
+   *
+   * NOT on the Songle SRD-05VDC-SL-C datasheet, which prints coil resistance,
+   * nominal coil power and the operate/release times and says nothing at all
+   * about the winding. 50 mH is a representative measured figure for a
+   * miniature 5 V power-relay coil of this size, and the claim it makes is
+   * checkable against the numbers the datasheet DOES print: L/R = 50e-3/70 =
+   * 714 µs, so the coil reaches its pull-in current in under a millisecond,
+   * while the datasheet's operate time is 10 ms and its release time 5 ms.
+   *
+   * THAT GAP IS THE POINT. A relay's delay is the armature moving, not the
+   * current arriving — which is exactly why giving the coil an inductance does
+   * NOT give the model a pull-in delay, and why that limitation survives the
+   * change while the flyback one does not.
+   */
+  coilHenries: number
   /** Must-operate coil voltage, volts. */
   pullInVolts: number
   /** Must-release coil voltage, volts. */
@@ -2509,6 +3054,7 @@ export interface RelayModuleParams {
 export const RELAY_MODULE_4CH: RelayModuleParams = {
   coilVolts: 5,
   coilOhms: 70,
+  coilHenries: 50e-3,
   pullInVolts: 3.75,
   dropOutVolts: 0.5,
   maxCoilVolts: 5.5,
@@ -2713,12 +3259,18 @@ export class RelayChannel implements Device {
  * side. They are real nodes on the real board, and the compiler allocates them
  * exactly the way it allocates an LED's internal series node.
  *
- * THE FLYBACK DIODE IS STAMPED AND IS INERT AT DC, exactly as the ULN2003's are
- * and for the same reason: an energised coil pulls its low side DOWN, so a diode
- * from that node up to VCC is always reverse-biased at an operating point. Its
- * job is to absorb the inductive kick when the coil switches OFF, and that is a
- * transient the interactive engine does not run yet. It is modelled rather than
- * omitted because it is real silicon on the board.
+ * THE FLYBACK DIODE IS INERT AT DC AND CONDUCTS ON RELEASE. It is inert at an
+ * operating point for the reason the ULN2003's are: an energised coil pulls its
+ * low side DOWN, so a diode from that node up to VCC is reverse-biased whenever
+ * the circuit is standing still. Its job is the moment the circuit is not — the
+ * coil is a `Winding` now, 70 Ω and 50 mH in one branch, so when the driver
+ * turns off the current in it has to keep flowing and the only path left is up
+ * through this diode into VCC. The coil node lands one diode drop above VCC,
+ * the current decays as exp(−t·R/L), and the transient loop integrates it.
+ *
+ * (An earlier version of this note said the kick was "a transient the
+ * interactive engine does not run yet". That stopped being true when transient
+ * integration was coupled into the engine, and the stale sentence outlived it.)
  *
  * A channel is built only where `internal` carries a slot for it — the compiler
  * fills that in from the netlist, so channels nothing is attached to cost
@@ -2773,7 +3325,8 @@ export function createRelayModule(
     devices.push(new Resistor(`${id}.rin${k + 1}`, optoJunction, seriesEnd, params.inputOhms))
 
     /**
-     * The coil, from the module's own VCC down to the driver's collector.
+     * The coil, from the module's own VCC down to the driver's collector. A
+     * WINDING, not a resistor: 70 Ω and 50 mH in one branch, integrated in time.
      *
      * Its power rating is the COIL's, not a quarter-watt resistor's. An
      * SRD-05VDC dissipates 0.36 W at its nominal 5 V and is rated to 110 % of
@@ -2782,7 +3335,14 @@ export function createRelayModule(
      * circuit. Above this the coil really is over-volted, and RelayChannel's own
      * safety() names that fault properly, so the two cannot double-report.
      */
-    const coil = new Resistor(`${id}.coil${k + 1}`, nets.vcc, coilNode, params.coilOhms)
+    const coil = new Winding(
+      `${id}.coil${k + 1}`,
+      nets.vcc,
+      coilNode,
+      params.coilOhms,
+      params.coilHenries,
+      'Relay coil',
+    )
     coil.rating = (params.maxCoilVolts * params.maxCoilVolts) / params.coilOhms
     devices.push(coil)
     // Flyback: anode on the collector, cathode on VCC. See the note above.

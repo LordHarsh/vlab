@@ -139,11 +139,12 @@ export interface PartDefinition {
      */
     | { kind: 'stepper' }
     /**
-     * Capacitor or inductor. The interactive engine is DC-only, so these are
-     * solved at their DC limit — a cap is open, an inductor is a wire. That is
-     * the correct steady state, but charge and discharge need transient
-     * simulation, which does not exist yet. The compiler says so out loud
-     * rather than letting the part sit there doing nothing (§2.3).
+     * Capacitor or inductor, integrated in time. A plain `solve()` still stamps
+     * them at their DC limit — a cap is open, an inductor is a wire, which is
+     * the correct steady state — but `Circuit.hasReactive` puts the engine into
+     * a backward-Euler loop, so charge and discharge are real. (This comment
+     * used to say the engine was DC-only. It stopped being true when transient
+     * integration was coupled in, and the stale sentence outlived it.)
      */
     | { kind: 'reactive'; element: 'capacitor' | 'inductor' }
     | { kind: 'passive' }

@@ -258,9 +258,22 @@ export class Circuit {
       if (nb > 0 && nb <= this.nodeCount) rhs[nb - 1] = -1
       const x = luSolve(A, piv, rhs, n)
       const rTh = (na > 0 ? x[na - 1] : 0) - (nb > 0 ? x[nb - 1] : 0)
-      // A non-positive or non-finite driving point means the probe told us
-      // nothing (both terminals on ground, say). Skip it rather than inventing.
-      if (!Number.isFinite(rTh) || rTh <= 0) continue
+      /**
+       * A NEGATIVE or non-finite driving point means the probe told us nothing.
+       * Skip it rather than inventing.
+       *
+       * Zero is allowed through, and that changed when windings arrived. A
+       * capacitor or a bare inductor across a zero-impedance branch has no
+       * meaningful τ (R·C = 0, L/R = ∞) and both are still discarded below by
+       * the `tau > 0` and finiteness tests. A WINDING does: its τ is
+       * L/(R_winding + rTh), which is perfectly well defined at rTh = 0, and it
+       * is the ONLY resistance in the loop for a coil sitting straight across a
+       * rail — the case an ideal VoltageSource produces, which is exactly how
+       * compile() stamps a board's 5 V pin. Rejecting rTh = 0 there made the
+       * whole probe return null and the engine fall back to its 5 ms ceiling,
+       * i.e. a step 200x the motor's own time constant.
+       */
+      if (!Number.isFinite(rTh) || rTh < 0) continue
       const tau = d.timeConstant(rTh)
       if (Number.isFinite(tau) && tau > 0 && tau < smallest) smallest = tau
     }
