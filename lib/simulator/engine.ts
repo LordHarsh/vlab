@@ -1114,6 +1114,7 @@ export class SimulationEngine {
         nets: this.compiled.nets,
         voltages: this.voltages,
         reactive: this.compiled.reactive,
+        drivers: this.compiled.drivers,
         transient: this.transient,
       }),
       ...this.deviceStates,

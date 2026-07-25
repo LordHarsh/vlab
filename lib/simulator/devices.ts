@@ -241,8 +241,13 @@ export class NortonPort implements Device {
 
   constructor(
     readonly id: string,
-    private a: NetId,
-    private b: NetId,
+    /**
+     * `protected`, not `private`, so SensorPort can read them in its own
+     * safety(). Nothing outside this file can see them either way — the change
+     * buys a subclass, not an escape hatch.
+     */
+    protected a: NetId,
+    protected b: NetId,
     public g: number,
     public i: number,
   ) {}
@@ -274,25 +279,39 @@ export class NortonPort implements Device {
   ratedCurrent = 0.02
   maxCurrent = 0.04
 
-  safety(ctx: StampContext): SolveFault | null {
-    // A port whose two terminals are the SAME net contributes nothing to the
-    // matrix, so there is no real current to judge and nothing to report here:
-    //   - a pin wired straight to GND has a === b === ground. That is a
-    //     topological dead short, already surfaced by ShortedPin in compile.ts
-    //     and gated on drive state by the engine, so reporting it again here
-    //     would double-count it.
-    //   - a degenerate self-loop (a === b on a floating net) is a no-op.
-    if (this.a === this.b) return null
+  /**
+   * Current the port drives OUT into its net, amps.
+   *
+   * The branch current a → b of a Norton source: i − g·(V_b − V_a). Real MCU
+   * pins reference ground (a = 0), so this is (V_open − V_net)/R_drive, exactly
+   * the current sourced.
+   *
+   * Only a pin actively SOURCING can exceed a few mA. A floating or pull-up
+   * INPUT (i ≈ 0 with a tiny g) can source at most ~0.25 mA, and a pin sinking
+   * current gives a negative value — both fall under any rating and never
+   * fault, which is the "floating/input pins must not fault" rule.
+   */
+  protected sourcedCurrent(ctx: StampContext): number {
+    return this.i - this.g * (ctx.voltage(this.b) - ctx.voltage(this.a))
+  }
 
-    // Current the pin drives OUT into its net is the branch current a → b of a
-    // Norton source: i − g·(V_b − V_a). Real MCU pins reference ground (a = 0),
-    // so this is (V_open − V_net)/R_drive, exactly the current sourced.
-    //
-    // Only a pin actively SOURCING can exceed a few mA. A floating or pull-up
-    // INPUT (i ≈ 0 with a tiny g) can source at most ~0.25 mA, and a pin
-    // sinking current gives a negative value — both fall under the rating and
-    // never fault, which is the "floating/input pins must not fault" rule.
-    const sourced = this.i - this.g * (ctx.voltage(this.b) - ctx.voltage(this.a))
+  /**
+   * True when this port contributes nothing to the matrix, so there is no real
+   * current to judge and nothing any safety() should report:
+   *   - a pin wired straight to GND has a === b === ground. That is a
+   *     topological dead short, already surfaced by ShortedPin in compile.ts
+   *     and gated on drive state by the engine, so reporting it again here
+   *     would double-count it.
+   *   - a degenerate self-loop (a === b on a floating net) is a no-op.
+   */
+  protected degenerate(): boolean {
+    return this.a === this.b
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    if (this.degenerate()) return null
+
+    const sourced = this.sourcedCurrent(ctx)
     if (sourced <= this.ratedCurrent) return null
 
     const mA = (sourced * 1000).toFixed(0)
@@ -316,6 +335,432 @@ export class NortonPort implements Device {
       message:
         `${mA} mA through a pin rated for ${(this.maxCurrent * 1000).toFixed(0)} mA. ` +
         `On real hardware this pin is destroyed.`,
+    }
+  }
+}
+
+// ─── Sensor modules: supply and output ────────────────────────────────────────
+
+/**
+ * The datasheet numbers that decide whether a sensor MODULE survives its wiring.
+ *
+ * WHY ONE PARAMETERISED PAIR OF DEVICES AND NOT SEVEN CLASSES. The seven tier-2
+ * sensor parts differ in their protocols — which is why each has a behavioural
+ * model of its own, hundreds of lines apart — but they do not differ at all in
+ * how they are DESTROYED. Every one of them dies the same three ways: too much
+ * volts on the supply pin, the supply pin and the ground pin swapped, or an
+ * output driven into more current than its pad can pass. Seven classes would be
+ * seven copies of the same three comparisons, and the numbers would drift; one
+ * class plus one table per part keeps the mechanism in one place and the
+ * DATASHEET in the other, which is the split every other multi-part model here
+ * already uses (BuzzerParams, MotorParams, DarlingtonParams, HBridgeParams).
+ *
+ * The alternative — putting the ratings on the part definition in parts.ts —
+ * was rejected because parts.ts is geometry and inspector data: it has no other
+ * electrical constant in it, and a rating declared there would be one more thing
+ * that can be declared and never reach the solver, which is the exact class of
+ * defect this work exists to close.
+ *
+ * WHAT IS A DATASHEET LINE AND WHAT IS A JUDGEMENT is marked per part in
+ * SENSOR_SUPPLIES below. Modules assembled from a jellybean MCU (HC-SR04,
+ * HC-SR501, DHT11) publish an operating window and no absolute maximum at all;
+ * the silicon parts (DS18B20, MCP3008) publish both.
+ */
+export interface SensorSupplyParams {
+  /** Lowest supply the part is specified to work at, volts. */
+  minVolts: number
+  /** Highest supply the part is specified to work at, volts. */
+  maxVolts: number
+  /**
+   * Absolute maximum supply, volts. Above this the part is destroyed rather
+   * than merely out of spec.
+   */
+  absMaxVolts: number
+  /**
+   * Reverse supply the part survives, volts (a POSITIVE magnitude). Silicon
+   * datasheets print this as the "−0.5 V on any pin" line; beyond it the
+   * substrate diode conducts unbounded and the die cooks.
+   */
+  absMaxReverseVolts: number
+  /** Supply current drawn in normal operation, amps. */
+  supplyAmps: number
+  /** Continuous current a driven output pin is specified for, amps. */
+  outputRatedAmps: number
+  /** Absolute maximum current on a driven output pin, amps. */
+  outputMaxAmps: number
+  /** Part name WITH its article, for fault messages: "a DHT11", "an MCP3008". */
+  label: string
+  /** What the part calls its supply pin — "VCC" or "VDD". */
+  supplyPin: string
+}
+
+/**
+ * Per-protocol ratings for every tier-2 sensor.
+ *
+ * Keyed by the SAME protocol string the part declares in `electrical.protocol`
+ * and the engine switches on in makeBehavioural(), so a new sensor cannot be
+ * added with a model and no ratings without the key being obviously absent.
+ *
+ * Sources, one per part. `[sheet]` marks a printed datasheet line; `[judged]`
+ * marks a number the datasheet does not give, with the reasoning that bounds it.
+ */
+export const SENSOR_SUPPLIES: Record<string, SensorSupplyParams> = {
+  /**
+   * DHT11 (Aosong / D-Robotics DHT11 datasheet).
+   *   [sheet]  Power supply 3.3-5.5 V DC
+   *   [sheet]  Supply current: measuring 0.3 mA, standby 60 uA
+   *   [judged] No absolute maximum is printed anywhere in the sheet. 6.0 V is
+   *            taken from the DS18B20's own printed +6.0 V "any pin" limit,
+   *            which is the same 5 V CMOS process class the module's on-board
+   *            8-bit MCU is built on; the module has no regulator, so its supply
+   *            pin IS that die's VDD.
+   *   [judged] No output current is specified. The DATA line is open-drain and
+   *            the model only ever pulls it DOWN, so the rating that matters is
+   *            a sink: 10 mA / 25 mA is the ordinary 8-bit-MCU pad limit and is
+   *            far above the ~1 mA a 4.7 kOhm pull-up delivers on a correctly
+   *            built bus.
+   */
+  dht11: {
+    minVolts: 3.3,
+    maxVolts: 5.5,
+    absMaxVolts: 6.0,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 0.3e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'a DHT11',
+    supplyPin: 'VCC',
+  },
+  /**
+   * DS18B20 (Analog Devices / Maxim DS18B20 datasheet).
+   *   [sheet]  Absolute maximum: voltage on any pin relative to ground
+   *            -0.5 V to +6.0 V
+   *   [sheet]  Operating VDD 3.0 V to 5.5 V
+   *   [sheet]  Active supply current 1.0 mA typ (1.5 mA max)
+   *   [sheet]  DQ logic 0: IOL = 4.0 mA at VOL 0.4 V max
+   *   [judged] The absolute maximum DQ current is not printed. 20 mA is the
+   *            standard limit for the open-drain pad class and is 5x the only
+   *            characterised sink, which is the whole span the part is specified
+   *            over.
+   * Reversing GND and VDD is the classic way to cook one of these — parts.ts
+   * says so on the pinout, and this is the number that makes the simulator
+   * agree.
+   */
+  ds18b20: {
+    minVolts: 3.0,
+    maxVolts: 5.5,
+    absMaxVolts: 6.0,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 1.0e-3,
+    outputRatedAmps: 0.004,
+    outputMaxAmps: 0.02,
+    label: 'a DS18B20',
+    supplyPin: 'VDD',
+  },
+  /**
+   * HC-SR04 (the module's own spec sheet, as sold).
+   *   [sheet]  Working voltage DC 5 V
+   *   [sheet]  Working current 15 mA
+   *   [judged] 4.5-5.5 V as the working window: 4.5 V is already the model's own
+   *            HC_SR04.MIN_SUPPLY_VOLTS in behavioural.ts (the point below which
+   *            the module releases ECHO and drives nothing), and +-10 % of a
+   *            5 V rail is the narrowest defensible reading of "DC 5 V".
+   *   [judged] 6.0 V absolute maximum, on the same reasoning as the DHT11: the
+   *            board is a bare 5 V MCU plus a 40 kHz driver, with no regulator.
+   *   [judged] ECHO is a push-pull MCU pad; 10 mA / 25 mA is that pad class.
+   */
+  hc_sr04: {
+    minVolts: 4.5,
+    maxVolts: 5.5,
+    absMaxVolts: 6.0,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 15e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'an HC-SR04',
+    supplyPin: 'VCC',
+  },
+  /**
+   * HC-SR501 PIR (the module's own spec sheet).
+   *   [sheet]  Working voltage range DC 4.5 V - 20 V
+   *   [sheet]  Static current < 60 uA
+   *   [sheet]  Output 3.3 V / 0 V
+   *   [judged] 24 V absolute maximum. The board regulates its own 3.3 V with an
+   *            HT7133-class LDO, whose input absolute maximum is 24 V; the 20 V
+   *            in the spec is the working limit below it.
+   *   [judged] The 3.3 V output comes from the BISS0001's OUT pin through the
+   *            board's series resistor; no current is specified. 10 mA / 25 mA
+   *            again, and note this part is the one where the rating is least
+   *            likely to be reached — it drives an MCU input.
+   * NOTE THE CONSEQUENCE: a student who puts 12 V on a PIR gets NO fault, which
+   * is correct. A real HC-SR501 runs happily on 12 V and that is why the module
+   * exists in alarm kits.
+   */
+  pir: {
+    minVolts: 4.5,
+    maxVolts: 20,
+    absMaxVolts: 24,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 60e-6,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'an HC-SR501 PIR',
+    supplyPin: 'VCC',
+  },
+  /**
+   * YF-S201 water flow sensor (the sensor's own spec sheet).
+   *   [sheet]  Working voltage 5 V - 18 V DC
+   *   [sheet]  Max current draw 15 mA at 5 V
+   *   [sheet]  Output load capacity <= 10 mA at DC 5 V  <- a REAL printed
+   *            output-current limit, and the only one of the seven that has one
+   *   [judged] 24 V absolute maximum, 20 % over the printed 18 V working top —
+   *            the same margin convention DCMotor and UnipolarStepper use where
+   *            a sheet gives no absolute maximum.
+   *   [judged] 25 mA as the destructive output figure: the open-collector
+   *            transistor is a jellybean small-signal NPN, and 2.5x the printed
+   *            load capacity is where one stops being a switch.
+   * The model's own YF_S201.MIN_SUPPLY_VOLTS is 4.5, half a volt under the
+   * printed 5, on the same courtesy the HC-SR04 gets — so `minVolts` here is the
+   * SHEET's 5 and the behavioural cut-off is deliberately more forgiving.
+   */
+  flow: {
+    minVolts: 5,
+    maxVolts: 18,
+    absMaxVolts: 24,
+    absMaxReverseVolts: 0.5,
+    supplyAmps: 15e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'a YF-S201 flow sensor',
+    supplyPin: 'VCC',
+  },
+  /**
+   * Pulse sensor SEN-11574 / "Pulse Sensor Amped".
+   *   [sheet]  Operating voltage 3 V to 5 V (the product's own spec)
+   *   [sheet]  Current draw ~4 mA
+   *   [sheet]  The amplifier is an MCP6001, whose absolute maximum VDD-VSS is
+   *            7.0 V and whose output short-circuit current is +-23 mA typical.
+   *   [judged] Splitting the MCP6001's 23 mA short-circuit figure into a 10 mA
+   *            rated / 23 mA maximum pair: the op-amp is a signal source feeding
+   *            an ADC and is not specified to drive a load at all, so the rated
+   *            figure is a working limit rather than a sheet line.
+   */
+  pulse: {
+    minVolts: 3.0,
+    maxVolts: 5.5,
+    absMaxVolts: 7.0,
+    absMaxReverseVolts: 0.3,
+    supplyAmps: 4e-3,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.023,
+    label: 'a pulse sensor',
+    supplyPin: 'VCC',
+  },
+  /**
+   * MCP3008 (Microchip DS21295).
+   *   [sheet]  Absolute maximum VDD 7.0 V
+   *   [sheet]  Absolute maximum on all inputs and outputs w.r.t. VSS:
+   *            -0.6 V to VDD +0.6 V   -> the reverse figure below
+   *   [sheet]  Operating VDD 2.7 V to 5.5 V
+   *   [sheet]  IDD 425 uA typ at VDD = 5 V, fSAMPLE = 200 ksps
+   *   [sheet]  Maximum output current sunk or sourced by any output pin: 25 mA
+   *   [judged] 10 mA as the RATED output figure. DOUT drives one SPI master
+   *            input, and the sheet gives no continuous figure below its 25 mA
+   *            absolute maximum.
+   * The supply is referenced to DGND, exactly as MCP3008Device.supply() reads it
+   * in behavioural.ts — AGND is the analog return and a part with only AGND
+   * wired has no digital return path at all.
+   */
+  mcp3008: {
+    minVolts: 2.7,
+    maxVolts: 5.5,
+    absMaxVolts: 7.0,
+    absMaxReverseVolts: 0.6,
+    supplyAmps: 425e-6,
+    outputRatedAmps: 0.01,
+    outputMaxAmps: 0.025,
+    label: 'an MCP3008',
+    supplyPin: 'VDD',
+  },
+}
+
+/**
+ * A sensor module's supply pin: the load it draws, and every way that supply
+ * can destroy it.
+ *
+ * BEFORE THIS DEVICE EXISTED, `kind:'sensor'` built a Norton port per driven pin
+ * and NOTHING ELSE — so seven parts had no safety() at all. A student could put
+ * 12 V on a DHT11's VCC, or reverse a DS18B20's GND and VDD, and the Checks
+ * panel stayed green.
+ *
+ * It is also a real electrical improvement rather than a bolted-on checker: the
+ * supply pin is now a genuine LOAD. A sensor fed through a series resistor drops
+ * a real voltage across it and can be seen to brown out, where before its VCC
+ * pin drew exactly nothing and any resistor in front of it was invisible.
+ *
+ * The load is a CONDUCTANCE, not a current source, for the same reason Buzzer's
+ * is: G = I_supply / V_nominal, taken at the top of the specified window. A
+ * current source would keep pulling its rated amps out of a dead rail, which is
+ * not what a CMOS part does and would make a browned-out sensor look like a
+ * short. It is linear, so it cannot make Newton limit-cycle.
+ */
+export class SensorSupply implements Device {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Supply current at the last solve, amps. Positive is into the supply pin. */
+  current = 0
+
+  constructor(
+    readonly id: string,
+    /** The part's VCC / VDD net. */
+    private pos: NetId,
+    /** The part's OWN ground pin's net — never net 0 unless it was wired there. */
+    private neg: NetId,
+    readonly params: SensorSupplyParams,
+  ) {}
+
+  /** Conductance the module presents across its supply, siemens. */
+  get conductance(): number {
+    return this.params.supplyAmps / this.params.maxVolts
+  }
+
+  stamp(ctx: StampContext): void {
+    stampConductance(ctx, this.pos, this.neg, this.conductance)
+  }
+
+  /** Supply voltage at the converged solution, volts. Negative means reversed. */
+  voltsAcross(ctx: StampContext): number {
+    return ctx.voltage(this.pos) - ctx.voltage(this.neg)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.voltsAcross(ctx) * this.conductance
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const p = this.params
+    // A device whose two terminals are the same net stamps nothing and can
+    // report nothing — the same rule NortonPort.degenerate() states.
+    if (this.pos === this.neg) return null
+    const v = this.voltsAcross(ctx)
+
+    /**
+     * REVERSED FIRST, because it is the more specific diagnosis and the more
+     * expensive mistake. A negative supply is not "under-volts"; it is the
+     * supply and ground pins swapped, and every silicon datasheet here bounds it
+     * with the same "-0.5 V on any pin" line: past that the substrate diode
+     * conducts without limit.
+     */
+    if (v < -p.absMaxReverseVolts) {
+      return {
+        kind: 'supply_range',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: v,
+        message:
+          `${Math.abs(v).toFixed(1)} V BACKWARDS across ${p.label} — ${p.supplyPin} and GND are ` +
+          `swapped. The part is rated to ${p.absMaxReverseVolts} V reverse on any pin; on real ` +
+          `hardware this destroys it.`,
+      }
+    }
+
+    if (v > p.absMaxVolts) {
+      return {
+        kind: 'supply_range',
+        severity: 'destructive',
+        deviceId: this.id,
+        value: v,
+        message:
+          `${v.toFixed(1)} V on the ${p.supplyPin} of ${p.label}, which is rated ` +
+          `${p.minVolts}-${p.maxVolts} V with an absolute maximum of ${p.absMaxVolts} V. ` +
+          `On real hardware this part is destroyed.`,
+      }
+    }
+
+    /**
+     * Over the specified window but inside the absolute maximum: the part is
+     * running out of spec — it may read wrong, it will run hot, and it is not
+     * guaranteed to survive — but it is not destroyed. The same graduated shape
+     * every other part here uses, and the honest answer for the gap between two
+     * numbers a datasheet prints separately for a reason.
+     */
+    if (v > p.maxVolts) {
+      return {
+        kind: 'supply_range',
+        severity: 'caution',
+        deviceId: this.id,
+        value: v,
+        message:
+          `${v.toFixed(1)} V on the ${p.supplyPin} of ${p.label}, past the ${p.maxVolts} V top of ` +
+          `its specified supply range. It is inside the ${p.absMaxVolts} V absolute maximum, so it ` +
+          `still works — out of spec, and not guaranteed to.`,
+      }
+    }
+
+    return null
+  }
+}
+
+/**
+ * A sensor module's DRIVEN output pin.
+ *
+ * Identical to a NortonPort electrically — that is what it is, and the engine
+ * drives it through the same set() — but with the SENSOR's ratings and the
+ * SENSOR's name on its fault.
+ *
+ * This class exists because of a specific wrong answer. A sensor's driven pin
+ * used to be a plain NortonPort, whose safety() carries the ATmega328P's pad
+ * ratings and the ATmega328P's wording. Overloading an HC-SR04's ECHO therefore
+ * produced "...mA through a pin rated for 40 mA. On real hardware this pin is
+ * destroyed." attributed to `hcs_4.echo` — the wrong part, the wrong datasheet,
+ * and stated with total confidence. Silence would have been better than that.
+ */
+export class SensorPort extends NortonPort {
+  constructor(
+    id: string,
+    a: NetId,
+    b: NetId,
+    g: number,
+    i: number,
+    readonly params: SensorSupplyParams,
+    /** The pin id as the part silkscreens it — "ECHO", "DATA", "OUT". */
+    readonly pinName: string,
+  ) {
+    super(id, a, b, g, i)
+    this.ratedCurrent = params.outputRatedAmps
+    this.maxCurrent = params.outputMaxAmps
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    if (this.degenerate()) return null
+    const sourced = this.sourcedCurrent(ctx)
+    if (sourced <= this.ratedCurrent) return null
+
+    const mA = (sourced * 1000).toFixed(0)
+    const p = this.params
+    if (sourced <= this.maxCurrent) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: sourced,
+        message:
+          `${mA} mA out of the ${this.pinName} pin of ${p.label}, past the ` +
+          `${(this.ratedCurrent * 1000).toFixed(0)} mA that output is specified for. ` +
+          `On real hardware this over-stresses the sensor's own output driver.`,
+      }
+    }
+    return {
+      kind: 'over_current',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: sourced,
+      message:
+        `${mA} mA out of the ${this.pinName} pin of ${p.label}, whose absolute maximum is ` +
+        `${(this.maxCurrent * 1000).toFixed(0)} mA. On real hardware the sensor's output ` +
+        `driver is destroyed.`,
     }
   }
 }
@@ -512,6 +957,259 @@ export class Inductor implements ReactiveDevice {
   }
 }
 
+// ─── Windings: series R–L in ONE branch ───────────────────────────────────────
+
+/**
+ * The companion model for a real coil — a resistance and an inductance IN
+ * SERIES, stamped as a single two-terminal element.
+ *
+ * Every coil in this library is one of these: a motor armature, a relay coil, a
+ * stepper phase. None of them is a bare inductor, and none of them may be built
+ * by putting an `Inductor` in series with a `Resistor`, because that needs an
+ * internal node between the two — and the current these devices report through
+ * `readback()` is then the RESISTOR's current, which during the ramp is not the
+ * branch current at all. `engine.ts` turns a motor's reported current straight
+ * into rpm, so that error would come out as a wrong speed and say nothing.
+ *
+ * Backward Euler on L·di/dt = v − i·R over a step h, writing k = h/L:
+ *
+ *   L·(i − i_prev)/h = v − i·R
+ *   i·(1 + k·R) = k·v + i_prev
+ *   i = Geq·v + Ieq       with   Geq = k/(1 + k·R),  Ieq = i_prev/(1 + k·R)
+ *
+ * — a conductance Geq in parallel with a current source Ieq pushing a → b,
+ * which is the same Norton form `Inductor` stamps, with the winding resistance
+ * folded into both terms.
+ *
+ * ─── THE DC CASE IS NOT THE LIMIT OF THAT FORMULA ─────────────────────────────
+ *
+ * At h = 0 the expression gives k = 0, hence Geq = 0 and Ieq = 0: an OPEN, which
+ * is the one thing a winding is not. Every steady-state assertion in the suite
+ * goes through this path (a plain `solve()` never sets a step), so a winding that
+ * went open at DC would silently stop drawing current the moment the transient
+ * loop was off — a motor reading 0 A, a relay that never pulls in. DC is
+ * therefore written out explicitly as Geq = 1/R, Ieq = 0, which is exactly what
+ * the resistor these classes replace used to stamp. Group 12.1 of
+ * transient.test.ts pins it, by solving the same divider twice — once with the
+ * winding and once with the resistor — and demanding the same answer.
+ *
+ * The h → ∞ limit of the same expression IS 1/R, which is what makes backward
+ * Euler collapse a winding to its steady state within a step or two when h ≫ τ
+ * instead of ringing — the property `MIN_STEP_SECONDS` in engine.ts relies on.
+ */
+export class RLBranch {
+  /** Timestep in seconds for the NEXT stamp; <= 0 means DC. */
+  private h = 0
+  /** Branch current at the end of the previous accepted step, amps, a → b. */
+  private i = 0
+
+  constructor(public henries: number) {}
+
+  setStep(h: number): void {
+    this.h = h
+  }
+
+  /** True while a transient step is in force. DC stamps a bare resistor. */
+  get stepping(): boolean {
+    return this.h > 0
+  }
+
+  /** Stored branch current, amps. Carried across recompiles; see ReactiveDevice.state. */
+  get current(): number {
+    return this.i
+  }
+  set current(a: number) {
+    this.i = Number.isFinite(a) ? a : 0
+  }
+
+  reset(): void {
+    this.i = 0
+  }
+
+  /** Norton conductance of the companion, siemens. */
+  geq(ohms: number): number {
+    const r = Math.max(ohms, MIN_RESISTANCE)
+    if (!(this.h > 0)) return Math.min(1 / r, MAX_CONDUCTANCE)
+    const k = this.h / this.henries
+    return Math.min(k / (1 + k * r), MAX_CONDUCTANCE)
+  }
+
+  /** Norton source current, amps, pushing a → b. Zero at DC. */
+  ieq(ohms: number): number {
+    if (!(this.h > 0)) return 0
+    const k = this.h / this.henries
+    return this.i / (1 + k * Math.max(ohms, MIN_RESISTANCE))
+  }
+
+  /** Branch current a → b implied by a terminal voltage `v`, amps. */
+  currentFor(v: number, ohms: number): number {
+    return this.geq(ohms) * v + this.ieq(ohms)
+  }
+
+  /** Take the converged terminal voltage as the end of this step. */
+  advance(v: number, ohms: number): void {
+    this.i = this.currentFor(v, ohms)
+  }
+
+  /**
+   * Time constant of this winding, seconds, given the resistance `rTh` the rest
+   * of the network presents across its terminals.
+   *
+   * τ = L/(R + rTh), NOT the plain inductor's L/rTh. The current runs round a
+   * loop that contains the winding's own copper as well as everything outside
+   * it, and `Circuit.smallestTimeConstant()` measures rTh with the reactive
+   * elements taken OUT of the probe matrix — so R is not in the number it hands
+   * over and has to be put back here. For a free-running hobby motor (R = 86 Ω)
+   * on a driving pin (rTh = 25 Ω) the two formulas differ by 4.4x.
+   *
+   * ─── WHY rTh IS CLAMPED AT R ──────────────────────────────────────────────
+   *
+   * Because a coil that is switched OFF would otherwise pin the engine at its
+   * 20 µs floor forever. With the driver off, rTh across the winding is the
+   * off-state leakage — 1e12 Ω — and L/(R + 1e12) is picoseconds, so a relay
+   * board sitting idle, or the three de-energised phases of any stepper, would
+   * ask for the smallest step the engine allows while drawing no current at all.
+   *
+   * There is nothing there to resolve. A branch whose external path is open
+   * carries no current one step later whatever h is, and backward Euler reaches
+   * that answer exactly in a single step because it is L-stable. Everything the
+   * student can actually observe is governed by the winding's own L/R: the rise
+   * when the coil is switched on, and the decay when it is switched off — which
+   * runs through a CONDUCTING flyback diode and therefore has a small rTh again.
+   * Clamping keeps the probe's influence where it means something (a network
+   * stiffer than the coil itself shortens τ, by at most half) and drops it where
+   * it does not.
+   */
+  timeConstant(ohms: number, rTh: number): number {
+    const r = Math.max(ohms, MIN_RESISTANCE)
+    const external = Math.min(Math.max(rTh, 0), r)
+    return this.henries / (r + external)
+  }
+
+  /** Reject an unusable inductance rather than reinterpreting it. See Resistor.stamp. */
+  validate(id: string, what: string): void {
+    if (!Number.isFinite(this.henries) || this.henries <= 0) {
+      throw new Error(
+        `${what} "${id}" has an invalid winding inductance (${this.henries}). ` +
+          `Inductance must be a finite, positive number.`,
+      )
+    }
+  }
+}
+
+/** Stamp a winding's companion between two nets. The one place that maths lands. */
+function stampWinding(
+  ctx: StampContext,
+  a: NetId,
+  b: NetId,
+  rl: RLBranch,
+  ohms: number,
+): void {
+  stampConductance(ctx, a, b, rl.geq(ohms))
+  if (rl.stepping) stampCurrent(ctx, a, b, rl.ieq(ohms))
+}
+
+/**
+ * A coil on its own: the drop-in replacement for a `Resistor` that was standing
+ * in for one. Used for a relay coil and for a stepper phase.
+ *
+ * It keeps `Resistor`'s power check verbatim, because that check is already
+ * written in terms of the branch CURRENT (p = i²R) and so stays honest during a
+ * transient: a coil whose supply has just been switched off is dumping its
+ * stored energy into a diode, not dissipating a steady i²R in its own copper.
+ */
+export class Winding implements ReactiveDevice {
+  readonly nonlinear = false
+  readonly extraUnknowns = 0
+  branchIndex = -1
+
+  /** Last solved current, amps, a → b. */
+  current = 0
+
+  /** Power rating in watts. Set it from the coil's own datasheet, not a resistor's. */
+  rating = 0.25
+
+  readonly terminals: readonly [NetId, NetId]
+  private readonly rl: RLBranch
+
+  constructor(
+    readonly id: string,
+    private a: NetId,
+    private b: NetId,
+    /** DC resistance of the winding, ohms. */
+    readonly ohms: number,
+    henries: number,
+    /** What to call this in a fault message, e.g. "Relay coil". */
+    private readonly label = 'Coil',
+  ) {
+    this.rl = new RLBranch(henries)
+    this.terminals = [a, b]
+  }
+
+  get henries(): number {
+    return this.rl.henries
+  }
+
+  stamp(ctx: StampContext): void {
+    if (!Number.isFinite(this.ohms) || this.ohms < 0) {
+      throw new Error(
+        `${this.label} "${this.id}" has an invalid resistance (${this.ohms}). ` +
+          `Resistance must be a finite, non-negative number.`,
+      )
+    }
+    this.rl.validate(this.id, this.label)
+    stampWinding(ctx, this.a, this.b, this.rl, this.ohms)
+  }
+
+  /** Current a→b implied by the converged voltages. */
+  currentThrough(ctx: StampContext): number {
+    return this.rl.currentFor(ctx.voltage(this.a) - ctx.voltage(this.b), this.ohms)
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.currentThrough(ctx)
+  }
+
+  timeConstant(rTh: number): number {
+    return this.rl.timeConstant(this.ohms, rTh)
+  }
+
+  get state(): number {
+    return this.rl.current
+  }
+  set state(i: number) {
+    this.rl.current = i
+    this.current = i
+  }
+
+  setStep(h: number): void {
+    this.rl.setStep(h)
+  }
+
+  resetTransient(): void {
+    this.rl.reset()
+    this.current = 0
+  }
+
+  advance(ctx: TransientContext): void {
+    this.rl.advance(ctx.voltage(this.a) - ctx.voltage(this.b), this.ohms)
+    this.current = this.rl.current
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const i = this.currentThrough(ctx)
+    const p = i * i * Math.max(this.ohms, MIN_RESISTANCE)
+    if (p <= this.rating) return null
+    return {
+      kind: 'over_power',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: p,
+      message: `${this.label} is dissipating ${p.toFixed(2)} W — it is rated for ${this.rating} W and would burn out.`,
+    }
+  }
+}
+
 // ─── Nonlinear devices ────────────────────────────────────────────────────────
 
 export interface DiodeParams {
@@ -519,10 +1217,69 @@ export interface DiodeParams {
   is: number
   /** Emission coefficient. */
   n: number
+  /**
+   * Recommended continuous forward current, amps — the CAUTION threshold.
+   *
+   * Optional, and it defaults to `LED_RATED_AMPS`, because the LED is the case
+   * that has no params of its own to carry it: `ledColour()` in parts.ts builds
+   * `{is, n}` per colour and knows nothing about ratings, and every one of the
+   * six colours is the same 5 mm lamp. Every OTHER user of this class states its
+   * own numbers below, and the default is what an unstated one falls back to.
+   */
+  ratedAmps?: number
+  /** Absolute maximum forward current, amps — the DESTRUCTIVE threshold. */
+  maxAmps?: number
+  /**
+   * What the part is called in a fault message, WITH its article ("an LED",
+   * "a 1N4148").
+   *
+   * The article is part of the string rather than computed, because "a"/"an"
+   * here follows the SOUND of a part number, not its spelling: "an LED", "an
+   * MCP3008", "a 1N4148". A rule over the first letter gets all three wrong.
+   */
+  label?: string
 }
 
-/** Silicon signal diode, roughly 1N4148. */
-export const DIODE_1N4148: DiodeParams = { is: 2.52e-9, n: 1.752 }
+/**
+ * Recommended and absolute-maximum forward current for a standard 5 mm LED,
+ * amps. Kingbright / Vishay red-lamp datasheets: 20 mA DC forward current
+ * recommended, 30 mA absolute maximum, above which the die overheats and fails.
+ *
+ * These are the DEFAULTS for any DiodeParams that names no rating of its own,
+ * which is exactly the LED colours — see DiodeParams.ratedAmps.
+ */
+export const LED_RATED_AMPS = 0.02
+export const LED_ABS_MAX_AMPS = 0.03
+
+/**
+ * Silicon signal diode, roughly 1N4148.
+ *
+ * RATINGS ARE THE DIODE'S OWN, and until this constant carried them the part
+ * inherited the LED's 20 mA / 30 mA — so a correctly built flyback or clamp
+ * circuit was reported as a DESTROYED component at a sixth of the part's real
+ * rating. The simulator telling a student their right answer is wrong is worse
+ * than saying nothing.
+ *
+ * From the NXP / ON Semiconductor 1N4148 datasheets (both agree; Vishay rates
+ * the continuous figure higher still, at 300 mA):
+ *
+ *   IF    continuous forward current            200 mA
+ *   IFRM  repetitive peak forward current       500 mA
+ *   IFSM  non-repetitive peak forward surge     1 A (1 s)
+ *
+ * `ratedAmps` is IF — held above it the part runs hot and ages, which is the
+ * caution. `maxAmps` is IFRM: a current the part survives only as a repeated
+ * PEAK, so a DC operating point sitting there is past what any of the three
+ * datasheet lines permit continuously, which is the destruction. IFSM is not
+ * used, because a 1 s surge rating says nothing about a steady state.
+ */
+export const DIODE_1N4148: DiodeParams = {
+  is: 2.52e-9,
+  n: 1.752,
+  ratedAmps: 0.2,
+  maxAmps: 0.5,
+  label: 'a 1N4148',
+}
 
 /**
  * Red LED. These parameters are not arbitrary — combined with a 2 Ω series
@@ -531,7 +1288,7 @@ export const DIODE_1N4148: DiodeParams = { is: 2.52e-9, n: 1.752 }
  *
  *   220 Ω → 13.76 mA,  1 kΩ → 3.12 mA,  10 kΩ → 0.32 mA,  none → 1419 mA
  */
-export const LED_RED: DiodeParams = { is: 1e-20, n: 1.8 }
+export const LED_RED: DiodeParams = { is: 1e-20, n: 1.8, label: 'an LED' }
 export const LED_SERIES_R = 2.0
 
 /**
@@ -583,6 +1340,8 @@ export class Diode implements Device {
   ) {
     this.vte = params.n * VT
     this.vcrit = this.vte * Math.log(this.vte / (Math.SQRT2 * params.is))
+    this.rating = params.ratedAmps ?? LED_RATED_AMPS
+    this.absMaxCurrent = params.maxAmps ?? LED_ABS_MAX_AMPS
   }
 
   reset(): void {
@@ -615,16 +1374,19 @@ export class Diode implements Device {
     this.current = this.params.is * (Math.exp(Math.min(vd / this.vte, 300)) - 1)
   }
 
-  /** Recommended continuous forward current. A 5 mm LED is typically 20 mA. */
-  rating = 0.02
-
   /**
-   * Absolute-maximum continuous forward current. Standard 5 mm LED datasheets
-   * (e.g. Kingbright / Vishay red) rate the DC forward current at 20 mA
-   * recommended and 30 mA absolute maximum, above which the die overheats and
-   * fails. Between the two the LED is bright but running hot — a caution.
+   * Recommended continuous forward current, amps — the caution threshold.
+   *
+   * Taken from THIS junction's own params rather than being a constant on the
+   * class. It was a constant (0.02) for as long as the only nonlinear junction
+   * in the library was an LED, and the moment a second one existed that constant
+   * became a wrong datasheet applied to the wrong part: a 1N4148 rated 200 mA
+   * continuous was reported destroyed at 30 mA.
    */
-  absMaxCurrent = 0.03
+  rating: number
+
+  /** Absolute-maximum forward current, amps — the destructive threshold. */
+  absMaxCurrent: number
 
   safety(ctx: StampContext): SolveFault | null {
     this.readback(ctx)
@@ -633,6 +1395,11 @@ export class Diode implements Device {
 
     const mA = (this.current * 1000).toFixed(0)
     const rated = (this.rating * 1000).toFixed(0)
+    // "a part" was the wording while every junction here was an LED. Now that
+    // the same class models a signal diode and an opto-coupler's IR die, the
+    // message names WHICH part it is talking about — a fault that quotes a
+    // rating has to say whose rating it is.
+    const what = this.params.label ?? 'a part'
 
     // Above the rating but still within the absolute maximum: the part survives
     // for now but ages fast. Non-destructive, so the wording warns rather than
@@ -644,7 +1411,7 @@ export class Diode implements Device {
         deviceId: this.id,
         value: this.current,
         message:
-          `${mA} mA through a part running above its ${rated} mA rating. ` +
+          `${mA} mA through ${what} running above its ${rated} mA rating. ` +
           `On real hardware this shortens its life.`,
       }
     }
@@ -656,7 +1423,7 @@ export class Diode implements Device {
       deviceId: this.id,
       value: this.current,
       message:
-        `${mA} mA through a part rated for ${rated} mA. ` +
+        `${mA} mA through ${what} rated for ${rated} mA. ` +
         `On real hardware this part is destroyed.`,
     }
   }
@@ -699,6 +1466,17 @@ export function createLED(
  *             operating point correctly reports ~0 A and the pitch is whatever
  *             the driving square wave is. Modelled as the same 1e-12 S open the
  *             Capacitor stamps at DC.
+ *
+ * `piezoFarads` IS NOT STAMPED, and that is deliberate now rather than pending.
+ * When the coils in this file were given their real inductance, this was the one
+ * energy-storing part left as a stub — because unlike a winding, its time
+ * constant is BELOW what the engine can resolve. 10 nF behind a 25 Ω driving pin
+ * is τ = 250 ns against a 20 µs floor, so a companion model would move the right
+ * charge on each edge and report it smeared over a whole step: ~2.5 mA for 20 µs
+ * where the part really draws ~200 mA for 250 ns. The average would be right and
+ * the instantaneous reading — the one a student sees — would be off by eighty.
+ * The constant is kept because it is the correct datasheet value and it is what
+ * a finer timestep would need.
  */
 export interface BuzzerParams {
   /** Rated DC supply, volts. */
@@ -822,17 +1600,29 @@ export class Buzzer implements Device {
  *     one puts a kink at V = L·Vn, and Newton can ping-pong across a kink
  *     forever; that model was written first and rejected for exactly that.
  *
- * HONEST LIMITATIONS, both structural:
+ * THE ARMATURE IS A WINDING, so the element is a series R–L branch rather than a
+ * bare conductance (see RLBranch). V = L·di/dt + i/G. The engine integrates it,
+ * so the current now RISES into a switched-on motor instead of appearing, and
+ * switching one off drives whatever clamp is on the wire — the point of a
+ * flyback diode, which had nothing to do before.
+ *
+ * HONEST LIMITATIONS, all structural:
  *
  *   - The load is PROPORTIONAL to the applied voltage — a fan or a pump, whose
  *     torque falls away as the motor slows. A constant-torque load (a weight on
  *     a winch) can stall a motor at low voltage while still drawing locked-rotor
  *     current; that is not modelled. At full load this model is stalled at every
  *     voltage, which is the case that matters.
- *   - This is the STEADY state only. Rotor inertia, the start-up inrush and the
- *     inductive spike when the motor is switched off all need transient
- *     simulation. Circuit.transientStep() exists but the interactive engine does
- *     not drive it yet, so none of those appear.
+ *   - ROTOR INERTIA IS NOT MODELLED, and that is a different thing from the
+ *     winding inductance which now is. Speed is still algebraically tied to
+ *     current, so the model spins up in the electrical time constant L/R
+ *     (23 µs free-running, 267 µs stalled) rather than the mechanical one
+ *     (tens of ms). The consequence is specific and worth naming: the ~10x
+ *     START-UP CURRENT SURGE of a real motor is a MECHANICAL effect — the
+ *     current runs to V/Ra because a stationary rotor makes no back-EMF, and
+ *     falls back as the shaft picks up speed — so it still does not appear.
+ *     What the inductance buys is the electrical rise time and the switch-off
+ *     kick, not the inrush peak.
  */
 export interface MotorParams {
   /** Nominal supply, volts. */
@@ -843,6 +1633,28 @@ export interface MotorParams {
   noLoadAmps: number
   /** Locked-rotor current at ratedVolts, amps. */
   stallAmps: number
+  /**
+   * Armature (terminal) inductance, henries.
+   *
+   * BE HONEST ABOUT WHERE THIS ONE COMES FROM. It is NOT off a datasheet, and
+   * unlike every other number in this file it cannot be: the Mabuchi-class cans
+   * sold in Arduino kits publish four figures — nominal voltage, no-load speed,
+   * no-load current, stall current — and winding inductance is never one of
+   * them. The motor makers who DO characterise the winding (maxon and the like)
+   * quote small brushed cans in the fraction-of-a-millihenry to few-millihenry
+   * band, and 2 mH is taken as representative of that class.
+   *
+   * What matters is that the CONSEQUENCE is checkable without believing the
+   * henries. 2 mH asserts an electrical time constant of L/Ra = 2e-3/7.5 =
+   * 267 µs at locked rotor and L·G = 23 µs free-running. Both sit in the
+   * sub-millisecond band, and both are one to two orders BELOW the tens of
+   * milliseconds a rotor takes to come up to speed — which is the whole reason
+   * the mechanical effects named above, not this number, dominate the start-up
+   * of a real motor. Getting 2 mH wrong by a factor of two moves the rise time
+   * by a factor of two and moves nothing a student can observe; the model would
+   * have to be wrong by a factor of a thousand for the ordering to change.
+   */
+  henries: number
 }
 
 /**
@@ -854,9 +1666,10 @@ export const HOBBY_MOTOR_6V: MotorParams = {
   noLoadRpm: 6000,
   noLoadAmps: 0.07,
   stallAmps: 0.8,
+  henries: 2e-3,
 }
 
-export class DCMotor implements Device {
+export class DCMotor implements ReactiveDevice {
   readonly nonlinear = false
   readonly extraUnknowns = 0
   branchIndex = -1
@@ -867,6 +1680,9 @@ export class DCMotor implements Device {
   /** Mechanical load as a fraction of stall torque, 0..1. */
   readonly load: number
 
+  readonly terminals: readonly [NetId, NetId]
+  private readonly rl: RLBranch
+
   constructor(
     readonly id: string,
     private a: NetId,
@@ -875,6 +1691,8 @@ export class DCMotor implements Device {
     readonly params: MotorParams = HOBBY_MOTOR_6V,
   ) {
     this.load = Math.min(1, Math.max(0, load))
+    this.rl = new RLBranch(params.henries)
+    this.terminals = [a, b]
   }
 
   /** Armature (coil) resistance, ohms: Ra = Vn/Is, the locked-rotor figure. */
@@ -902,8 +1720,21 @@ export class DCMotor implements Device {
     return 1 / this.conductance
   }
 
+  /**
+   * The armature is stamped as ONE series R–L branch, with R = effectiveOhms.
+   *
+   * effectiveOhms, not coilOhms, and the choice is forced: the DC stamp has
+   * always been the terminal conductance G(L), which already carries the
+   * back-EMF, and the transient model has to reduce to exactly that when no step
+   * is set. Writing the branch as V = L·di/dt + i/G keeps every steady-state
+   * answer byte-identical and adds the one term that was missing. It also says
+   * plainly what is NOT in it: with speed still slaved to current, the R in the
+   * ramp is the running resistance, not the locked-rotor Ra a stationary rotor
+   * would present — see the class note on inertia.
+   */
   stamp(ctx: StampContext): void {
-    stampConductance(ctx, this.a, this.b, this.conductance)
+    this.rl.validate(this.id, 'Motor')
+    stampWinding(ctx, this.a, this.b, this.rl, this.effectiveOhms)
   }
 
   /** Terminal voltage at the converged solution, volts. */
@@ -911,8 +1742,45 @@ export class DCMotor implements Device {
     return ctx.voltage(this.a) - ctx.voltage(this.b)
   }
 
+  /**
+   * Armature current at the converged solution, amps. At DC this is exactly
+   * v·G — the companion degenerates to the conductance — so every steady-state
+   * number this device has ever reported is unchanged.
+   */
+  currentThrough(ctx: StampContext): number {
+    return this.rl.currentFor(this.voltsAcross(ctx), this.effectiveOhms)
+  }
+
   readback(ctx: StampContext): void {
-    this.current = this.voltsAcross(ctx) * this.conductance
+    this.current = this.currentThrough(ctx)
+  }
+
+  /** τ = L/(1/G + rTh). See RLBranch.timeConstant. */
+  timeConstant(rTh: number): number {
+    return this.rl.timeConstant(this.effectiveOhms, rTh)
+  }
+
+  /** Armature current carried between compiles. See ReactiveDevice.state. */
+  get state(): number {
+    return this.rl.current
+  }
+  set state(i: number) {
+    this.rl.current = i
+    this.current = i
+  }
+
+  setStep(h: number): void {
+    this.rl.setStep(h)
+  }
+
+  resetTransient(): void {
+    this.rl.reset()
+    this.current = 0
+  }
+
+  advance(ctx: TransientContext): void {
+    this.rl.advance(ctx.voltage(this.a) - ctx.voltage(this.b), this.effectiveOhms)
+    this.current = this.rl.current
   }
 
   /**
@@ -928,9 +1796,23 @@ export class DCMotor implements Device {
   }
 
   safety(ctx: StampContext): SolveFault | null {
-    const v = this.voltsAcross(ctx)
-    const av = Math.abs(v)
-    const i = v * this.conductance
+    const i = this.currentThrough(ctx)
+    /**
+     * THE WINDING'S OWN DROP, i·R — not the terminal voltage, and only since the
+     * armature became a winding is there a difference.
+     *
+     * The two are identical at every steady state (i = v·G, so i/G = v), which
+     * is what keeps every existing assertion here exact. They part company for
+     * one step at a time during a switch-off, when the inductance drives the
+     * terminals to whatever the clamp on the wire allows — an L298N's freewheel
+     * diodes hold the motor at −(Vs + 2·Vf), which on a 12 V bridge is 14 V
+     * across a 6 V motor. Reporting that as "the winding insulation fails" would
+     * be the simulator calling a CORRECTLY built flyback path a destroyed part,
+     * which is the exact failure DIODE_1N4148's note was written about. What
+     * cooks a winding is the energy in its copper, and that is i²R; a coil
+     * dumping its stored current into a diode has a bounded i and a falling one.
+     */
+    const av = Math.abs(i) * this.effectiveOhms
 
     // Over-voltage burns the winding insulation. 1.5x nominal is the usual
     // "absolute maximum" headroom quoted for small brushed motors.
@@ -1334,6 +2216,16 @@ export class HBridgeChannel implements Device {
   logicOk = false
   /** False when Vs is not far enough above a logic high to run the outputs. */
   supplyOk = false
+  /**
+   * The enable pin's own level, UNGATED by logicOk/supplyOk.
+   *
+   * `mode` collapses to 'coast' whenever the chip cannot drive, which is the
+   * right answer for the motor and the wrong one for the student: "coast"
+   * describes a bridge that was told to stop, and a bridge that was told to go
+   * and has no supply looks identical. This is what lets safety() tell those two
+   * apart and say WHY the output is dead.
+   */
+  enableAsked = false
 
   private sourceA = false
   private sourceB = false
@@ -1356,8 +2248,21 @@ export class HBridgeChannel implements Device {
 
   reset(): void {
     this.driving = false
+    this.enableAsked = false
     this.mode = 'coast'
     this.settled = true
+  }
+
+  /**
+   * What the two inputs are ASKING for, ignoring whether the chip can deliver.
+   *
+   * `mode` is what the bridge is doing; this is what it was told to do. They
+   * differ exactly when the part is dead — no logic supply, no motor supply —
+   * which is the case the student most needs spelled out.
+   */
+  get commandedMode(): BridgeMode {
+    if (!this.enableAsked) return 'coast'
+    return this.sourceA === this.sourceB ? 'brake' : this.sourceA ? 'forward' : 'reverse'
   }
 
   /** Load the chip puts on each driving pin, ohms. */
@@ -1414,8 +2319,8 @@ export class HBridgeChannel implements Device {
     this.logicOk = vss >= this.params.minLogicVolts && vss <= this.params.maxLogicVolts
     this.supplyOk = vs >= this.minSupplyVolts
 
-    const enabled =
-      this.logicOk && this.supplyOk && this.levelOf(ctx, this.nets.en, this.driving)
+    this.enableAsked = this.levelOf(ctx, this.nets.en, this.driving)
+    const enabled = this.logicOk && this.supplyOk && this.enableAsked
     const a = this.levelOf(ctx, this.nets.in1, this.sourceA)
     const b = this.levelOf(ctx, this.nets.in2, this.sourceB)
 
@@ -1468,6 +2373,52 @@ export class HBridgeChannel implements Device {
       }
     }
 
+    /**
+     * WHY THE OUTPUT IS DEAD.
+     *
+     * The model has always known this — logicOk and supplyOk are computed on
+     * every solve — and it threw the answer away, so a student whose motor did
+     * not turn had nothing but a silent Checks panel and a bridge reporting
+     * 'coast'. These are CAUTIONS, not destructions: nothing is being damaged.
+     * They fire only when the channel is actually being ASKED to drive, so an
+     * L298N sitting unwired in the tray, or one whose enable is deliberately
+     * low, says nothing at all.
+     */
+    if (this.enableAsked && !this.logicOk) {
+      const vs =
+        this.nets.vs === undefined ? 0 : ctx.voltage(this.nets.vs) - ctx.voltage(this.nets.gnd)
+      return {
+        kind: 'supply_range',
+        severity: 'caution',
+        deviceId: this.id,
+        value: vss,
+        message:
+          this.nets.vss === undefined || vss < 0.5
+            ? `This bridge is enabled but Vss — the LOGIC supply, the "+5V" screw terminal — ` +
+              `is not connected. Without ${this.params.minLogicVolts}–${this.params.maxLogicVolts} V ` +
+              `there the chip's logic is dead and the outputs never switch, ` +
+              `whatever Vs is doing (${vs.toFixed(1)} V).`
+            : `${vss.toFixed(1)} V on Vss, outside the ` +
+              `${this.params.minLogicVolts}–${this.params.maxLogicVolts} V this chip's logic needs. ` +
+              `The bridge is enabled but its outputs cannot switch.`,
+      }
+    }
+    if (this.enableAsked && this.logicOk && !this.supplyOk) {
+      const vs =
+        this.nets.vs === undefined ? 0 : ctx.voltage(this.nets.vs) - ctx.voltage(this.nets.gnd)
+      return {
+        kind: 'supply_range',
+        severity: 'caution',
+        deviceId: this.id,
+        value: vs,
+        message:
+          `This bridge is enabled but Vs — the MOTOR supply — is ${vs.toFixed(1)} V. The output ` +
+          `stage needs at least VIH + ${this.params.supplyHeadroomVolts} V = ` +
+          `${this.minSupplyVolts.toFixed(1)} V, so nothing is driven. ` +
+          `Vs is the "+12V" screw terminal, not the "+5V" one.`,
+      }
+    }
+
     this.readback(ctx)
     const i = Math.abs(this.current)
     if (i <= this.params.ratedAmps) return null
@@ -1495,7 +2446,60 @@ export class HBridgeChannel implements Device {
   }
 }
 
-/** Both halves of an L298N, wired from one part's pins. */
+/**
+ * The freewheel (flyback) diode an L298N output leg needs, and that the board
+ * modelled here carries eight of.
+ *
+ * THE CHIP HAS NONE. The L298 datasheet's own application circuit puts eight
+ * external fast diodes around the two bridges and states the requirement in one
+ * line — "VF <= 1.2 V at I = 2 A, trr <= 200 ns" — because without them the
+ * energy stored in the motor's inductance has nowhere to go when the outputs
+ * switch off and the output transistors take the whole of it. The red L298N
+ * breakout every kit ships (which is what `l298n` in the part library draws, VS
+ * and VSS screw terminals and all) has those eight diodes on it.
+ *
+ * `is` is DERIVED from that single datasheet line rather than fitted, the same
+ * way OPTO_LED's is, so it cannot drift away from its own justification:
+ *
+ *   Vf = n*VT*ln(If/Is)  =>  Is = If*exp(-Vf/(n*VT))
+ *      = 2 * exp(-1.2 / (1.9 * 0.025852))
+ *      = 2 * exp(-24.4269)  =  4.90e-11 A
+ *
+ * n = 1.9 is a power rectifier at amps rather than a signal diode at
+ * milliamps — high-level injection puts the ideality factor near 2, and the
+ * consequence that matters is that the reverse leakage is ~50 pA, four orders
+ * below anything a bridge measures, so adding eight of these changes no DC
+ * answer the model gave before them.
+ *
+ * The ratings are the ones the same line implies: the diode has to carry the
+ * bridge's own 2 A continuous rating and its 3 A non-repetitive peak, since in a
+ * freewheel path it carries exactly the current the motor was already drawing.
+ */
+export const DIODE_L298N_FREEWHEEL: DiodeParams = {
+  is: 4.9e-11,
+  n: 1.9,
+  ratedAmps: 2,
+  maxAmps: 3,
+  label: 'an L298N freewheel diode',
+}
+
+/**
+ * Both halves of an L298N, wired from one part's pins, plus the board's eight
+ * freewheel diodes.
+ *
+ * Two per output: one from GND up to OUT (the lower clamp) and one from OUT up
+ * to VS (the upper). At any DC operating point all eight are reverse-biased —
+ * a driven output sits a saturation drop INSIDE the rails by construction — so
+ * they cost nothing and change nothing until the bridge switches off with
+ * current still flowing in the winding, which is the moment they exist for.
+ * Then the inductance drives OUT past whichever rail it has to and one diode in
+ * each leg conducts, clamping the motor at −(Vs + 2·Vf) and returning the stored
+ * energy to the supply while the current decays.
+ *
+ * The diodes are omitted when VS is not wired: with no rail to clamp to, the
+ * upper diode would point at a floating node, and a board whose motor supply is
+ * missing has no freewheel path in reality either.
+ */
 export function createL298N(
   id: string,
   nets: {
@@ -1543,7 +2547,22 @@ export function createL298N(
     },
     params,
   )
-  return { devices: [a, b], channels: [a, b] }
+  const devices: Device[] = [a, b]
+  const vs = nets.vs
+  if (vs !== undefined) {
+    const outs: Array<[string, NetId | undefined]> = [
+      ['1', nets.out1],
+      ['2', nets.out2],
+      ['3', nets.out3],
+      ['4', nets.out4],
+    ]
+    for (const [k, out] of outs) {
+      if (out === undefined) continue
+      devices.push(new Diode(`${id}.dlo${k}`, nets.gnd, out, DIODE_L298N_FREEWHEEL))
+      devices.push(new Diode(`${id}.dhi${k}`, out, vs, DIODE_L298N_FREEWHEEL))
+    }
+  }
+  return { devices, channels: [a, b] }
 }
 
 // ─── Unipolar stepper ─────────────────────────────────────────────────────────
@@ -1553,6 +2572,19 @@ export interface StepperParams {
   ratedVolts: number
   /** DC resistance of ONE phase, COM to a phase lead, ohms. */
   phaseOhms: number
+  /**
+   * Inductance of ONE phase, COM to a phase lead, henries.
+   *
+   * The 28BYJ-48 datasheet does not print it either — it prints DC resistance
+   * and nothing else about the winding — and 300 mH is the figure this file
+   * already quoted in prose before anything integrated it. It is a measured
+   * hobbyist number rather than a manufacturer's, and what it asserts is an
+   * electrical time constant L/R of 300e-3/50 = 6 ms, which is the honest
+   * headline: a 28BYJ-48 driven faster than about one half-step per 6 ms never
+   * gets its full phase current, and that — not friction — is why the part goes
+   * limp and starts skipping somewhere above a few hundred steps per second.
+   */
+  phaseHenries: number
   /** Stride angle at the MOTOR shaft, degrees per half-step. */
   strideDegrees: number
   /** Internal gear reduction between motor shaft and output shaft. */
@@ -1584,13 +2616,15 @@ export interface StepperParams {
  *     falls about 0.5 % short (it takes ~4076 half-steps, not 4096). The model
  *     follows the datasheet, so a student's "step(4096) = one turn" arithmetic
  *     works out exactly here and would be half a degree out on the bench.
- *   - Windings are modelled by their DC resistance only. The ~300 mH of phase
- *     inductance is what limits the top step rate on real hardware; with no
- *     transient loop there is no rise time, so this model will happily follow a
- *     step sequence far faster than the part can, and it does not model the
- *     torque falling away with speed.
+ *   - The four phases share one magnetic circuit, so on a real motor they are
+ *     MUTUALLY coupled: energising one induces a voltage in its neighbours.
+ *     Each winding here is an independent series R–L, which gets the rise time
+ *     and the switch-off kick of a single phase right and models none of the
+ *     coupling between them.
  *   - Torque, holding torque and losing steps under load are not modelled. The
- *     model reports the position the COIL SEQUENCE commands.
+ *     model reports the position the COIL SEQUENCE commands, so a step rate the
+ *     phase current cannot keep up with still produces the commanded angle —
+ *     the current is right, the shaft is optimistic.
  *
  * `maxVolts` is 1.5x rated, the same convention DCMotor uses for a winding, and
  * is a judgement call rather than a datasheet line — the datasheet gives no
@@ -1599,6 +2633,7 @@ export interface StepperParams {
 export const STEPPER_28BYJ48: StepperParams = {
   ratedVolts: 5,
   phaseOhms: 50,
+  phaseHenries: 300e-3,
   strideDegrees: 5.625,
   gearRatio: 64,
   maxVolts: 7.5,
@@ -1711,6 +2746,23 @@ export class StepTracker {
  * That really is all a unipolar stepper is to the circuit — the position is a
  * property of the SEQUENCE in time, which a DC operating point cannot hold, so
  * it lives in the behavioural StepperMonitor exactly as a buzzer's pitch does.
+ *
+ * ─── WHY THE WINDINGS ARE SEPARATE DEVICES ────────────────────────────────────
+ *
+ * This class no longer stamps anything. Each phase is a `Winding` of its own,
+ * built by `createStepper()` and added to the circuit alongside the stepper,
+ * because a winding with inductance is a REACTIVE element and the reactive
+ * contract is per-element: `Circuit.smallestTimeConstant()` drives a test
+ * current between one element's `terminals` to size the step, and the engine
+ * carries one element's `state` across a recompile. Four coils folded into one
+ * device would have to answer both questions with one pair of nets and one
+ * number, which would mean three of the four phases silently losing their
+ * current on every canvas edit and only one of them ever being measured.
+ *
+ * Building the coils inside the constructor and handing them out through
+ * `coils` is what stops that being a footgun: there is no way to construct a
+ * stepper without them, and `createStepper()` returns the whole set as the
+ * device list to add — the same shape `createRelayModule` and `createL298N` use.
  */
 export class UnipolarStepper implements Device {
   readonly nonlinear = false
@@ -1722,31 +2774,52 @@ export class UnipolarStepper implements Device {
   /** Total current out of the common tap, amps. */
   current = 0
 
+  /**
+   * The four phase windings in phase order, `undefined` where the lead reached
+   * no net. THESE MUST BE ADDED TO THE CIRCUIT — use `createStepper()`.
+   */
+  readonly coils: ReadonlyArray<Winding | undefined>
+
   constructor(
     readonly id: string,
     private com: NetId,
     private phases: Array<NetId | undefined>,
     readonly params: StepperParams = STEPPER_28BYJ48,
-  ) {}
+  ) {
+    if (!Number.isFinite(params.phaseOhms) || params.phaseOhms <= 0) {
+      throw new Error(
+        `Stepper "${id}" has an invalid phase resistance (${params.phaseOhms}). ` +
+          `Winding resistance must be a finite, positive number.`,
+      )
+    }
+    this.coils = [0, 1, 2, 3].map((k) => {
+      const p = phases[k]
+      if (p === undefined) return undefined
+      const w = new Winding(
+        `${id}.phase${'ABCD'[k]}`,
+        com,
+        p,
+        params.phaseOhms,
+        params.phaseHenries,
+        'Stepper winding',
+      )
+      // The winding's rating is the WINDING's, not a quarter-watt resistor's: a
+      // 28BYJ-48 phase at its rated 5 V already dissipates 0.5 W, so the
+      // Resistor default would have called a correctly driven stepper burnt out.
+      // Above maxVolts the coil really is over-driven, and this class's own
+      // safety() names that fault properly, so the two cannot double-report.
+      w.rating = (params.maxVolts * params.maxVolts) / params.phaseOhms
+      return w
+    })
+  }
 
   /** Current one phase draws at its rated voltage, amps. */
   get ratedPhaseAmps(): number {
     return this.params.ratedVolts / Math.max(this.params.phaseOhms, MIN_RESISTANCE)
   }
 
-  stamp(ctx: StampContext): void {
-    if (!Number.isFinite(this.params.phaseOhms) || this.params.phaseOhms <= 0) {
-      throw new Error(
-        `Stepper "${this.id}" has an invalid phase resistance (${this.params.phaseOhms}). ` +
-          `Winding resistance must be a finite, positive number.`,
-      )
-    }
-    const g = 1 / Math.max(this.params.phaseOhms, MIN_RESISTANCE)
-    for (const p of this.phases) {
-      if (p === undefined) continue
-      stampConductance(ctx, this.com, p, g)
-    }
-  }
+  /** The windings carry the electricity. See the class note. */
+  stamp(): void {}
 
   /** Voltage across one winding, COM − phase. An open lead reads 0. */
   phaseVolts(ctx: StampContext, k: number): number {
@@ -1755,11 +2828,22 @@ export class UnipolarStepper implements Device {
     return ctx.voltage(this.com) - ctx.voltage(p)
   }
 
+  /**
+   * Current through one winding, COM → phase lead, amps.
+   *
+   * Computed from the winding's own companion rather than read off
+   * `Winding.current`, so it does not depend on whether the solver happened to
+   * call the coil's readback() before this one's.
+   */
+  phaseCurrent(ctx: StampContext, k: number): number {
+    const coil = this.coils[k]
+    return coil === undefined ? 0 : coil.currentThrough(ctx)
+  }
+
   readback(ctx: StampContext): void {
-    const r = Math.max(this.params.phaseOhms, MIN_RESISTANCE)
     let total = 0
     for (let k = 0; k < this.phaseCurrents.length; k++) {
-      const i = this.phaseVolts(ctx, k) / r
+      const i = this.phaseCurrent(ctx, k)
       this.phaseCurrents[k] = i
       total += i
     }
@@ -1767,9 +2851,20 @@ export class UnipolarStepper implements Device {
   }
 
   safety(ctx: StampContext): SolveFault | null {
+    /**
+     * The WINDING's own drop, i·R, for the reason DCMotor.safety() uses it: the
+     * two are identical at every steady state, and they differ only while an
+     * inductance is driving the terminals during a switch-off. A ULN2003's
+     * flyback diodes clamp a phase lead to COM + Vf, so a correctly wired
+     * stepper never sees more than a diode drop of reverse voltage — but a
+     * student who leaves COM unwired has no clamp at all, and reporting the
+     * unbounded L·di/dt that follows as "the insulation fails" would be a
+     * destructive verdict fired by the timestep rather than by the circuit.
+     */
+    const r = Math.max(this.params.phaseOhms, MIN_RESISTANCE)
     let worst = 0
     for (let k = 0; k < this.phaseCurrents.length; k++) {
-      worst = Math.max(worst, Math.abs(this.phaseVolts(ctx, k)))
+      worst = Math.max(worst, Math.abs(this.phaseCurrent(ctx, k)) * r)
     }
     if (worst <= this.params.ratedVolts) return null
     if (worst <= this.params.maxVolts) {
@@ -1777,7 +2872,7 @@ export class UnipolarStepper implements Device {
         kind: 'over_power',
         severity: 'caution',
         deviceId: this.id,
-        value: (worst * worst) / Math.max(this.params.phaseOhms, MIN_RESISTANCE),
+        value: (worst * worst) / r,
         message:
           `${worst.toFixed(1)} V across a winding rated for ${this.params.ratedVolts} V. ` +
           `It turns, but a stepper holds its coils energised continuously and this one is ` +
@@ -1788,12 +2883,28 @@ export class UnipolarStepper implements Device {
       kind: 'over_power',
       severity: 'destructive',
       deviceId: this.id,
-      value: (worst * worst) / Math.max(this.params.phaseOhms, MIN_RESISTANCE),
+      value: (worst * worst) / r,
       message:
         `${worst.toFixed(1)} V across a ${this.params.ratedVolts} V winding. ` +
         `On real hardware the insulation fails.`,
     }
   }
+}
+
+/**
+ * A stepper and the four windings that carry its current — the whole electrical
+ * part, as one device list to add. See the note on UnipolarStepper.
+ */
+export function createStepper(
+  id: string,
+  com: NetId,
+  phases: Array<NetId | undefined>,
+  params: StepperParams = STEPPER_28BYJ48,
+): { devices: Device[]; stepper: UnipolarStepper } {
+  const stepper = new UnipolarStepper(id, com, phases, params)
+  const devices: Device[] = [stepper]
+  for (const coil of stepper.coils) if (coil !== undefined) devices.push(coil)
+  return { devices, stepper }
 }
 
 // ─── Opto-isolated relay module ───────────────────────────────────────────────
@@ -1818,7 +2929,21 @@ export class UnipolarStepper implements Device {
  * asserts the model reproduces 1.2 V at 20 mA, so the constant cannot drift
  * away from its own derivation.
  */
-export const OPTO_LED: DiodeParams = { is: 1.2633e-13, n: 1.8 }
+export const OPTO_LED: DiodeParams = {
+  is: 1.2633e-13,
+  n: 1.8,
+  /**
+   * Sharp PC817 datasheet, absolute maximum ratings: forward current IF 50 mA,
+   * with the electro-optical characteristics all taken at IF = 20 mA. So 20 mA
+   * is the current the part is CHARACTERISED at (the caution) and 50 mA is the
+   * one it is destroyed above (the destruction) — the same two numbers
+   * RelayChannel.safety() already quotes for the opto, now on the junction
+   * itself so the two cannot disagree.
+   */
+  ratedAmps: 0.02,
+  maxAmps: 0.05,
+  label: 'an opto-coupler LED',
+}
 
 /**
  * A four-channel opto-isolated relay board, as sold for Arduino/Pi kits.
@@ -1882,6 +3007,23 @@ export interface RelayModuleParams {
   coilVolts: number
   /** Coil DC resistance, ohms. */
   coilOhms: number
+  /**
+   * Coil inductance, henries.
+   *
+   * NOT on the Songle SRD-05VDC-SL-C datasheet, which prints coil resistance,
+   * nominal coil power and the operate/release times and says nothing at all
+   * about the winding. 50 mH is a representative measured figure for a
+   * miniature 5 V power-relay coil of this size, and the claim it makes is
+   * checkable against the numbers the datasheet DOES print: L/R = 50e-3/70 =
+   * 714 µs, so the coil reaches its pull-in current in under a millisecond,
+   * while the datasheet's operate time is 10 ms and its release time 5 ms.
+   *
+   * THAT GAP IS THE POINT. A relay's delay is the armature moving, not the
+   * current arriving — which is exactly why giving the coil an inductance does
+   * NOT give the model a pull-in delay, and why that limitation survives the
+   * change while the flyback one does not.
+   */
+  coilHenries: number
   /** Must-operate coil voltage, volts. */
   pullInVolts: number
   /** Must-release coil voltage, volts. */
@@ -1912,6 +3054,7 @@ export interface RelayModuleParams {
 export const RELAY_MODULE_4CH: RelayModuleParams = {
   coilVolts: 5,
   coilOhms: 70,
+  coilHenries: 50e-3,
   pullInVolts: 3.75,
   dropOutVolts: 0.5,
   maxCoilVolts: 5.5,
@@ -2116,12 +3259,18 @@ export class RelayChannel implements Device {
  * side. They are real nodes on the real board, and the compiler allocates them
  * exactly the way it allocates an LED's internal series node.
  *
- * THE FLYBACK DIODE IS STAMPED AND IS INERT AT DC, exactly as the ULN2003's are
- * and for the same reason: an energised coil pulls its low side DOWN, so a diode
- * from that node up to VCC is always reverse-biased at an operating point. Its
- * job is to absorb the inductive kick when the coil switches OFF, and that is a
- * transient the interactive engine does not run yet. It is modelled rather than
- * omitted because it is real silicon on the board.
+ * THE FLYBACK DIODE IS INERT AT DC AND CONDUCTS ON RELEASE. It is inert at an
+ * operating point for the reason the ULN2003's are: an energised coil pulls its
+ * low side DOWN, so a diode from that node up to VCC is reverse-biased whenever
+ * the circuit is standing still. Its job is the moment the circuit is not — the
+ * coil is a `Winding` now, 70 Ω and 50 mH in one branch, so when the driver
+ * turns off the current in it has to keep flowing and the only path left is up
+ * through this diode into VCC. The coil node lands one diode drop above VCC,
+ * the current decays as exp(−t·R/L), and the transient loop integrates it.
+ *
+ * (An earlier version of this note said the kick was "a transient the
+ * interactive engine does not run yet". That stopped being true when transient
+ * integration was coupled into the engine, and the stale sentence outlived it.)
  *
  * A channel is built only where `internal` carries a slot for it — the compiler
  * fills that in from the netlist, so channels nothing is attached to cost
@@ -2176,7 +3325,8 @@ export function createRelayModule(
     devices.push(new Resistor(`${id}.rin${k + 1}`, optoJunction, seriesEnd, params.inputOhms))
 
     /**
-     * The coil, from the module's own VCC down to the driver's collector.
+     * The coil, from the module's own VCC down to the driver's collector. A
+     * WINDING, not a resistor: 70 Ω and 50 mH in one branch, integrated in time.
      *
      * Its power rating is the COIL's, not a quarter-watt resistor's. An
      * SRD-05VDC dissipates 0.36 W at its nominal 5 V and is rated to 110 % of
@@ -2185,7 +3335,14 @@ export function createRelayModule(
      * circuit. Above this the coil really is over-volted, and RelayChannel's own
      * safety() names that fault properly, so the two cannot double-report.
      */
-    const coil = new Resistor(`${id}.coil${k + 1}`, nets.vcc, coilNode, params.coilOhms)
+    const coil = new Winding(
+      `${id}.coil${k + 1}`,
+      nets.vcc,
+      coilNode,
+      params.coilOhms,
+      params.coilHenries,
+      'Relay coil',
+    )
     coil.rating = (params.maxCoilVolts * params.maxCoilVolts) / params.coilOhms
     devices.push(coil)
     // Flyback: anode on the collector, cathode on VCC. See the note above.

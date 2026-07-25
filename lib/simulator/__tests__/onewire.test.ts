@@ -41,9 +41,9 @@ import {
   STEPPER_28BYJ48,
   StepTracker,
   ULN2003,
-  UnipolarStepper,
   VoltageSource,
   createL298N,
+  createStepper,
   createULN2003,
   degreesPerHalfStep,
   halfStepsPerRevolution,
@@ -1815,8 +1815,10 @@ group('8. 28BYJ-48 — the windings, and what the shaft does')
   c.add(new VoltageSource('v', com, 0, 5))
   c.add(new VoltageSource('ga', a, 0, 0))
   c.add(new VoltageSource('gb', b, 0, 0))
-  const m = new UnipolarStepper('m', com, [a, b, undefined, undefined])
-  c.add(m)
+  // createStepper, not `new UnipolarStepper`: the four phase windings are
+  // separate reactive devices and the circuit needs all of them.
+  const { devices: coils, stepper: m } = createStepper('m', com, [a, b, undefined, undefined])
+  c.add(...coils)
   const res = c.solve()
   const iPhase = SHEET.stepper.ratedVolts / SHEET.stepper.phaseOhms
   truth('the windings solve', res.ok, 'ok:true', `ok:${res.ok} ${res.error ?? ''}`)
@@ -1835,8 +1837,8 @@ group('8. 28BYJ-48 — the windings, and what the shaft does')
     const a = c.allocNet()
     c.add(new VoltageSource('v', com, 0, volts))
     c.add(new VoltageSource('g', a, 0, 0))
-    const m = new UnipolarStepper('m', com, [a, undefined, undefined, undefined])
-    c.add(m)
+    const { devices: coils, stepper: m } = createStepper('m', com, [a, undefined, undefined, undefined])
+    c.add(...coils)
     return { res: c.solve(), m }
   }
   truth('5 V raises nothing', rig(5).res.faults.length === 0, '0 faults', `${rig(5).res.faults.length} faults`)
@@ -1978,8 +1980,8 @@ group('9. The whole drive chain — GPIO → ULN2003 → 28BYJ-48')
     gnd: 0,
   })
   c.add(...devices)
-  const motor = new UnipolarStepper('m', rail, outs)
-  c.add(motor)
+  const { devices: motorDevices, stepper: motor } = createStepper('m', rail, outs)
+  c.add(...motorDevices)
 
   // Drive IN1 only, as the first entry of the ring does.
   pads[0].volts = 3.3
@@ -2018,7 +2020,7 @@ group('9. The whole drive chain — GPIO → ULN2003 → 28BYJ-48')
   c.add(...pads)
   const { devices } = createULN2003('u1', { in: ins, out: outs, com: rail, gnd: 0 })
   c.add(...devices)
-  c.add(new UnipolarStepper('m', rail, outs))
+  c.add(...createStepper('m', rail, outs).devices)
 
   const h = new StepHarness()
   const monitor = new StepperMonitor('s1', h)

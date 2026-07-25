@@ -2,8 +2,15 @@
  * Core types for the VLab circuit simulator.
  *
  * Net 0 is always ground. Every other net gets a row/column in the MNA matrix.
- * See SIMULATOR_ARCHITECTURE.md §2 for why this is a DC operating-point solver
- * with no transient integration in the hot loop.
+ *
+ * This solves a DC operating point, and ALSO steps a backward-Euler transient
+ * when the circuit holds a reactive element — `Circuit.hasReactive` decides,
+ * and `Engine.tuneStep()` picks the step from the circuit's own smallest time
+ * constant. The header here used to say there was "no transient integration in
+ * the hot loop"; that stopped being true and the stale line outlived it.
+ *
+ * SIMULATOR_ARCHITECTURE.md is design intent, not an as-built record — it
+ * describes several things that were never implemented. Trust this code.
  */
 
 export type NetId = number
@@ -109,7 +116,18 @@ export interface Device {
  * without pretending the maths failed.
  */
 export interface SolveFault {
-  kind: 'over_current' | 'over_power' | 'short_circuit'
+  /**
+   * `supply_range` is the odd one out and is here for an honesty reason.
+   *
+   * The other three all describe something being EXCEEDED. An L298N whose Vs
+   * sits below VIH + 2.5 V is not over anything — it is a part that has been
+   * told to drive and physically cannot, which is the single most useful thing
+   * the model knows about a motor that will not turn. Filing it under
+   * `over_power` put the words "OVER POWER" on the Checks badge of an
+   * UNDER-voltage, which is exactly the kind of confidently-wrong attribution
+   * the rest of this work exists to remove.
+   */
+  kind: 'over_current' | 'over_power' | 'short_circuit' | 'supply_range'
   /**
    * How far past the line the circuit is:
    *

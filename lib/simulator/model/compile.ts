@@ -15,15 +15,21 @@ import {
   NortonPort,
   RELAY_MODULE_4CH,
   Resistor,
+  SENSOR_SUPPLIES,
+  SensorPort,
+  SensorSupply,
   STEPPER_28BYJ48,
   ULN2003,
-  UnipolarStepper,
   VoltageSource,
+  Winding,
   createL298N,
   createLED,
   createRelayModule,
+  createStepper,
   createULN2003,
+  type DarlingtonSink,
   type Diode,
+  type HBridgeChannel,
   type ReactiveDevice,
 } from '../devices'
 import type { NetId } from '../types'
@@ -65,6 +71,17 @@ export interface ShortedPin {
   volts: number
 }
 
+/**
+ * The channels of one driver IC, tagged by which kind it is.
+ *
+ * A discriminated union rather than two maps, because the reader
+ * (analog-state.ts) has to switch on the kind anyway to describe them, and two
+ * maps would let a part appear in neither or — worse — in both.
+ */
+export type DriverChannels =
+  | { kind: 'h_bridge'; channels: HBridgeChannel[] }
+  | { kind: 'darlington_array'; channels: DarlingtonSink[]; indices: number[] }
+
 export interface CompileResult {
   circuit: Circuit
   /** pinKey → solver net id. Ground is 0. */
@@ -87,7 +104,22 @@ export interface CompileResult {
    */
   meters: Map<string, { readonly id: string; current: number }>
   /**
-   * Part id → its capacitor or inductor.
+   * Part id → the switching channels of a driver IC, so the engine can report
+   * what the driver is DOING.
+   *
+   * These devices already compute everything a student needs — an
+   * HBridgeChannel's mode (coast/forward/reverse/brake) and its two supply
+   * verdicts, a DarlingtonSink's on/off and its collector current — on every
+   * single solve, and until this map existed all of it was thrown away. The
+   * result was two parts, both electrically excellent, that could not tell a
+   * student why their motor was not turning. Handed over by NAME for the same
+   * reason `reactive` is: the engine has a `Circuit` full of anonymous devices
+   * and no way back to the part the student can see.
+   */
+  drivers: Map<string, DriverChannels>
+  /**
+   * Name → every element that stores energy: capacitors, inductors, and the
+   * WINDINGS inside motors, relay coils and stepper phases.
    *
    * The engine needs these by NAME, not just as anonymous members of the
    * circuit, for one reason: compile() runs on every document edit and builds a
@@ -96,6 +128,13 @@ export interface CompileResult {
    * half-charged capacitor across an edit, and dragging the part two pixels
    * would silently dump its charge — the PIR-hold-timer defect again, in the
    * analog half of the engine.
+   *
+   * THE KEY IS THE PART ID where the part IS the element (a capacitor, an
+   * inductor, a motor) and the DEVICE id where one part holds several (a relay
+   * board's four coils, a stepper's four phases: `relay_1.coil1`,
+   * `stepper_1.phaseA`). Both are stable across a recompile of the same
+   * document, which is all the carry-over needs; `analog-state.ts` only ever
+   * looks this map up for `kind: 'reactive'` parts, where the key is the part id.
    */
   reactive: Map<string, ReactiveDevice>
   /** Analog pin name (A0…A5) → the net it reads, for the ADC. */
@@ -154,6 +193,16 @@ interface DeadLead {
   /** Breadboard holes this lead reaches, for channel-crossing detection. */
   coords: Array<{ bank: 'lower' | 'upper'; col: number; hole: string }>
 }
+
+/**
+ * Ground pin ids a sensor module may declare, in the order the supply check
+ * prefers them.
+ *
+ * Only the MCP3008 has more than one, and DGND leads because the digital supply
+ * current returns there — see the sensor branch of compile() for the rest of the
+ * reasoning. Every other part declares exactly `GND`, so the order costs nothing.
+ */
+const SENSOR_GROUND_PINS = ['GND', 'DGND', 'AGND'] as const
 
 class DSU {
   private parent = new Map<string, string>()
@@ -272,11 +321,24 @@ export function compile(doc: CircuitDoc): CompileResult {
 
   const net = (ref: PinRef): NetId | undefined => netOf.get(pinKeyOf(ref))
 
+  /**
+   * Is this pin ATTACHED to anything — i.e. does its net carry a second
+   * component terminal, so current could flow in one and out another?
+   *
+   * Topological, not a wire count: a jumper into a dead breadboard column is
+   * still unattached, which is also exactly what it is. This is the same rule
+   * the dangling-lead detection at the foot of compile() uses, hoisted so the
+   * relay board and the ULN2003 can share one definition of "wired up" with it.
+   */
+  const joined = (partId: string, pinId: string): boolean =>
+    (componentPins.get(dsu.find(pinKeyOf({ partId, pinId }))) ?? 0) >= 2
+
   // ─── Instantiate devices ───
   const mcuPorts = new Map<string, NortonPort>()
   const leds = new Map<string, Diode>()
   const motors = new Map<string, DCMotor>()
   const meters = new Map<string, { readonly id: string; current: number }>()
+  const drivers = new Map<string, DriverChannels>()
   const reactive = new Map<string, ReactiveDevice>()
   const analogNets = new Map<string, NetId>()
   const pinNets = new Map<string, NetId>()
@@ -334,14 +396,6 @@ export function compile(doc: CircuitDoc): CompileResult {
       const r = new Resistor(part.id, a, b, ohms)
       circuit.add(r)
       meters.set(part.id, r)
-    } else if (el.kind === 'load') {
-      const pins = def.pins
-      const a = net({ partId: part.id, pinId: pins[0].id })
-      const b = net({ partId: part.id, pinId: pins[1].id })
-      if (a === undefined || b === undefined) continue
-      const r = new Resistor(part.id, a, b, el.ohms)
-      circuit.add(r)
-      meters.set(part.id, r)
     } else if (el.kind === 'buzzer') {
       const a = net({ partId: part.id, pinId: 'P' })
       const b = net({ partId: part.id, pinId: 'N' })
@@ -361,10 +415,27 @@ export function compile(doc: CircuitDoc): CompileResult {
         ports: {},
       })
       if (passive) {
+        /**
+         * THE ONE COIL-LIKE PART THAT WAS NOT GIVEN A REACTIVE MODEL, and the
+         * reason is the timestep rather than the physics.
+         *
+         * A 10 nF piezo on a driving pin (25 Ω) has τ = 250 ns. The engine's
+         * floor is 20 µs — eighty times coarser — so a Capacitor here would
+         * transfer the right CHARGE per edge (backward Euler conserves it) and
+         * report it as a current spread over one whole step: about 2.5 mA for
+         * 20 µs where the real part draws 200 mA for 250 ns. The average would
+         * be right and the reading would be off by eighty. Modelling it would
+         * also put every tone() circuit into the transient loop to produce a
+         * number nobody can use. So the element stays a 1e-12 S open, the
+         * limitation says what that costs, and the pitch — which is what the
+         * part is for — comes from the behavioural monitor.
+         */
         limitations.push(
-          'A passive buzzer is a piezo element — a capacitor — so no DC current flows ' +
-            'through it. The pitch it is being driven at is reported, but the current ' +
-            'reads zero because that is its true DC steady state.',
+          'A passive buzzer is a bare piezo element: about 10 nF of capacitance and no DC ' +
+            'path at all, so the current through it reads zero. Its real current is a ' +
+            'displacement spike lasting a few hundred nanoseconds on each edge of the drive ' +
+            'waveform — far shorter than the timestep this simulator runs at, so there is no ' +
+            'honest reading of it to show. The pitch it is being driven at is reported instead.',
         )
       }
     } else if (el.kind === 'motor') {
@@ -376,10 +447,18 @@ export function compile(doc: CircuitDoc): CompileResult {
       circuit.add(m)
       meters.set(part.id, m)
       motors.set(part.id, m)
+      reactive.set(part.id, m)
+      /**
+       * The armature's INDUCTANCE is modelled and integrated, so the current
+       * ramps in and the switch-off kick is real. Rotor INERTIA is not, and the
+       * two are different things — this note now says only the second, because
+       * the first stopped being a limitation when DCMotor became a winding.
+       */
       limitations.push(
-        'The motor is solved at its steady state. Start-up inrush, rotor inertia and ' +
-          'the inductive spike when it is switched off all need transient simulation, ' +
-          'which the interactive engine does not run yet.',
+        'The motor winding has real inductance, so its current ramps up and it kicks back ' +
+          'when switched off. Rotor inertia is not modelled: speed still follows current ' +
+          'instantly, so the large start-up current surge a real motor draws while its ' +
+          'shaft is still stationary does not appear.',
       )
     } else if (el.kind === 'darlington_array') {
       /**
@@ -401,9 +480,38 @@ export function compile(doc: CircuitDoc): CompileResult {
       // unused channels cost nothing; and a COM that never reached a net gets no
       // flyback diode, which is also what the hardware does.
       const com = net({ partId: part.id, pinId: 'COM' })
-      const { devices } = createULN2003(part.id, { in: ins, out: outs, com, gnd })
+      const { devices, channels } = createULN2003(part.id, { in: ins, out: outs, com, gnd })
       if (devices.length === 0) continue
       circuit.add(...devices)
+      /**
+       * WHICH channel each entry of `channels` IS.
+       *
+       * createULN2003 skips any channel whose input net is undefined, so the
+       * array is not necessarily 1..7 and `channels[0]` is not necessarily
+       * channel 1 — a readout that assumed it would report a 28BYJ-48 driven
+       * from IN4..IN7 as channels 1..4. Derived from the same condition
+       * createULN2003 itself tests, rather than assumed.
+       *
+       * In practice every channel IS built today, because a ULN2003 pin always
+       * earns a net of its own (a non-MCU pin makes its root active on its own),
+       * so `ins[k]` is never undefined. That is fine and costs a few conductance
+       * stamps; what it means is that "built" is not the same question as
+       * "wired", which is why the metering below asks the second one.
+       */
+      const indices: number[] = []
+      for (let k = 0; k < ins.length; k++) if (ins[k] !== undefined) indices.push(k + 1)
+      drivers.set(part.id, { kind: 'darlington_array', channels, indices })
+      /**
+       * Meter only the channels the student actually WIRED an input to.
+       *
+       * Metering all seven would put five rows of 0.00 mA in the Measurements
+       * panel of a correctly built stepper circuit — the same noise the
+       * dangling-lead detection already refuses to produce for the spare pins of
+       * a multi-channel driver, and for the same reason.
+       */
+      for (let k = 0; k < channels.length; k++) {
+        if (joined(part.id, `IN${indices[k]}`)) meters.set(`${part.id}.ch${indices[k]}`, channels[k])
+      }
     } else if (el.kind === 'h_bridge') {
       const gnd = net({ partId: part.id, pinId: 'GND' })
       if (gnd === undefined) continue
@@ -420,7 +528,7 @@ export function compile(doc: CircuitDoc): CompileResult {
        */
       const logic = (pinId: string): NetId => net({ partId: part.id, pinId }) ?? gnd
       const out = (pinId: string) => net({ partId: part.id, pinId })
-      const { devices } = createL298N(part.id, {
+      const { devices, channels } = createL298N(part.id, {
         in1: logic('IN1'),
         in2: logic('IN2'),
         ena: logic('ENA'),
@@ -436,20 +544,39 @@ export function compile(doc: CircuitDoc): CompileResult {
         gnd,
       })
       circuit.add(...devices)
-      limitations.push(
-        'The motor driver is solved at a DC operating point. Its ~2.5 V transistor drop is ' +
-          'modelled, but switching a motor off produces no inductive kick, so the flyback ' +
-          'diodes never conduct and the bridge is never seen doing the job it is there for. ' +
-          'That needs transient simulation, which the interactive engine does not run yet.',
-      )
+      drivers.set(part.id, { kind: 'h_bridge', channels })
+      // Per channel, keyed exactly as the channel's own fault deviceId is
+      // (`l298n_1.A`), so a milliamp figure in Measurements and a fault in
+      // Checks name the same thing.
+      for (const ch of channels) meters.set(ch.id, ch)
+      /**
+       * NO LIMITATION IS PUSHED HERE ANY MORE.
+       *
+       * The one that used to be here said the flyback diodes never conduct,
+       * because nothing ever produced an inductive kick for them to catch. Both
+       * halves of that are now false: the
+       * board's eight freewheel diodes are stamped (createL298N), the motor on
+       * the output is a winding, and switching the bridge off drives the output
+       * past a rail until one diode in each leg conducts and carries the decay.
+       * The ~2.5 V transistor drop the note also mentioned was never a
+       * limitation — it is modelled, and it is the lesson.
+       */
     } else if (el.kind === 'stepper') {
       const com = net({ partId: part.id, pinId: 'COM' })
       // No common tap on a net means no winding has a return path, so there is
       // nothing to stamp and no position to report.
       if (com === undefined) continue
       const phases = ['A', 'B', 'C', 'D'].map((p) => net({ partId: part.id, pinId: p }))
-      const st = new UnipolarStepper(part.id, com, phases, STEPPER_28BYJ48)
-      circuit.add(st)
+      // The four phase windings are separate reactive devices; see the note on
+      // UnipolarStepper for why they cannot be folded into one.
+      const { devices: stepperDevices, stepper: st } = createStepper(
+        part.id,
+        com,
+        phases,
+        STEPPER_28BYJ48,
+      )
+      circuit.add(...stepperDevices)
+      for (const coil of st.coils) if (coil !== undefined) reactive.set(coil.id, coil)
       // The total current out of the common tap. The four coil currents are not
       // separately metered: they are what the driver's channels sink, and the
       // shaft position the monitor reports is the reading that matters.
@@ -467,12 +594,19 @@ export function compile(doc: CircuitDoc): CompileResult {
         if (n !== undefined) stepperNets[pin.id] = n
       }
       behavioural.push({ partId: part.id, protocol: 'stepper', nets: stepperNets, ports: {} })
+      /**
+       * The ELECTRICAL half of the old warning is gone — each phase is a 50 Ω /
+       * 300 mH winding now, integrated in time, so there is a rise time and
+       * there is a kick. What survives is the MECHANICAL half, which no amount
+       * of circuit solving reaches: this model has no rotor and no torque, so it
+       * reports the angle the sequence commanded whatever the current did.
+       */
       limitations.push(
-        'The stepper is solved at a DC operating point: the angle reported is the one the ' +
-          'coil sequence commands. Winding inductance is not modelled, so there is no coil ' +
-          'rise time, no torque falling away as the step rate climbs, and no inductive kick ' +
-          'when a phase switches off — a real 28BYJ-48 starts losing steps long before this ' +
-          'model would.',
+        'Each stepper winding has real inductance (50 Ω, 300 mH), so the phase current takes ' +
+          'about 6 ms to build and kicks back into the driver when the phase switches off. ' +
+          'The shaft, though, is not simulated: the angle reported is the one the coil ' +
+          'sequence commands, so this model still keeps up at step rates where a real ' +
+          '28BYJ-48 would run out of torque and start losing steps.',
       )
     } else if (el.kind === 'relay_module') {
       /**
@@ -501,9 +635,6 @@ export function compile(doc: CircuitDoc): CompileResult {
       const vcc = net({ partId: part.id, pinId: 'VCC' })
       if (gnd === undefined || vcc === undefined) continue
 
-      const joined = (pinId: string): boolean =>
-        (componentPins.get(dsu.find(pinKeyOf({ partId: part.id, pinId }))) ?? 0) >= 2
-
       const ins: Array<NetId | undefined> = []
       const coms: Array<NetId | undefined> = []
       const nos: Array<NetId | undefined> = []
@@ -521,7 +652,10 @@ export function compile(doc: CircuitDoc): CompileResult {
         nos.push(net({ partId: part.id, pinId: `NO${k}` }))
         ncs.push(net({ partId: part.id, pinId: `NC${k}` }))
         const used =
-          joined(`IN${k}`) || joined(`COM${k}`) || joined(`NO${k}`) || joined(`NC${k}`)
+          joined(part.id, `IN${k}`) ||
+          joined(part.id, `COM${k}`) ||
+          joined(part.id, `NO${k}`) ||
+          joined(part.id, `NC${k}`)
         if (!used) {
           internal.push(undefined)
           continue
@@ -546,11 +680,20 @@ export function compile(doc: CircuitDoc): CompileResult {
       )
       if (devices.length > 0) {
         circuit.add(...devices)
+        for (const d of devices) if (d instanceof Winding) reactive.set(d.id, d)
+        /**
+         * WHAT SURVIVES IS THE MECHANICS. The coil is a 70 Ω / 50 mH winding
+         * now, so the flyback diode really does carry the release current — that
+         * clause is deleted rather than softened. But pull-in delay and contact
+         * bounce were never electrical: the coil reaches its pull-in current in
+         * L/R = 714 µs and the armature takes the datasheet's 10 ms to move,
+         * which is thirteen times longer. Adding inductance does not buy them.
+         */
         limitations.push(
-          'The relay is solved at a DC operating point: the contact is where the coil current ' +
-            'says it should be. Coil inductance is not modelled, so there is no 5–10 ms pull-in ' +
-            'delay, no contact bounce, and the flyback diode is never seen absorbing the ' +
-            'inductive kick it is there for — all of which need transient simulation.',
+          'The relay coil is a real winding (70 Ω, 50 mH), so it charges and its flyback ' +
+            'diode carries the current when the coil is switched off. The ARMATURE is not ' +
+            'simulated: the contact moves the instant the coil current says it should, with ' +
+            'none of the 10 ms pull-in delay, 5 ms release or contact bounce a real relay has.',
         )
       }
       /**
@@ -569,14 +712,57 @@ export function compile(doc: CircuitDoc): CompileResult {
         const n = net({ partId: part.id, pinId: pin.id })
         if (n !== undefined) nets[pin.id] = n
       }
-      // Each driven pin gets its own Norton port, permanently stamped and
-      // starting released (high impedance) so it cannot fight whatever else is
-      // on the wire before the model has decided anything.
+
+      /**
+       * THE SUPPLY PIN IS A DEVICE NOW, and that is what gives these seven parts
+       * a safety() at all.
+       *
+       * Until this branch stamped one, `kind:'sensor'` built Norton ports and
+       * nothing else — so a DHT11 on 12 V, or a DS18B20 with GND and VDD
+       * reversed, produced a green Checks panel. See SensorSupply in devices.ts.
+       *
+       * BOTH terminals are required. A supply pin with no ground return draws
+       * nothing and destroys nothing on a bench either — 12 V on a VCC whose GND
+       * is in the air is a floating island, not a dead sensor — so a part
+       * missing either one is stamped nothing and reports nothing, which is the
+       * honest answer rather than a convenient one.
+       *
+       * GROUND IS THE FIRST DECLARED GROUND PIN THAT REACHED A NET. Six of the
+       * seven have exactly one; the MCP3008 has two, and the order below is
+       * DGND first because that is the return the digital supply current
+       * actually flows in — and because MCP3008Device.supply() in behavioural.ts
+       * already reads `VDD − DGND`, so the safety check and the model agree
+       * about what "the supply" is by construction.
+       */
+      const supplyParams = SENSOR_SUPPLIES[el.protocol]
+      const supplyNet = supplyParams === undefined ? undefined : nets[supplyParams.supplyPin]
+      const groundNet = SENSOR_GROUND_PINS.map((p) => nets[p]).find((n) => n !== undefined)
+      if (supplyParams !== undefined && supplyNet !== undefined && groundNet !== undefined) {
+        circuit.add(new SensorSupply(`${part.id}.supply`, supplyNet, groundNet, supplyParams))
+      }
+
+      /**
+       * Each driven pin gets its own Norton port, permanently stamped and
+       * starting released (high impedance) so it cannot fight whatever else is
+       * on the wire before the model has decided anything.
+       *
+       * A SensorPort rather than a bare NortonPort, and the difference is not
+       * cosmetic: a NortonPort's safety() carries the ATmega328P's pad ratings
+       * and the ATmega328P's wording, so overloading an HC-SR04's ECHO used to
+       * report "…mA through a pin rated for 40 mA … this pin is destroyed"
+       * against `hcs_4.echo`. Wrong part, wrong datasheet, stated with total
+       * confidence. A protocol with no ratings row falls back to the plain port
+       * rather than inventing one.
+       */
       const ports: Record<string, NortonPort> = {}
       for (const signal of el.drives) {
         const n = nets[signal]
         if (n === undefined) continue
-        const port = new NortonPort(`${part.id}.${signal.toLowerCase()}`, 0, n, 1e-9, 0)
+        const id = `${part.id}.${signal.toLowerCase()}`
+        const port =
+          supplyParams === undefined
+            ? new NortonPort(id, 0, n, 1e-9, 0)
+            : new SensorPort(id, 0, n, 1e-9, 0, supplyParams, signal)
         circuit.add(port)
         ports[signal] = port
       }
@@ -886,6 +1072,7 @@ export function compile(doc: CircuitDoc): CompileResult {
     leds,
     motors,
     meters,
+    drivers,
     reactive,
     analogNets,
     pinNets,

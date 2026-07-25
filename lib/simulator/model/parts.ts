@@ -74,8 +74,19 @@ export interface PartDefinition {
     | { kind: 'potentiometer'; totalOhms: number }
     /** A resistance the student varies with a slider — LDR, thermistor. */
     | { kind: 'variable_resistor'; minOhms: number; maxOhms: number }
-    /** Modelled by its coil/driver resistance; activity is reported, not solved. */
-    | { kind: 'load'; ohms: number; label: string }
+    /**
+     * NOTE: there is no `load` kind any more.
+     *
+     * `{kind:'load'; ohms; label}` used to sit here — "modelled by its coil/
+     * driver resistance; activity is reported, not solved" — and was how the
+     * buzzer and the motor were first stamped. Both have had real device models
+     * for a long time (Buzzer has two electrically different modes, DCMotor is
+     * built from four datasheet numbers), and by the time this was removed NO
+     * part in PART_LIBRARY used the variant at all, while compile() still
+     * carried a live branch for it. Dead code shaped like a supported feature is
+     * worse than no feature: the next part that wanted "just a resistance" would
+     * have reached for it and got a model that reports nothing.
+     */
     | { kind: 'diode' }
     /**
      * Electro-acoustic transducer. Two very different parts share the name: an
@@ -128,11 +139,12 @@ export interface PartDefinition {
      */
     | { kind: 'stepper' }
     /**
-     * Capacitor or inductor. The interactive engine is DC-only, so these are
-     * solved at their DC limit — a cap is open, an inductor is a wire. That is
-     * the correct steady state, but charge and discharge need transient
-     * simulation, which does not exist yet. The compiler says so out loud
-     * rather than letting the part sit there doing nothing (§2.3).
+     * Capacitor or inductor, integrated in time. A plain `solve()` still stamps
+     * them at their DC limit — a cap is open, an inductor is a wire, which is
+     * the correct steady state — but `Circuit.hasReactive` puts the engine into
+     * a backward-Euler loop, so charge and discharge are real. (This comment
+     * used to say the engine was DC-only. It stopped being true when transient
+     * integration was coupled in, and the stale sentence outlived it.)
      */
     | { kind: 'reactive'; element: 'capacitor' | 'inductor' }
     | { kind: 'passive' }
