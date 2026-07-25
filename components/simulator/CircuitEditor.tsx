@@ -2575,21 +2575,6 @@ export function CircuitEditor({
             {snapshot.solveError && (
               <p className="text-xs text-red-600 mb-2">Solver: {snapshot.solveError}</p>
             )}
-            {limitations.length > 0 && (
-              <ul className="space-y-2 mb-3" data-testid="limitations">
-                {limitations.map((l, i) => (
-                  <li
-                    key={i}
-                    className="text-xs text-amber-900 leading-snug border border-amber-200 bg-amber-50 px-2.5 py-2"
-                  >
-                    <span className="font-bold uppercase text-[9px] tracking-wider text-amber-700 block mb-0.5">
-                      not simulated
-                    </span>
-                    {l}
-                  </li>
-                ))}
-              </ul>
-            )}
             {snapshot.faults.length > 0 && (
               <ul className="space-y-2 mb-3" data-testid="faults">
                 {snapshot.faults.map((f, i) => {
@@ -2623,7 +2608,6 @@ export function CircuitEditor({
             {problems.length === 0 &&
             !snapshot.solveError &&
             snapshot.faults.length === 0 &&
-            limitations.length === 0 &&
             /*
              * A board — any board — has had its document compiled, either in
              * the worker or here. Only a document with NO board has been
@@ -2637,6 +2621,31 @@ export function CircuitEditor({
                 {problems.map((p, i) => (
                   <li key={i} className="text-xs text-amber-700 leading-snug">
                     {p}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {/*
+             * Model simplifications are NOT problems, and must not be dressed
+             * as them. They come LAST — after the verdict, not instead of it —
+             * in slate rather than warning amber, and they no longer suppress
+             * the all-clear (they used to be part of the condition above). A
+             * circuit that works can still carry a note about which
+             * second-order effect the model leaves out; reading that as a
+             * defect is what a bold amber "NOT SIMULATED" made every student
+             * do, and the owner read it that way too.
+             */}
+            {limitations.length > 0 && (
+              <ul className="space-y-2 mt-3" data-testid="limitations">
+                {limitations.map((l, i) => (
+                  <li
+                    key={i}
+                    className="text-xs text-slate-600 leading-snug border border-slate-200 bg-slate-50 px-2.5 py-2"
+                  >
+                    <span className="font-bold uppercase text-[9px] tracking-wider text-slate-500 block mb-0.5">
+                      simplified model
+                    </span>
+                    {l}
                   </li>
                 ))}
               </ul>
