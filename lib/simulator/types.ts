@@ -2,8 +2,15 @@
  * Core types for the VLab circuit simulator.
  *
  * Net 0 is always ground. Every other net gets a row/column in the MNA matrix.
- * See SIMULATOR_ARCHITECTURE.md §2 for why this is a DC operating-point solver
- * with no transient integration in the hot loop.
+ *
+ * This solves a DC operating point, and ALSO steps a backward-Euler transient
+ * when the circuit holds a reactive element — `Circuit.hasReactive` decides,
+ * and `Engine.tuneStep()` picks the step from the circuit's own smallest time
+ * constant. The header here used to say there was "no transient integration in
+ * the hot loop"; that stopped being true and the stale line outlived it.
+ *
+ * SIMULATOR_ARCHITECTURE.md is design intent, not an as-built record — it
+ * describes several things that were never implemented. Trust this code.
  */
 
 export type NetId = number
