@@ -1,20 +1,21 @@
 /**
  * Authored lab starters (model/examples.ts → EXPERIMENT_STARTERS).
  *
- * These seven documents are PRODUCTION CONTENT: migrations 020, 021 and 022
+ * These twelve documents are PRODUCTION CONTENT: migrations 020 through 025
  * load them into `circuits` as role='starter', and they are the first thing a
- * student sees when they open the native editor for experiments 1, 2, 3, 4, 5,
- * 6 and 7. Nothing else in the test suite would notice if one of them were
+ * student sees when they open the native editor for any of the twelve
+ * experiments. Nothing else in the test suite would notice if one of them were
  * quietly corrupted — compile() is happy to derive a netlist from a document
  * with a typo'd pin id, and the solver is happy to solve it.
  *
- * TWO BOARDS, ONE FILE. Experiments 5 and 7 are Raspberry Pi Pico circuits, and
- * almost everything below is therefore parameterised by board rather than
- * assuming an Uno: the supply pin ('3.3V' against '5V'), the rail voltage, the
- * pad's output impedance, and the value the DATABASE has to record
- * ('rp2040' against 'arduino_uno' — see BOARD_OF). The one thing a Pico starter
- * must never do is inherit 5 V arithmetic, so §2 and §5 assert the rail and the
- * resulting LED current explicitly.
+ * THREE BOARDS, ONE FILE. Experiments 5, 7, 8, 9, 10 and 12 are Raspberry Pi
+ * Pico circuits and experiment 11 is an Arduino Mega, so almost everything below
+ * is parameterised by board rather than assuming an Uno: the supply pin ('3.3V'
+ * against '5V'), the rail voltage, the pad's output impedance, and the value the
+ * DATABASE has to record ('rp2040' / 'arduino_mega' / 'arduino_uno' — see
+ * BOARD_OF). The one thing a Pico starter must never do is inherit 5 V
+ * arithmetic, so §2 and §5 assert the rail and the resulting LED current
+ * explicitly.
  *
  * So this file pins down, exactly:
  *
@@ -27,22 +28,21 @@
  *   2. PRE-WIRING  — the supply plumbing really is plumbed. Board GND and both
  *                    negative rails are one net; the supply feed reaches both
  *                    positive rails, AT THE BOARD'S OWN VOLTAGE.
- *   3. PROBLEMS    — the EXACT set compile() reports. The starters are
- *                    deliberately unfinished, so "part is not connected"
- *                    notices are expected and are the student's to-do list.
- *                    Anything else — a crossed centre channel, a dangling MCU
- *                    pin, a missing ground — is a bug in the starter.
+ *   3. PROBLEMS    — the EXACT set compile() reports, and the EXACT set of
+ *                    model-fidelity limitations. The starters are deliberately
+ *                    unfinished, so "part is not connected" notices are expected
+ *                    and are the student's to-do list. Anything else — a crossed
+ *                    centre channel, a dangling MCU pin, a missing ground — is a
+ *                    bug in the starter.
  *   4. SOLVABILITY — it compiles, it solves, no faults, no solver error.
  *   5. COMPLETABLE — wiring it up the way the lab sheet describes yields a
  *                    circuit with ZERO problems and LEDs that draw a sane
  *                    current. A starter that cannot be finished with the parts
  *                    it ships is worse than no starter at all.
- *   6. MIGRATION   — the graphs embedded in
- *                    supabase/migrations/020_native_experiments.sql,
- *                    021_native_experiments_2_4_6.sql and
- *                    022_native_experiments_5_7.sql are structurally identical
- *                    to the TypeScript ones, and each file records the board
- *                    value its own starters need. Two copies of the same
+ *   6. MIGRATION   — the graphs embedded in the six authoring migrations,
+ *                    supabase/migrations/020 through 025, are structurally
+ *                    identical to the TypeScript ones, and each file records the
+ *                    board value its own starters need. Two copies of the same
  *                    document is the whole risk here.
  *
  * Run: npx tsx lib/simulator/__tests__/starters.test.ts
@@ -56,9 +56,14 @@ import { partBounds, pinKeyOf, type CircuitDoc, type DocWire, type PlacedPart } 
 import {
   EXPERIMENT_STARTERS,
   STARTER_DHT11_PICO,
+  STARTER_DS18B20_PICO,
+  STARTER_HEALTH_MONITOR_PICO,
+  STARTER_HOME_AUTOMATION_PICO,
   STARTER_LED_BUTTON_PICO,
   STARTER_LED_DHT11,
+  STARTER_MOTOR_CONTROL_PICO,
   STARTER_PIR_ALARM,
+  STARTER_SMART_TRAFFIC,
   STARTER_TRAFFIC_LIGHT,
   STARTER_ULTRASONIC_PIR,
   STARTER_WATER_FLOW,
@@ -102,6 +107,19 @@ const BOARD_OF: Record<
   'pir-alarm-arduino': { mcu: 'uno', type: 'arduino_uno', supplyPin: '5V', gndPin: 'GND.2', volts: VCC, rDrive: R_DRIVE },
   'led-button-rpi': { mcu: 'pico', type: 'raspberry_pi_pico', supplyPin: '3.3V', gndPin: 'GND.7', volts: PICO_VDD, rDrive: PICO_R_DRIVE },
   'dht11-rpi': { mcu: 'pico', type: 'raspberry_pi_pico', supplyPin: '3.3V', gndPin: 'GND.7', volts: PICO_VDD, rDrive: PICO_R_DRIVE },
+  'ds18b20-rpi': { mcu: 'pico', type: 'raspberry_pi_pico', supplyPin: '3.3V', gndPin: 'GND.7', volts: PICO_VDD, rDrive: PICO_R_DRIVE },
+  'motor-control-rpi': { mcu: 'pico', type: 'raspberry_pi_pico', supplyPin: '3.3V', gndPin: 'GND.7', volts: PICO_VDD, rDrive: PICO_R_DRIVE },
+  'home-automation-rpi': { mcu: 'pico', type: 'raspberry_pi_pico', supplyPin: '3.3V', gndPin: 'GND.7', volts: PICO_VDD, rDrive: PICO_R_DRIVE },
+  'health-monitoring-rpi': { mcu: 'pico', type: 'raspberry_pi_pico', supplyPin: '3.3V', gndPin: 'GND.7', volts: PICO_VDD, rDrive: PICO_R_DRIVE },
+  /**
+   * The one MEGA starter, and the reason `mcu` is a field rather than a
+   * hardcoded 'uno'. Electrically it is an Uno — same 5 V rail, same 25 Ω pad,
+   * same `5V`/`GND.2` pair on the power header — so every number here is the
+   * Uno's; what differs is the part id its wires name and the board the DB has
+   * to record ('arduino_mega', which migration 015's original check constraint
+   * rejected — see §6).
+   */
+  'smart-traffic-controller': { mcu: 'mega', type: 'arduino_mega', supplyPin: '5V', gndPin: 'GND.2', volts: VCC, rDrive: R_DRIVE },
 }
 
 let passed = 0
@@ -301,6 +319,111 @@ const EXPECTED: Record<
     props: {
       dht: { temperature: 24, humidity: 45 },
       r10k: { ohms: 10000 },
+    },
+  },
+  // 4.7 kΩ, not 10 kΩ: a DS18B20's 1-Wire bus has to recover to the rail inside
+  // the 15 µs a read slot allows, and the datasheet's own figure is 4.7 k. The
+  // `resolution: 12` is equally load-bearing — it is what makes the conversion
+  // take 750 ms, which is the whole reason the sketch has to wait.
+  'ds18b20-rpi': {
+    doc: STARTER_DS18B20_PICO,
+    parts: 4,
+    wires: 4,
+    types: { breadboard: 1, ds18b20: 1, raspberry_pi_pico: 1, resistor: 1 },
+    ohms: [4700],
+    props: {
+      ds: { temperature: 25, resolution: 12 },
+      r4k7: { ohms: 4700 },
+    },
+  },
+  /**
+   * The only starter with NO resistor at all, and that is correct: everything
+   * downstream of the Pico here is a driver module with its own base resistors.
+   * `ohms: []` is therefore the assertion that a stray 220 Ω has not crept in.
+   */
+  'motor-control-rpi': {
+    doc: STARTER_MOTOR_CONTROL_PICO,
+    parts: 6,
+    wires: 4,
+    types: { breadboard: 1, dc_motor: 1, l298n: 1, raspberry_pi_pico: 1, stepper_28byj48: 1, uln2003: 1 },
+    ohms: [],
+    props: {
+      motor: { load: 0 },
+    },
+  },
+  // `activeLow: 1` is what makes this an SRD-05VDC board rather than a bare
+  // relay: the module's opto-couplers pull in when IN is driven LOW, so dropping
+  // the prop inverts every appliance in the experiment and nothing else notices.
+  'home-automation-rpi': {
+    doc: STARTER_HOME_AUTOMATION_PICO,
+    parts: 5,
+    wires: 4,
+    types: { breadboard: 1, led: 1, raspberry_pi_pico: 1, relay_4ch: 1, resistor: 1 },
+    ohms: [220],
+    props: {
+      relay: { activeLow: 1 },
+      r220: { ohms: 220 },
+    },
+  },
+  /**
+   * The biggest circuit in the lab: 30 parts, twelve LED chains and four pots.
+   *
+   * Every one of the twelve lamps carries a colour for the same electrical
+   * reason experiment 3's three do — see the note there — and here there are
+   * twelve chances to drop one. The four pots carry `position: 50` so the
+   * sketch's `analogRead(densityPin[i])` opens on a mid-scale reading rather
+   * than a rail.
+   */
+  'smart-traffic-controller': {
+    doc: STARTER_SMART_TRAFFIC,
+    parts: 30,
+    wires: 4,
+    types: { arduino_mega: 1, breadboard: 1, led: 12, potentiometer: 4, resistor: 12 },
+    ohms: [220, 220, 220, 220, 220, 220, 220, 220, 220, 220, 220, 220],
+    props: {
+      led1_red: { color: 'red' },
+      led1_yellow: { color: 'yellow' },
+      led1_green: { color: 'green' },
+      led2_red: { color: 'red' },
+      led2_yellow: { color: 'yellow' },
+      led2_green: { color: 'green' },
+      led3_red: { color: 'red' },
+      led3_yellow: { color: 'yellow' },
+      led3_green: { color: 'green' },
+      led4_red: { color: 'red' },
+      led4_yellow: { color: 'yellow' },
+      led4_green: { color: 'green' },
+      r1_red: { ohms: 220 },
+      r1_yellow: { ohms: 220 },
+      r1_green: { ohms: 220 },
+      r2_red: { ohms: 220 },
+      r2_yellow: { ohms: 220 },
+      r2_green: { ohms: 220 },
+      r3_red: { ohms: 220 },
+      r3_yellow: { ohms: 220 },
+      r3_green: { ohms: 220 },
+      r4_red: { ohms: 220 },
+      r4_yellow: { ohms: 220 },
+      r4_green: { ohms: 220 },
+      pot1: { position: 50 },
+      pot2: { position: 50 },
+      pot3: { position: 50 },
+      pot4: { position: 50 },
+    },
+  },
+  // 36.5 °C, not the DS18B20 default 25: this is a body-temperature experiment,
+  // and a probe that opens at room temperature reads as a corpse. The pulse
+  // sensor's 72 bpm / 8 % amplitude are what the MCP3008 sees on CH0.
+  'health-monitoring-rpi': {
+    doc: STARTER_HEALTH_MONITOR_PICO,
+    parts: 6,
+    wires: 4,
+    types: { breadboard: 1, ds18b20: 1, mcp3008: 1, pulse_sensor: 1, raspberry_pi_pico: 1, resistor: 1 },
+    ohms: [4700],
+    props: {
+      ds: { temperature: 36.5, resolution: 12 },
+      r4k7: { ohms: 4700 },
+      pulse: { bpm: 72, amplitude: 8 },
     },
   },
 }
@@ -514,6 +637,97 @@ const EXPECTED_PROBLEMS: Record<string, string[]> = {
     'DHT11 sensor "dht" is not connected to anything.',
     'Resistor "r10k" is not connected to anything.',
   ],
+  'ds18b20-rpi': [
+    'DS18B20 temperature "ds" is not connected to anything.',
+    'Resistor "r4k7" is not connected to anything.',
+  ],
+  // All four modules unwired, including the two DRIVERS. That is the exercise:
+  // the pre-wired rails carry 3.3 V, the logic rail, and getting VBUS to the
+  // L298N's motor supply without putting it on Vss is experiment 09's whole
+  // lesson (see the note on STARTER_MOTOR_CONTROL_PICO).
+  'motor-control-rpi': [
+    'L298N motor driver "l298n" is not connected to anything.',
+    'DC motor "motor" is not connected to anything.',
+    'ULN2003 Darlington array "uln" is not connected to anything.',
+    '28BYJ-48 stepper "stepper" is not connected to anything.',
+  ],
+  'home-automation-rpi': [
+    '4-channel relay module "relay" is not connected to anything.',
+    'Resistor "r220" is not connected to anything.',
+    'LED "led" is not connected to anything.',
+  ],
+  /**
+   * Twenty-eight notices, one per unwired part — the longest to-do list in the
+   * lab, and every entry is expected. Twelve LEDs, their twelve resistors and
+   * four pots all ship unwired ON PURPOSE; wiring one lane at a time is the
+   * point of the experiment (see the note on STARTER_SMART_TRAFFIC). Only the
+   * Mega and the breadboard are absent from this list, because the four
+   * pre-wired supply jumpers connect them.
+   */
+  'smart-traffic-controller': [
+    'LED "led1_red" is not connected to anything.',
+    'LED "led1_yellow" is not connected to anything.',
+    'LED "led1_green" is not connected to anything.',
+    'LED "led2_red" is not connected to anything.',
+    'LED "led2_yellow" is not connected to anything.',
+    'LED "led2_green" is not connected to anything.',
+    'LED "led3_red" is not connected to anything.',
+    'LED "led3_yellow" is not connected to anything.',
+    'LED "led3_green" is not connected to anything.',
+    'LED "led4_red" is not connected to anything.',
+    'LED "led4_yellow" is not connected to anything.',
+    'LED "led4_green" is not connected to anything.',
+    'Resistor "r1_red" is not connected to anything.',
+    'Resistor "r1_yellow" is not connected to anything.',
+    'Resistor "r1_green" is not connected to anything.',
+    'Resistor "r2_red" is not connected to anything.',
+    'Resistor "r2_yellow" is not connected to anything.',
+    'Resistor "r2_green" is not connected to anything.',
+    'Resistor "r3_red" is not connected to anything.',
+    'Resistor "r3_yellow" is not connected to anything.',
+    'Resistor "r3_green" is not connected to anything.',
+    'Resistor "r4_red" is not connected to anything.',
+    'Resistor "r4_yellow" is not connected to anything.',
+    'Resistor "r4_green" is not connected to anything.',
+    'Potentiometer "pot1" is not connected to anything.',
+    'Potentiometer "pot2" is not connected to anything.',
+    'Potentiometer "pot3" is not connected to anything.',
+    'Potentiometer "pot4" is not connected to anything.',
+  ],
+  'health-monitoring-rpi': [
+    'DS18B20 temperature "ds" is not connected to anything.',
+    'Resistor "r4k7" is not connected to anything.',
+    'MCP3008 SPI ADC "adc" is not connected to anything.',
+    'Pulse sensor (SEN-11574) "pulse" is not connected to anything.',
+  ],
+}
+
+/**
+ * The model-fidelity footnotes each starter is expected to carry, as SUBSTRINGS.
+ *
+ * This assertion used to read `eq(… r.limitations, [])` for all seven starters,
+ * because every one of them compiled with an empty array and "no unsimulatable
+ * parts" was a true statement about the whole lab. It is not any more: the coil
+ * windings gained real inductance, so experiment 09 legitimately reports two
+ * limitations — the DC motor's rotor-inertia note and the stepper's shaft note.
+ * Those are accurate, deliberate statements about what the model does and does
+ * not do, not defects.
+ *
+ * So the shape changed rather than the strictness. `[]` here still means "this
+ * starter must report NOTHING", which is the assertion that was worth having;
+ * a starter that grows an unexpected limitation still fails. What is new is that
+ * a starter which is SUPPOSED to have one has to have exactly that one.
+ *
+ * Substrings rather than whole paragraphs, and more than one per limitation so
+ * the match still identifies WHICH device and WHICH caveat: these strings are
+ * prose written for a student and they will be reworded. A test that pins the
+ * full paragraph would fail on a comma.
+ */
+const EXPECTED_LIMITATIONS: Record<string, string[][]> = {
+  'motor-control-rpi': [
+    ['motor winding', 'Rotor inertia is not modelled'],
+    ['stepper winding', 'shaft', 'not simulated'],
+  ],
 }
 
 for (const [slug, expected] of Object.entries(EXPECTED_PROBLEMS)) {
@@ -526,7 +740,21 @@ for (const [slug, expected] of Object.entries(EXPECTED_PROBLEMS)) {
   check(`3.3 ${slug}: no dangling MCU pin`, !r.problems.some((p) => p.includes('dangling')))
   check(`3.4 ${slug}: ground exists`, !r.problems.some((p) => p.includes('No ground')))
   eq(`3.5 ${slug}: nothing is shorted to ground`, r.shortedPins, [])
-  eq(`3.6 ${slug}: no unsimulatable parts`, r.limitations, [])
+
+  // Exactly the limitations this starter is supposed to have — no more, and for
+  // the ten that have none, still exactly none. See EXPECTED_LIMITATIONS.
+  const wantLim = EXPECTED_LIMITATIONS[slug] ?? []
+  eq(`3.6 ${slug}: the number of model-fidelity limitations`, r.limitations.length, wantLim.length)
+  eq(
+    `3.7 ${slug}: each limitation is the one that belongs there`,
+    wantLim.map((frags, i) => {
+      const got = r.limitations[i]
+      if (got === undefined) return 'MISSING'
+      const absent = frags.filter((f) => !got.includes(f))
+      return absent.length === 0 ? frags.join(' + ') : `${JSON.stringify(got)} lacks ${JSON.stringify(absent)}`
+    }),
+    wantLim.map((frags) => frags.join(' + ')),
+  )
 }
 
 // ─── 4. It compiles and solves ────────────────────────────────────────────────
@@ -559,6 +787,28 @@ const EXPECTED_SIZE: Record<string, { unknowns: number; activeNets: number }> = 
   // The smallest Pico starter: one 3-pin sensor and one resistor. Identical in
   // size to experiment 04's, which is the same shape of circuit.
   'dht11-rpi': { unknowns: 5, activeNets: 6 },
+  // Same shape and same size as experiment 07's: a 3-pin sensor and a pull-up.
+  'ds18b20-rpi': { unknowns: 5, activeNets: 6 },
+  /**
+   * Far past the ~15 unknown budget, and legitimately so.
+   *
+   * These four are MODULES, not two-lead components: an L298N brings 11 pins, a
+   * ULN2003 board 12 and the stepper 5, and every one of them is its own net
+   * while nothing is joined. That budget is a guideline for the FINISHED
+   * two-lead circuits of experiments 1–7, which §5 asserts; the four starters
+   * below are pinned to their real figures instead, so a part gaining or losing
+   * a pin shows up here rather than silently changing the matrix.
+   */
+  'motor-control-rpi': { unknowns: 36, activeNets: 37 },
+  // The 4-channel relay module alone: 4 inputs, VCC, GND, and three contacts per
+  // channel, plus the LED's internal series node and its resistor.
+  'home-automation-rpi': { unknowns: 23, activeNets: 23 },
+  // The biggest matrix in the lab, and the reason experiment 11 needed a Mega:
+  // twelve LED chains (two nets each, plus an internal node) and four pots
+  // (three pins each), none of them joined yet.
+  'smart-traffic-controller': { unknowns: 74, activeNets: 62 },
+  // The MCP3008's 16 pins dominate: 8 analog inputs, 4 SPI lines and 4 supply.
+  'health-monitoring-rpi': { unknowns: 24, activeNets: 25 },
 }
 
 for (const [slug, size] of Object.entries(EXPECTED_SIZE)) {
@@ -1048,7 +1298,7 @@ const PICO_OPTS = { volts: PICO_VDD, rDrive: PICO_R_DRIVE, pullDown: ['GP27'] }
 
 // ─── 6. The migration carries the same documents ──────────────────────────────
 
-console.log('\n6. Migrations 020, 021 and 022 agree with the TypeScript')
+console.log('\n6. Migrations 020 through 025 agree with the TypeScript')
 
 {
   /**
