@@ -1,6 +1,14 @@
 'use client'
 
-import { useCallback, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
 import {
   PITCH,
   getPart,
@@ -24,7 +32,6 @@ import {
   WIRE_COLOR_POWER,
   newId,
   pinPosition,
-  samePin,
   snap,
   wireCasing,
   type CircuitDoc,
@@ -35,6 +42,21 @@ import {
   type Point,
 } from '@/lib/simulator/model/document'
 import { wirePath } from '@/lib/simulator/model/wire-path'
+import {
+  resolveGrab,
+  type GrabTolerance,
+  type PinTarget,
+  type WireRoute,
+  type WireTarget,
+} from '@/lib/simulator/model/wire-hit'
+import {
+  DRAG_SLOP,
+  pressCanvas,
+  pressPin,
+  releasePress,
+  trackCursor,
+  type WireDraft,
+} from '@/lib/simulator/model/wire-draft'
 
 const ACCENT = '#1477d1'
 
@@ -105,11 +127,6 @@ interface SliderDrag {
   pushed: boolean
 }
 
-interface WireDraft {
-  from: PinRef
-  x: number
-  y: number
-}
 
 /**
  * A pointer gesture that is shaping a wire.
@@ -130,15 +147,13 @@ interface WireGesture {
   moved: boolean
   /** Set once this gesture has landed its one undo entry. */
   pushed: boolean
+  /** The pointer the canvas captured for this gesture, so it can release it. */
+  pointerId: number
 }
 
-/**
- * How far a pointer may wander before a click becomes a drag.
- *
- * Clicking a wire deletes it, so a shaky click must not delete the wire the
- * student was trying to bend — nor must a bend leave a delete behind it.
- */
-const DRAG_SLOP = 4
+// DRAG_SLOP — how far a press may wander before it is a drag rather than a
+// click — is imported from wire-draft.ts, so the two gestures that have to tell
+// those apart (drawing a wire, bending one) cannot drift to different numbers.
 
 /**
  * Blue halo, darker casing, coloured core, invisible grab band — bottom to top.
@@ -177,6 +192,61 @@ const WIRE_HALO_OPACITY = 0.5
  * The previous 9 overlapped the neighbouring row.
  */
 const WIRE_HIT = 7
+
+/**
+ * The grab band's minimum half-width in SCREEN pixels, whatever the zoom.
+ *
+ * WIRE_HIT is in world units, so it shrinks with the canvas: at the fit floor
+ * of 0.45x a 7-unit band is 3.2 px wide and cannot be hit by a finger. The
+ * world-space tolerance is therefore floored at this many pixels' worth, which
+ * changes nothing at 1x or above and only widens the band where it had already
+ * become unusable. It is safe to widen because the resolver below picks the
+ * NEAREST wire rather than the topmost, so overlapping tolerances no longer
+ * mean one wire stealing another's grab.
+ */
+const WIRE_GRAB_PX = 4
+
+/**
+ * How close to a bend handle counts as grabbing it. The handle draws at r=5.
+ *
+ * Floored in SCREEN pixels for the same reason the grab band is, and it earns
+ * that floor twice over: at 0.73x — the zoom the editor opens a starter at — a
+ * 6-unit radius is a 4-px target, and a double-click that misses a handle by
+ * 4 px does not remove the bend, it removes the WHOLE WIRE. Those two outcomes
+ * are nothing like each other in cost, so the handle's catchment has to be big
+ * enough that a near miss lands on the forgiving one. Measured, not guessed: an
+ * automated double-click aimed at a handle landed 11 units away and destroyed
+ * the wire.
+ */
+const WAYPOINT_HIT = 6
+const WAYPOINT_GRAB_PX = 8
+
+/**
+ * How close to a pin's centre the pin keeps priority over a wire lying across it.
+ *
+ * THIS IS THE NUMBER THE WHOLE FIX TURNS ON, so it is worth saying what it
+ * balances. Pins are painted after wires — deliberately, so a pin buried under
+ * a wire is still clickable — and SVG hit-testing takes the TOPMOST shape, not
+ * the nearest. The result was that a pin's generous invisible target (7–12
+ * units) swallowed every press on any wire crossing it: measured on the dev
+ * editor's own starter, one wire was reachable on 27 of 59 sampled points and
+ * another on none at all. The press went to the pin, which quietly started a
+ * new wire draft that was thrown away on release — so the student pressed a
+ * wire, dragged, and saw nothing happen.
+ *
+ * So a pin's generous target is now a FALLBACK that applies when nothing more
+ * specific is under the pointer, and only its core outranks a wire. Four units
+ * covers the drawn dot (r=2.8) with a margin, and is comfortably inside the
+ * smallest pin target (7), so a wire ending on a header pin never makes that
+ * pin unreachable — fanning several wires off one 5V pin still works.
+ *
+ * Breadboard tie points (`subtle`) yield to a wire ENTIRELY, with no core:
+ * at 0.1in pitch a 4-unit core would black out 8 of every 10 units of a wire
+ * lying along a strip, and a tie point is one of five interchangeable holes in
+ * its strip — the one with a wire across it is never the only way into that
+ * net. A header pin or a component lead is unique and keeps its core.
+ */
+const PIN_CORE = 4
 
 /**
  * The view used for one frame, before the fit lands and for an empty document.
@@ -404,6 +474,19 @@ export function CircuitCanvas({
   const gesture = useRef<WireGesture | null>(null)
   /** Which wire a gesture is on, purely so its handles stay visible. */
   const [shaping, setShaping] = useState<string | null>(null)
+  /**
+   * Which wire the pointer is over, resolved by PROXIMITY here rather than by
+   * each wire's own pointerenter.
+   *
+   * It used to live in `Wire`, so that moving over one wire did not re-render
+   * the other twenty. That was cheaper and wrong: boundary events go to the
+   * topmost shape, so a wire crossing a breadboard never received a
+   * pointerenter at all — the pins above it did — and neither its halo nor its
+   * bend handles ever appeared. Handles a student cannot see are handles that
+   * do not exist. This state changes only when the pointer crosses onto or off
+   * a wire, not on every frame, so the cost is a re-render per transition.
+   */
+  const [hoverWire, setHoverWire] = useState<string | null>(null)
   const [knobDrag, setKnobDrag] = useState<KnobDrag | null>(null)
   const [sliderDrag, setSliderDrag] = useState<SliderDrag | null>(null)
   /** The part whose momentary control is being held down, if any. */
@@ -425,6 +508,31 @@ export function CircuitCanvas({
     if (!rect || rect.width === 0 || rect.height === 0) return
     dispatchView({ type: 'fit', doc, width: rect.width, height: rect.height })
   }, [doc])
+
+  /**
+   * Escape abandons a wire being routed.
+   *
+   * A half-drawn wire a student cannot put down is worse than no bends at all,
+   * and click-routing has no natural "let go" the way a drag does — so there
+   * has to be a key, and Escape is the one everybody tries first.
+   *
+   * CAPTURE phase, and it stops the event when it consumes it. The fullscreen
+   * gate also listens for Escape on `window` to leave its maximised mode, and a
+   * student cancelling a wire must not be thrown out of the editor at the same
+   * time. A capture listener on `window` runs before that bubble listener, so
+   * stopping propagation there is what keeps the two apart — but ONLY when
+   * there is a draft to cancel, so Escape still leaves fullscreen otherwise.
+   */
+  useEffect(() => {
+    if (!wire) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setWire(null)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [wire])
 
   /** Client coords → world coords. All interaction maths happens in world space. */
   const toWorld = useCallback(
@@ -455,6 +563,74 @@ export function CircuitCanvas({
     }
     return out
   }, [doc.wires, partById])
+
+  // ─── Hit resolution ─────────────────────────────────────────────────────────
+  //
+  // ONE PLACE decides what a pointer is on. Every other candidate handler in
+  // this file — the pin's, the part's, the background pan — runs only if this
+  // declines, because it is wired to the svg's CAPTURE phase and stops the
+  // event when it claims one. That inversion is the fix: SVG hit-testing hands
+  // an event to the topmost shape, but a student aims at the NEAREST one, and
+  // the two disagree everywhere a wire crosses a part.
+
+  /**
+   * The three catchments in world units at the current zoom.
+   *
+   * The zoom is folded in HERE and not inside the rule, so `wire-hit.ts` never
+   * has to know what a pixel is.
+   */
+  const tolerance: GrabTolerance = useMemo(
+    () => ({
+      body: Math.max(WIRE_HIT / 2, WIRE_GRAB_PX / v.z),
+      handle: Math.max(WAYPOINT_HIT, WAYPOINT_GRAB_PX / v.z),
+      pinCore: PIN_CORE,
+    }),
+    [v.z],
+  )
+
+  /** Every wire's route, in the shape the rule wants. */
+  const hitRoutes = useMemo<WireRoute[]>(
+    () => routes.map(({ wire: w, a, b }) => ({ id: w.id, a, b, waypoints: w.waypoints })),
+    [routes],
+  )
+
+  /**
+   * Every pin on the board, in world units.
+   *
+   * Built without `pinPosition`, deliberately: that resolves a pin by id with a
+   * linear scan, which on a breadboard's 300-odd tie points would be quadratic
+   * and this list is rebuilt on every frame of a part drag. Walking `def.pins`
+   * once and rotating each in place is the same arithmetic, linear.
+   */
+  const pinTargets = useMemo<PinTarget[]>(() => {
+    const out: PinTarget[] = []
+    for (const part of doc.parts) {
+      const def = getPart(part.type)
+      const { width: w, height: h } = def
+      for (const pin of def.pins) {
+        let { x, y } = pin
+        switch (part.rotation) {
+          case 90:
+            ;[x, y] = [h - y, x]
+            break
+          case 180:
+            ;[x, y] = [w - x, h - y]
+            break
+          case 270:
+            ;[x, y] = [y, w - x]
+            break
+        }
+        out.push({ at: { x: part.x + x, y: part.y + y }, subtle: pin.subtle })
+      }
+    }
+    return out
+  }, [doc.parts])
+
+  /** The whole rule, in one place: a pin core beats a wire, else nearest wins. */
+  const grabAt = useCallback(
+    (p: Point): WireTarget | null => resolveGrab(hitRoutes, pinTargets, p, tolerance),
+    [hitRoutes, pinTargets, tolerance],
+  )
 
   // ─── Pointer handling ───────────────────────────────────────────────────────
 
@@ -538,8 +714,12 @@ export function CircuitCanvas({
       setPanning({ x: e.clientX, y: e.clientY })
       return
     }
+    // A wire being drawn follows the cursor, whether it is being dragged out of
+    // a pin or routed click by click. `trackCursor` also decides, once, whether
+    // the opening press has become a drag.
     if (wire) {
-      setWire({ ...wire, x: w.x, y: w.y })
+      const next = trackCursor(wire, w)
+      if (next !== wire) setWire(next)
       return
     }
 
@@ -584,7 +764,13 @@ export function CircuitCanvas({
         x: snap(w.x - drag.offsetX),
         y: snap(w.y - drag.offsetY),
       })
+      return
     }
+
+    // Nothing in flight: this is a plain hover, so light the wire under the
+    // pointer and show its handles. Only a TRANSITION sets state.
+    const over = grabAt(w)?.wireId ?? null
+    if (over !== hoverWire) setHoverWire(over)
   }
 
   /**
@@ -598,8 +784,11 @@ export function CircuitCanvas({
    */
   function endGesture() {
     if (gesture.current) {
+      const { pointerId } = gesture.current
       gesture.current = null
       setShaping(null)
+      const svg = svgRef.current
+      if (svg?.hasPointerCapture?.(pointerId)) svg.releasePointerCapture(pointerId)
     }
     setDrag(null)
     setPanning(null)
@@ -621,8 +810,21 @@ export function CircuitCanvas({
       if (key) dispatch({ type: 'setProp', id: holding, key, value: 0 })
       setHolding(null)
     }
-    // A wire released over empty space is abandoned, not left dangling.
-    setWire(null)
+    /**
+     * THE DRAFT IS NOT A GESTURE, and this line is where that used to be got
+     * wrong: `setWire(null)` sat here unconditionally, so a click on a pin
+     * opened a draft and the pointerup a few milliseconds later threw it away.
+     * Click-to-start could not have worked, whatever else was right.
+     *
+     * `releasePress` owns the decision now. It ends a DRAG — committing on the
+     * pin under the pointer, abandoning over empty space — and leaves a CLICK
+     * alive to be routed.
+     */
+    if (wire) {
+      const step = releasePress(wire)
+      setWire(step.draft)
+      if (step.commit) commitWire(step.commit)
+    }
   }
 
   /**
@@ -637,6 +839,7 @@ export function CircuitCanvas({
     knob: KnobControl,
     prop: PropSpec,
   ) {
+    if (wire) return
     e.stopPropagation()
     const centre = localToWorld(part, def, knob.cx, knob.cy)
     onSelect(part.id)
@@ -665,6 +868,7 @@ export function CircuitCanvas({
     slider: SliderControl,
     prop: PropSpec,
   ) {
+    if (wire) return
     e.stopPropagation()
     onSelect(part.id)
     setSliderDrag({
@@ -694,6 +898,7 @@ export function CircuitCanvas({
     part: PlacedPart,
     momentary: MomentaryControl,
   ) {
+    if (wire) return
     e.stopPropagation()
     onSelect(part.id)
     setHolding(part.id)
@@ -702,6 +907,12 @@ export function CircuitCanvas({
   }
 
   function startPartDrag(e: React.PointerEvent, part: PlacedPart) {
+    // Routing outranks every other press on the artwork. A student laying a
+    // turn over a breadboard must not drag the breadboard instead, and the
+    // alternative — refusing the click because a part is under it — would make
+    // most of the board unroutable. Falling through with no stopPropagation is
+    // what lets the canvas below take it as a turn.
+    if (wire) return
     e.stopPropagation()
     const w = toWorld(e.clientX, e.clientY)
     onSelect(part.id)
@@ -710,42 +921,122 @@ export function CircuitCanvas({
   }
 
   /**
-   * Pointer down on a wire's own stroke, or on one of its handles.
+   * Take over the pointer to shape a wire — a bend on the body, or a handle.
    *
-   * Deliberately does NOT capture the pointer. A drag leaves the 9-unit hit
-   * band within a frame or two, and capture would suppress the boundary events
-   * that turn the wire's hover off — the handles then stayed on screen after
-   * the drag finished, which is exactly what "not permanently" rules out. The
-   * svg's own pointermove drives the drag either way, and `shaping` is what
-   * holds the handles visible while it runs.
+   * It CAPTURES the pointer, on the svg. An earlier version deliberately did
+   * not, because capture suppresses the boundary events that turned the wire's
+   * hover off and the handles stayed on screen after the drag ended. That
+   * reasoning no longer holds: hover is resolved from the pointer's position by
+   * `grabAt` rather than from pointerenter/pointerleave, so capture
+   * cannot strand it. What capture buys is the case that matters on a phone —
+   * a finger that leaves the canvas mid-drag still delivers its moves and its
+   * release here, instead of the gesture dying on the svg's pointerleave with
+   * a half-placed bend left behind.
    */
-  function startWireGesture(e: React.PointerEvent, g: Omit<WireGesture, 'moved' | 'pushed'>) {
+  function startWireGesture(e: React.PointerEvent, target: WireTarget) {
     e.stopPropagation()
-    gesture.current = { ...g, moved: false, pushed: false }
-    setShaping(g.wireId)
-  }
-
-  function startWire(e: React.PointerEvent, ref: PinRef) {
-    e.stopPropagation()
-    const w = toWorld(e.clientX, e.clientY)
-    setWire({ from: ref, x: w.x, y: w.y })
-  }
-
-  function finishWire(e: React.PointerEvent, ref: PinRef) {
-    e.stopPropagation()
-    if (!wire) return
-    if (!samePin(wire.from, ref)) {
-      dispatch({
-        type: 'addWire',
-        wire: {
-          id: newId('w'),
-          from: wire.from,
-          to: ref,
-          color: wireColorFor(doc, wire.from, ref),
-        },
-      })
+    const at = toWorld(e.clientX, e.clientY)
+    gesture.current = {
+      ...target,
+      startX: at.x,
+      startY: at.y,
+      moved: false,
+      pushed: false,
+      pointerId: e.pointerId,
     }
-    setWire(null)
+    setShaping(target.wireId)
+    // Capture is an optimisation, never a precondition: the svg's own
+    // pointermove drives the drag whether or not it lands. It throws when the
+    // pointer is no longer active — a race a slow frame can genuinely lose —
+    // and a gesture that is already recorded must not be undone by that.
+    try {
+      svgRef.current?.setPointerCapture(e.pointerId)
+    } catch {
+      /* the drag still works without it */
+    }
+  }
+
+  /**
+   * The canvas's first look at every press, before any child handler.
+   *
+   * CAPTURE PHASE, and that is the point. React dispatches capture handlers
+   * from the root down, so this runs before the pin circle, the part artwork
+   * and the background pan handler that would otherwise claim the press by
+   * being on top of — or under — the wire. When it claims one it stops the
+   * event, and none of them run.
+   *
+   * It declines in three cases, each of which belongs to something else: a
+   * wire being routed (every press then belongs to that route — a turn, or the
+   * pin that ends it), a non-primary button, and a pin core (see PIN_CORE).
+   */
+  function onCanvasPointerDownCapture(e: React.PointerEvent) {
+    if (wire || e.button > 0) return
+    const p = toWorld(e.clientX, e.clientY)
+    const target = grabAt(p)
+    if (!target) return
+    startWireGesture(e, target)
+  }
+
+  /**
+   * Double-click: remove the bend under the pointer, or the whole wire.
+   *
+   * On the canvas rather than on each wire, for the reason the press is: the
+   * shape that receives a dblclick is the topmost one, which over a breadboard
+   * is a tie point and not the wire the student is aiming at. Resolving it here
+   * means the same rule decides what a press grabs and what a double-click
+   * removes, so they can never disagree about which wire is under the pointer.
+   */
+  function onCanvasDoubleClick(e: React.MouseEvent) {
+    const target = grabAt(toWorld(e.clientX, e.clientY))
+    if (!target) return
+    e.stopPropagation()
+    if (target.kind === 'handle') {
+      dispatch({ type: 'removeWaypoint', id: target.wireId, index: target.index })
+    } else {
+      dispatch({ type: 'removeWire', id: target.wireId })
+    }
+  }
+
+  /** Turn a finished route into a wire. The turns ride along as `waypoints`. */
+  function commitWire(c: { from: PinRef; to: PinRef; waypoints: Point[] }) {
+    dispatch({
+      type: 'addWire',
+      wire: {
+        id: newId('w'),
+        from: c.from,
+        to: c.to,
+        color: wireColorFor(doc, c.from, c.to),
+        // Never an empty array: a wire routed straight from pin to pin must be
+        // indistinguishable from one authored before waypoints existed.
+        ...(c.waypoints.length > 0 ? { waypoints: c.waypoints } : {}),
+      },
+    })
+  }
+
+  /**
+   * A press on a pin: start a wire here, finish one here, or cancel.
+   *
+   * All three are `pressPin`'s to decide — see it for the rules. The canvas's
+   * only job is to stop the press reaching the pan handler underneath.
+   */
+  function onPinDown(e: React.PointerEvent, ref: PinRef) {
+    e.stopPropagation()
+    const step = pressPin(wire, ref, toWorld(e.clientX, e.clientY))
+    setWire(step.draft)
+    if (step.commit) commitWire(step.commit)
+  }
+
+  /**
+   * A release on a pin, which only matters for a DRAGGED wire — a click's
+   * release is `endGesture`'s, and a routing click has already been dealt with
+   * by the press.
+   */
+  function onPinUp(e: React.PointerEvent, ref: PinRef) {
+    if (!wire || !wire.pressing) return
+    e.stopPropagation()
+    const step = releasePress(wire, ref)
+    setWire(step.draft)
+    if (step.commit) commitWire(step.commit)
   }
 
   function onWheel(e: React.WheelEvent) {
@@ -773,9 +1064,31 @@ export function CircuitCanvas({
         data-testid="canvas"
         onPointerMove={onPointerMove}
         onPointerUp={() => endGesture()}
-        onPointerLeave={() => endGesture()}
+        onPointerLeave={() => {
+          setHoverWire(null)
+          endGesture()
+        }}
         onWheel={onWheel}
+        onPointerDownCapture={onCanvasPointerDownCapture}
+        onDoubleClick={onCanvasDoubleClick}
         onPointerDown={(e) => {
+          /**
+           * While a wire is being ROUTED, every press that got this far — one
+           * that no pin claimed — lays down a turn.
+           *
+           * Which means panning is suspended for the length of a route, and
+           * that is the right trade: a press has to mean exactly one thing, and
+           * during routing the useful thing it can mean is "the wire goes
+           * through here". The wheel still zooms, and Escape still gets out.
+           *
+           * `pressing` guards the opening press of a DRAG: the pointer is still
+           * down from the pin, and its travel across the canvas must not litter
+           * the route with turns.
+           */
+          if (wire) {
+            if (!wire.pressing) setWire(pressCanvas(wire, toWorld(e.clientX, e.clientY)))
+            return
+          }
           onSelect(null)
           setPanning({ x: e.clientX, y: e.clientY })
         }}
@@ -931,15 +1244,7 @@ export function CircuitCanvas({
                 b={b}
                 lit={hoverNet != null && netOf?.get(`${w.from.partId} ${w.from.pinId}`) === hoverNet}
                 shaping={shaping === w.id}
-                onGrabBody={(e, at, index) =>
-                  startWireGesture(e, { wireId: w.id, index, kind: 'body', startX: at.x, startY: at.y })
-                }
-                onGrabHandle={(e, index, at) =>
-                  startWireGesture(e, { wireId: w.id, index, kind: 'handle', startX: at.x, startY: at.y })
-                }
-                onRemoveHandle={(index) => dispatch({ type: 'removeWaypoint', id: w.id, index })}
-                onRemove={() => dispatch({ type: 'removeWire', id: w.id })}
-                toWorld={toWorld}
+                hovered={hoverWire === w.id}
               />
             ))}
           </g>
@@ -973,34 +1278,52 @@ export function CircuitCanvas({
                         setHoverNet(n ?? null)
                       }}
                       onLeave={() => setHoverNet(null)}
-                      onDown={(e) =>
-                        wire
-                          ? finishWire(e, { partId: part.id, pinId: pin.id })
-                          : startWire(e, { partId: part.id, pinId: pin.id })
-                      }
-                      onUp={(e) => finishWire(e, { partId: part.id, pinId: pin.id })}
+                      onDown={(e) => onPinDown(e, { partId: part.id, pinId: pin.id })}
+                      onUp={(e) => onPinUp(e, { partId: part.id, pinId: pin.id })}
                     />
                   ))}
               </g>
             )
           })}
 
-          {/* In-flight wire */}
+          {/* The wire being drawn: everything committed so far, plus a rubber
+              band from the last turn to the cursor. Routing without this is
+              routing blind — the student cannot see where the turn they are
+              about to lay would put the wire. Drawn through the SAME wirePath
+              as a real wire, so the fillets they are previewing are the
+              fillets they will get. */}
           {wire &&
             (() => {
               const p = partById.get(wire.from.partId)
               const from = p && pinPosition(p, wire.from.pinId)
               if (!from) return null
               return (
-                <path
-                  d={wirePath(from, { x: wire.x, y: wire.y })}
-                  fill="none"
-                  stroke={ACCENT}
-                  strokeWidth={WIRE_CASING}
-                  strokeLinecap="round"
-                  strokeDasharray="5 4"
-                  pointerEvents="none"
-                />
+                <g data-testid="wire-draft" pointerEvents="none">
+                  <path
+                    d={wirePath(from, { x: wire.x, y: wire.y }, wire.points)}
+                    data-testid="wire-draft-path"
+                    fill="none"
+                    stroke={ACCENT}
+                    strokeWidth={WIRE_CASING}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray="5 4"
+                  />
+                  {/* A pip on every committed turn, so the student can count
+                      what they have laid down and see that a click landed. */}
+                  {wire.points.map((pt, i) => (
+                    <circle
+                      key={i}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={3}
+                      fill="#fff"
+                      stroke={ACCENT}
+                      strokeWidth={1.6}
+                      data-testid={`wire-draft-point-${i}`}
+                    />
+                  ))}
+                </g>
               )
             })()}
         </g>
@@ -1385,39 +1708,10 @@ function Momentary({
 
 // ─── Wire geometry ────────────────────────────────────────────────────────────
 //
-// The path itself lives in lib/simulator/model/wire-path.ts, so it can be
-// asserted on without mounting React. What stays here is hit-testing: which
-// part of a wire the pointer landed on.
-
-function distToSegment(p: Point, a: Point, b: Point): number {
-  const vx = b.x - a.x
-  const vy = b.y - a.y
-  const len2 = vx * vx + vy * vy
-  const t =
-    len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2))
-  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy))
-}
-
-/**
- * Which slot a bend grabbed at `p` belongs in.
- *
- * Segment i of [from, ...waypoints, to] runs from waypoint i-1 to waypoint i,
- * so the index of the nearest segment IS the insertion index. The chords ARE
- * the drawn route now — the only place the two part company is inside a
- * corner fillet, where both adjoining segments are equally the right answer.
- */
-function grabIndex(pts: Point[], p: Point): number {
-  let best = 0
-  let bestD = Infinity
-  for (let i = 0; i < pts.length - 1; i++) {
-    const d = distToSegment(p, pts[i], pts[i + 1])
-    if (d < bestD) {
-      bestD = d
-      best = i
-    }
-  }
-  return best
-}
+// The path lives in lib/simulator/model/wire-path.ts and the hit rule in
+// lib/simulator/model/wire-hit.ts, both so they can be asserted on without
+// mounting React. What stays here is the wire's COLOUR at birth, which needs
+// the part catalogue.
 
 /**
  * The colour a new wire between these two pins is born with.
@@ -1447,10 +1741,10 @@ function wireColorFor(doc: CircuitDoc, a: PinRef, b: PinRef): string {
  * One drawn wire: casing, core, an invisible grab band, and — only while the
  * pointer is on it — a handle per waypoint.
  *
- * Hover lives here rather than in the canvas so that moving over one wire does
- * not re-render the other twenty, and sits on the GROUP rather than the grab
- * band: a handle is a sibling of the band, so leaving the band for a handle
- * would otherwise hide the very handle being reached for.
+ * PURELY PRESENTATIONAL. Every pointer decision about this wire is taken in
+ * the canvas, by `grabAt`, because the shape that receives an event is
+ * the topmost one and the wire a student is pointing at very often is not it.
+ * `hovered` and `shaping` arrive already resolved.
  */
 function Wire({
   wire,
@@ -1458,11 +1752,7 @@ function Wire({
   b,
   lit,
   shaping,
-  onGrabBody,
-  onGrabHandle,
-  onRemoveHandle,
-  onRemove,
-  toWorld,
+  hovered,
 }: {
   wire: DocWire
   a: Point
@@ -1470,23 +1760,15 @@ function Wire({
   lit: boolean
   /** A gesture is shaping this wire, so its handles stay out. */
   shaping: boolean
-  onGrabBody: (e: React.PointerEvent, at: Point, index: number) => void
-  onGrabHandle: (e: React.PointerEvent, index: number, at: Point) => void
-  onRemoveHandle: (index: number) => void
-  onRemove: () => void
-  toWorld: (clientX: number, clientY: number) => Point
+  /** The pointer is over this wire — resolved by proximity, in the canvas. */
+  hovered: boolean
 }) {
-  const [hover, setHover] = useState(false)
   const points = wire.waypoints ?? []
   const d = wirePath(a, b, wire.waypoints)
-  const show = hover || shaping
+  const show = hovered || shaping
 
   return (
-    <g
-      data-testid={`wire-${wire.id}`}
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
-    >
+    <g data-testid={`wire-${wire.id}`}>
       {/* Halo, under everything. One state for hover, shaping and net
           highlighting: all three mean "this wire", and none of them is a
           reason to repaint it a colour it is not. */}
@@ -1523,10 +1805,12 @@ function Wire({
         strokeLinejoin="round"
         pointerEvents="none"
       />
-      {/* The only part of a wire that takes a pointer: a band along the stroke.
-          `fill="none"` plus pointer-events on the stroke matters — a bent wire
-          encloses the area between its bends, and filling it would swallow
-          every click on the board underneath. */}
+      {/* A band along the stroke. It no longer carries the handlers — the
+          canvas resolves the press — but it still earns its place: it is what
+          gives the wire a pointer cursor and a tooltip, and `pointer-events`
+          on the STROKE rather than the fill matters because a bent wire
+          encloses the area between its bends and filling it would put a
+          transparent sheet over the board underneath. */}
       <path
         d={d}
         fill="none"
@@ -1536,14 +1820,6 @@ function Wire({
         strokeLinejoin="round"
         pointerEvents="stroke"
         className="cursor-pointer"
-        onPointerDown={(e) => {
-          const at = toWorld(e.clientX, e.clientY)
-          onGrabBody(e, at, grabIndex([a, ...points, b], at))
-        }}
-        onDoubleClick={(e) => {
-          e.stopPropagation()
-          onRemove()
-        }}
       >
         <title>Drag to bend · double-click to remove</title>
       </path>
@@ -1560,11 +1836,6 @@ function Wire({
             strokeWidth={1.6}
             className="cursor-grab"
             data-testid={`waypoint-${wire.id}-${i}`}
-            onPointerDown={(e) => onGrabHandle(e, i, toWorld(e.clientX, e.clientY))}
-            onDoubleClick={(e) => {
-              e.stopPropagation()
-              onRemoveHandle(i)
-            }}
           >
             <title>Drag to shape · double-click to remove</title>
           </circle>
