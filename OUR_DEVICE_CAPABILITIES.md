@@ -434,9 +434,12 @@ button (`CircuitEditor.tsx:2296-2301`).
     a number copied out of their sketch". A 100 ms silence timeout ages the
     reading out (`behavioural.ts:598-698`).
 - **Limitations pushed**: one, only for a passive buzzer —
-  > *"A passive buzzer is a piezo element — a capacitor — so no DC current flows
-  > through it. The pitch it is being driven at is reported, but the current
-  > reads zero because that is its true DC steady state."* (`compile.ts:363-369`)
+  > *"A passive buzzer is a bare piezo element: about 10 nF of capacitance and
+  > no DC path at all, so the current through it reads zero. Its real current is
+  > a displacement spike lasting a few hundred nanoseconds on each edge of the
+  > drive waveform — far shorter than the timestep this simulator runs at, so
+  > there is no honest reading of it to show. The pitch it is being driven at is
+  > reported instead."* (`compile.ts:433-439`)
 - **Safety**: |V| > **7 V** (`maxVolts`) = **destructive** — *"X V across a
   buzzer rated for 5 V (absolute maximum 7 V). On real hardware this part is
   destroyed."* (`devices.ts:768-781`).
@@ -472,9 +475,11 @@ button (`CircuitEditor.tsx:2296-2301`).
   PWM duty falls out free; and the element stays linear at every load so it
   cannot make Newton limit-cycle (`devices.ts:784-836`).
 - **Limitations pushed**: one, unconditional —
-  > *"The motor is solved at its steady state. Start-up inrush, rotor inertia and
-  > the inductive spike when it is switched off all need transient simulation,
-  > which the interactive engine does not run yet."* (`compile.ts:379-383`)
+  > *"The motor winding has real inductance, so its current ramps up and it
+  > kicks back when switched off. Rotor inertia is not modelled: speed still
+  > follows current instantly, so the large start-up current surge a real motor
+  > draws while its shaft is still stationary does not appear."*
+  > (`compile.ts:457-462`)
 - **Safety**: two.
   - |V| > **9 V** (1.5 × 6 V nominal) = **destructive**, *"the winding insulation
     fails"*.
@@ -759,12 +764,10 @@ button (`CircuitEditor.tsx:2296-2301`).
   (`compile.ts:410-421`). **The 2.5 V drop is the lesson and it is kept**:
   `VCEsat(H) 1.35 V + VCEsat(L) 1.2 V` at 1 A. Vss outside 4.5–7 V kills the
   logic; Vs below `VIH + 2.5 V = 4.8 V` kills the output stage.
-- **Limitations pushed**: one —
-  > *"The motor driver is solved at a DC operating point. Its ~2.5 V transistor
-  > drop is modelled, but switching a motor off produces no inductive kick, so
-  > the flyback diodes never conduct and the bridge is never seen doing the job
-  > it is there for. That needs transient simulation, which the interactive
-  > engine does not run yet."* (`compile.ts:439-444`)
+- **Limitations pushed**: **none.** It used to push one saying the flyback
+  diodes never conduct and the bridge is never seen doing its job. Both halves
+  became false once the eight freewheel diodes were added and the motor winding
+  became inductive, so the whole note was deleted rather than reworded.
 - **Safety**: three thresholds (`devices.ts:1455-1495`):
   - `Vss > 7 V` = **destructive** — *"The motor supply goes on Vs, not on Vss —
     on real hardware this destroys the chip."*
@@ -838,11 +841,12 @@ button (`CircuitEditor.tsx:2296-2301`).
   position the bench would not reproduce"* (`devices.ts:1639-1705`). 4096
   half-steps/rev is **derived**, not hard-coded.
 - **Limitations pushed**: one —
-  > *"The stepper is solved at a DC operating point: the angle reported is the
-  > one the coil sequence commands. Winding inductance is not modelled, so there
-  > is no coil rise time, no torque falling away as the step rate climbs, and no
-  > inductive kick when a phase switches off — a real 28BYJ-48 starts losing steps
-  > long before this model would."* (`compile.ts:470-476`)
+  > *"Each stepper winding has real inductance (50 Ω, 300 mH), so the phase
+  > current takes about 6 ms to build and kicks back into the driver when the
+  > phase switches off. The shaft, though, is not simulated: the angle reported
+  > is the one the coil sequence commands, so this model still keeps up at step
+  > rates where a real 28BYJ-48 would run out of torque and start losing
+  > steps."* (`compile.ts:604-610`)
 - **Safety**: `UnipolarStepper.safety` on the **worst** phase voltage
   (`devices.ts:1769-1796`):
   - `> 5 V` (rated) = **caution**, quoting the per-phase dissipation.
@@ -895,11 +899,11 @@ button (`CircuitEditor.tsx:2296-2301`).
   not the IN pin, so it "cannot drift from RelayChannel, because it IS
   RelayChannel's answer" (`behavioural.ts:1548-1566`).
 - **Limitations pushed**: one, only when at least one channel was built —
-  > *"The relay is solved at a DC operating point: the contact is where the coil
-  > current says it should be. Coil inductance is not modelled, so there is no
-  > 5–10 ms pull-in delay, no contact bounce, and the flyback diode is never seen
-  > absorbing the inductive kick it is there for — all of which need transient
-  > simulation."* (`compile.ts:549-554`)
+  > *"The relay coil is a real winding (70 Ω, 50 mH), so it charges and its
+  > flyback diode carries the current when the coil is switched off. The ARMATURE
+  > is not simulated: the contact moves the instant the coil current says it
+  > should, with none of the 10 ms pull-in delay, 5 ms release or contact bounce
+  > a real relay has."* (`compile.ts:692-697`)
 - **Safety**: three (`devices.ts:2066-2107`), plus the coil resistor's own:
   - `VCC > 5.5 V` = **destructive**, *"the coil cooks."*
   - opto LED `> 50 mA` = **destructive**, *"the isolator is destroyed."*
