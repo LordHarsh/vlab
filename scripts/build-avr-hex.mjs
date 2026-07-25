@@ -509,24 +509,80 @@ function importDefault(file) {
 
 function parseArgs(argv) {
   const out = { board: 'uno' }
-  for (let i = 0; i < argv.length; i += 2) {
-    const key = argv[i]?.replace(/^--/, '')
-    const value = argv[i + 1]
+  // --toolchain-only is a bare flag, not a pair, so it is stripped before the
+  // key/value walk below rejects it for having no value.
+  const rest = argv.filter((a) => {
+    if (a === '--toolchain-only') {
+      out.toolchainOnly = true
+      return false
+    }
+    return true
+  })
+  for (let i = 0; i < rest.length; i += 2) {
+    const key = rest[i]?.replace(/^--/, '')
+    const value = rest[i + 1]
     if (!key || value === undefined) throw new Error(`missing value for --${key}`)
     out[key] = value
   }
+  if (out.toolchainOnly) return out
   if (!out.sketch) throw new Error('--sketch is required')
   if (!out.out) throw new Error('--out is required')
   return out
 }
 
+/**
+ * Fetch and unpack the toolchain, compiling nothing.
+ *
+ * This is what `npm run build` calls. A deployed instance has no `.cache/avr/`
+ * — it is gitignored, 139 MB, and mostly downloaded tarballs — so without this
+ * step the compile route starts up fine and then fails on a student's first
+ * sketch. Every step is guarded by an existsSync, so locally it is a no-op that
+ * costs a few milliseconds.
+ *
+ * `needsToolchainLibs` is true so avr-libc is fetched as well: the Mega links
+ * against avr6 objects the WASM package does not ship.
+ */
+async function prepareToolchain() {
+  log(`preparing the toolchain (cached in ${path.relative(ROOT, CACHE)}) …`)
+  await ensureWasmToolchain()
+  await ensureArduinoSources(true)
+
+  /**
+   * Drop the downloaded archives once they are unpacked.
+   *
+   * They are ~54 MB beside ~84 MB of files anything actually reads, and on
+   * Vercel they would ride into the compile route's function bundle. I tried to
+   * exclude them with outputFileTracingExcludes first; neither `./.cache/…` nor
+   * `**\/.cache/…` matched, and the archives kept appearing in the route's
+   * .nft.json. Deleting them is deterministic and does not depend on how Next
+   * resolves a glob.
+   *
+   * Safe to re-run: ensureWasmToolchain and ensureArduinoSources both test for
+   * UNPACKED artefacts (cc1plus.wasm, the core directory), not for the archive,
+   * so a second run finds the tree already in place and downloads nothing. If
+   * the unpacked tree is ever removed, the archive is simply fetched again.
+   */
+  for (const f of fs.readdirSync(CACHE)) {
+    if (f.endsWith('.tar.bz2') || f.endsWith('.tgz')) {
+      fs.rmSync(path.join(CACHE, f), { force: true })
+      log(`  removed unpacked archive ${f}`)
+    }
+  }
+
+  log('toolchain ready')
+}
+
 try {
   const args = parseArgs(process.argv.slice(2))
-  await build({
-    board: args.board,
-    sketchPath: path.resolve(ROOT, args.sketch),
-    outPath: path.resolve(ROOT, args.out),
-  })
+  if (args.toolchainOnly) {
+    await prepareToolchain()
+  } else {
+    await build({
+      board: args.board,
+      sketchPath: path.resolve(ROOT, args.sketch),
+      outPath: path.resolve(ROOT, args.out),
+    })
+  }
 } catch (e) {
   log(`\nbuild failed: ${e instanceof Error ? e.message : String(e)}`)
   process.exit(1)
