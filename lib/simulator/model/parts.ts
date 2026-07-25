@@ -147,6 +147,19 @@ export interface PartDefinition {
      * integration was coupled in, and the stale sentence outlived it.)
      */
     | { kind: 'reactive'; element: 'capacitor' | 'inductor' }
+    /**
+     * A character LCD on an HD44780 — the one part here the MCU talks TO rather
+     * than listens to, and the reason this is not a `sensor` with a `drives`
+     * list. Every one of its signal pins is an INPUT; what the part contributes
+     * is a decode of what was written to it, so its behavioural model is a
+     * monitor in the same family as the relay board's and the stepper's.
+     *
+     * `columns` and `rows` are the GLASS, not the controller: an HD44780 always
+     * has 80 characters of display memory, and a 1602 shows sixteen of each
+     * line's forty. Both numbers are here so a 20x4 module could be added as a
+     * second row in this registry rather than as a second decoder.
+     */
+    | { kind: 'character_lcd'; columns: number; rows: number }
     | { kind: 'passive' }
   /** Editable properties surfaced in the inspector. */
   props?: PropSpec[]
@@ -1932,6 +1945,136 @@ const inductor: PartDefinition = {
   `,
 }
 
+// ─── Character LCD ────────────────────────────────────────────────────────────
+
+/**
+ * Where the dots go on a 1602's glass, in part-local units.
+ *
+ * ONE declaration read by TWO renderers, and that is the whole reason it is
+ * exported rather than inlined in the artwork: the static SVG below draws the
+ * bezel and the dark screen, and CircuitCanvas draws the lit dots on top of it
+ * from the decoded DDRAM. Two copies of these numbers would drift by a unit and
+ * put the text a hair outside its own window.
+ *
+ * The proportions are a real module's. A 1602 cell is 5 dots wide and 8 tall
+ * with the dots taller than they are wide, and the gap between cells is about a
+ * third of a dot pitch — which is why `cellW` (9) is more than 5 x `dotPitchX`
+ * (8.5) and `cellH` (17) more than 8 x `dotPitchY` (15.2).
+ */
+export const LCD1602_SCREEN = {
+  /** Top-left of the first character cell. */
+  x: 20,
+  y: 33,
+  cols: 16,
+  rows: 2,
+  /** Character cell pitch, including the gap to the next cell. */
+  cellW: 9,
+  cellH: 17,
+  /** Dot pitch within a cell. */
+  dotPitchX: 1.7,
+  dotPitchY: 1.9,
+  /** The lit rectangle itself, slightly smaller than its pitch. */
+  dotW: 1.45,
+  dotH: 1.6,
+  /** The dark window the dots sit in, for the backlight wash. */
+  bezel: { x: 12, y: 26, w: 156, h: 46 },
+} as const
+
+/**
+ * 16x2 character LCD on an HD44780, as the 16-pin module a student buys.
+ *
+ * PIN ORDER IS THE MODULE'S SILKSCREEN, left to right, 1 to 16 — VSS, VDD, V0,
+ * RS, R/W, E, D0-D7, A, K — because that is the order the header is soldered in
+ * and the order every wiring diagram for this part is drawn in. Ids are the
+ * silkscreen names too, so a student reading "RS to pin 12" has something called
+ * RS to click on.
+ *
+ * THREE OF THE SIXTEEN ARE THE ONES PEOPLE GET WRONG, and each is modelled
+ * rather than decorated:
+ *
+ *   V0  is the contrast tap. It is a real net and the behavioural model reads
+ *       the solved voltage on it, so the trimmer between VDD and VSS that every
+ *       diagram shows genuinely controls whether anything is legible — including
+ *       the two failures it causes: wound to VDD the screen goes blank with the
+ *       text still in memory, wound to VSS every cell fills with a solid block.
+ *   R/W is tied to ground in almost every diagram and almost every sketch, and
+ *       a student who ties it HIGH instead gets a display that ignores
+ *       everything. That is what the model does: a transfer with R/W high is a
+ *       read, and it is counted and dropped rather than decoded.
+ *   VSS is `passive`, not `gnd`. Everything on this module returns to THIS pin
+ *       — the input leakage resistors and the logic supply alike — so a missing
+ *       ground lead leaves the whole thing on a floating island decoding
+ *       nothing, exactly as the ULN2003's and the relay board's do. Typing it
+ *       `gnd` would silently union it onto net 0 and hide the commonest wiring
+ *       mistake there is.
+ */
+function makeLCD1602(): PartDefinition {
+  const W = 180
+  const H = 92
+  const HEADER_X = 15
+  const HEADER_Y = 10
+
+  const order: Array<{ id: string; name: string; type: PinType }> = [
+    { id: 'VSS', name: 'VSS (GND)', type: 'passive' },
+    { id: 'VDD', name: 'VDD (5V)', type: 'power' },
+    { id: 'V0', name: 'V0 (contrast)', type: 'passive' },
+    { id: 'RS', name: 'RS', type: 'digital' },
+    { id: 'RW', name: 'R/W', type: 'digital' },
+    { id: 'E', name: 'E', type: 'digital' },
+    ...[0, 1, 2, 3, 4, 5, 6, 7].map((k) => ({
+      id: `D${k}`,
+      name: `D${k}`,
+      type: 'digital' as PinType,
+    })),
+    { id: 'A', name: 'A (LED+)', type: 'passive' },
+    { id: 'K', name: 'K (LED-)', type: 'passive' },
+  ]
+
+  const pins: PinGeometry[] = order.map((p, i) => ({
+    ...p,
+    x: HEADER_X + i * PITCH,
+    y: HEADER_Y,
+  }))
+
+  const pads = pins
+    .map(
+      (p) =>
+        `<rect x="${p.x - 3.4}" y="${p.y - 3.4}" width="6.8" height="6.8" rx="1" ` +
+        `fill="#d8c07a" stroke="#8a6d14" stroke-width="0.6"/>` +
+        `<circle cx="${p.x}" cy="${p.y}" r="1.7" fill="#3a3226"/>`,
+    )
+    .join('')
+
+  const s = LCD1602_SCREEN
+
+  return {
+    type: 'lcd1602',
+    label: '16x2 LCD (HD44780)',
+    width: W,
+    height: H,
+    pins,
+    electrical: { kind: 'character_lcd', columns: s.cols, rows: s.rows },
+    svg: `
+      <rect x="0" y="0" width="${W}" height="${H}" rx="3" fill="#1f7a4d" stroke="#125334"/>
+      <circle cx="6" cy="6" r="3" fill="#0f3f28"/>
+      <circle cx="${W - 6}" cy="6" r="3" fill="#0f3f28"/>
+      <circle cx="6" cy="${H - 6}" r="3" fill="#0f3f28"/>
+      <circle cx="${W - 6}" cy="${H - 6}" r="3" fill="#0f3f28"/>
+      <text x="${HEADER_X - 6}" y="${HEADER_Y + 2.4}" font-size="6" text-anchor="end"
+            fill="#d7f0e2" font-family="monospace">1</text>
+      ${pads}
+      <rect x="${s.bezel.x - 3}" y="${s.bezel.y - 3}" width="${s.bezel.w + 6}"
+            height="${s.bezel.h + 6}" rx="2" fill="#0f3f28" stroke="#0a2b1b"/>
+      <rect x="${s.bezel.x}" y="${s.bezel.y}" width="${s.bezel.w}" height="${s.bezel.h}"
+            rx="1" fill="#4d6b34"/>
+      <text x="${W / 2}" y="${H - 5}" font-size="6" text-anchor="middle"
+            fill="#b9e6cd" font-family="monospace">1602A  HD44780</text>
+    `,
+  }
+}
+
+const lcd1602 = makeLCD1602()
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const PART_LIBRARY: Record<string, PartDefinition> = {
@@ -1958,6 +2101,7 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   relay_4ch: makeRelayModule(),
   pulse_sensor: pulseSensor,
   mcp3008: makeMCP3008(),
+  lcd1602,
   capacitor,
   inductor,
 }
@@ -1994,6 +2138,11 @@ export const PALETTE: string[] = [
   // board without an ADC needs in order to read it.
   'pulse_sensor',
   'mcp3008',
+  // The display sits after the sensors because that is the order the work goes
+  // in: a student wires the thing that measures, then the thing that shows the
+  // measurement. It is also the only OUTPUT device here that is not a
+  // transducer, so it belongs beside neither the LEDs nor the motor drivers.
+  'lcd1602',
   // The two reactive elements together: they are the pair the transient engine
   // exists for, and a student reaching for one is learning the same lesson.
   'capacitor',

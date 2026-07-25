@@ -11,7 +11,12 @@ import {
   DCMotor,
   Diode as DiodeDevice,
   DIODE_1N4148,
+  HD44780_BACKLIGHT,
+  HD44780_BACKLIGHT_OHMS,
+  HD44780_INPUT_OHMS,
+  HD44780_SUPPLY,
   Inductor,
+  LED_SERIES_R,
   NortonPort,
   RELAY_MODULE_4CH,
   Resistor,
@@ -203,6 +208,29 @@ interface DeadLead {
  * reasoning. Every other part declares exactly `GND`, so the order costs nothing.
  */
 const SENSOR_GROUND_PINS = ['GND', 'DGND', 'AGND'] as const
+
+/**
+ * Every pin an HD44780 module LISTENS on, each of which gets its leakage
+ * resistance to the module's own VSS.
+ *
+ * V0 is in the list and is not a logic input — it is the contrast tap — but it
+ * wants the identical treatment for the identical reason: a defined level when
+ * nothing is driving it, and an impedance too high to load whatever is.
+ */
+const LCD_INPUT_PINS = [
+  'V0',
+  'RS',
+  'RW',
+  'E',
+  'D0',
+  'D1',
+  'D2',
+  'D3',
+  'D4',
+  'D5',
+  'D6',
+  'D7',
+] as const
 
 class DSU {
   private parent = new Map<string, string>()
@@ -897,6 +925,115 @@ export function compile(doc: CircuitDoc): CompileResult {
           }
         }
       }
+    } else if (el.kind === 'character_lcd') {
+      /**
+       * A character LCD: a supply, eleven high-impedance inputs, a contrast tap
+       * and a backlight — and then a monitor that reads the wire.
+       *
+       * EVERYTHING RETURNS TO THE MODULE'S OWN VSS, never to net 0, for the same
+       * reason the ULN2003's and the relay board's do. Without that pin on a net
+       * there is no reference for a logic level and no return for the supply
+       * current, so the part is stamped nothing and decodes nothing — which is
+       * exactly what a module with its ground lead in the air does.
+       */
+      const vss = net({ partId: part.id, pinId: 'VSS' })
+      const vdd = net({ partId: part.id, pinId: 'VDD' })
+      if (vss === undefined) continue
+
+      if (vdd !== undefined) {
+        circuit.add(new SensorSupply(`${part.id}.supply`, vdd, vss, HD44780_SUPPLY))
+      }
+
+      /**
+       * The input leakage of every pin the controller LISTENS on.
+       *
+       * Not a formality. D0-D3 are unconnected in a 4-bit wiring, and the
+       * initialisation sequence only works because the silicon reads them as
+       * zero while it is still in 8-bit mode; a pin with no defined level would
+       * make the first four bytes of every sketch's startup a coin toss. V0 gets
+       * the same high impedance because the bias tap draws tens of microamps at
+       * most, and loading a student's trimmer would move the contrast they set.
+       */
+      for (const pinId of LCD_INPUT_PINS) {
+        const n = net({ partId: part.id, pinId })
+        if (n === undefined || n === vss) continue
+        circuit.add(
+          new Resistor(`${part.id}.${pinId.toLowerCase()}in`, n, vss, HD44780_INPUT_OHMS),
+        )
+      }
+
+      /**
+       * The backlight, as the LED array and the on-board ballast it really is.
+       *
+       * Metered under `<part>.backlight` and registered as an LED, so the panel
+       * reports its current and the canvas gets a brightness for it through the
+       * same path every other LED uses — which is what makes a backlight on a
+       * PWM pin dim rather than blink, since the engine's display filter is
+       * already averaging that map.
+       */
+      const anode = net({ partId: part.id, pinId: 'A' })
+      const cathode = net({ partId: part.id, pinId: 'K' })
+      if (anode !== undefined && cathode !== undefined && anode !== cathode) {
+        const internal = circuit.allocNet()
+        const { devices, diode } = createLED(
+          `${part.id}.backlight`,
+          anode,
+          cathode,
+          internal,
+          HD44780_BACKLIGHT,
+          // The module's own ballast, plus the array's bulk resistance: two
+          // junctions in series, each carrying the same LED_SERIES_R every other
+          // LED in this simulator does.
+          HD44780_BACKLIGHT_OHMS + 2 * LED_SERIES_R,
+        )
+        circuit.add(...devices)
+        leds.set(`${part.id}.backlight`, diode)
+        meters.set(`${part.id}.backlight`, diode)
+      }
+
+      /**
+       * A MONITOR, with `ports: {}`.
+       *
+       * The display never drives one of its own nets. Every signal pin is an
+       * input, so giving it a port would let it fight the sketch for the bus it
+       * is supposed to be listening to — the same reasoning that keeps
+       * RelayMonitor and StepperMonitor portless. What it does instead is read
+       * the solved voltages on E, RS, R/W and D0-D7 and decode the HD44780's own
+       * protocol out of them.
+       */
+      const lcdNets: Record<string, NetId> = {}
+      for (const pin of def.pins) {
+        const n = net({ partId: part.id, pinId: pin.id })
+        if (n !== undefined) lcdNets[pin.id] = n
+      }
+      behavioural.push({ partId: part.id, protocol: 'hd44780', nets: lcdNets, ports: {} })
+
+      /**
+       * FOUR THINGS THIS DISPLAY DOES NOT DO, each stated narrowly enough to be
+       * checkable and none of them claiming the engine is incapable of it.
+       */
+      limitations.push(
+        'The LCD decodes writes only. A transfer with R/W high is a READ — the busy flag, ' +
+          'the address counter or a character read back out of display memory — and the model ' +
+          'counts those and leaves the data pins alone instead of answering them. Arduino’s ' +
+          'LiquidCrystal never wires R/W and never reads, so a stock sketch is unaffected; a ' +
+          'sketch that polls the busy flag will wait forever for a reply.',
+      )
+      limitations.push(
+        'The eight custom characters an HD44780 can be given are accepted and stored, so the ' +
+          'address counter stays in step with the sketch, but they are not drawn: a cell ' +
+          'holding one of codes 0-7 shows an empty box. Codes 0xA0-0xFF — the katakana and ' +
+          'Greek half of the A00 character ROM — are shown the same way. Everything in ' +
+          '0x20-0x7F is drawn from the real 5x8 ROM bitmaps, including the yen sign at 0x5C ' +
+          'and the two arrows at 0x7E and 0x7F that a sketch printing ASCII does not expect.',
+      )
+      limitations.push(
+        'Instructions take effect the instant the E pulse ends. A real HD44780 needs 37 µs ' +
+          'for most of them and 1.52 ms after a clear or a home, during which it ignores the ' +
+          'bus; this model accepts writes sent inside that window that the hardware would ' +
+          'drop. A sketch whose delays are too short therefore works here and fails on a ' +
+          'bench, which is the one direction this simulator is more forgiving than the part.',
+      )
     } else if (el.kind === 'button') {
       const a = net({ partId: part.id, pinId: '1a' })
       const b = net({ partId: part.id, pinId: '2a' })
@@ -973,6 +1110,13 @@ export function compile(doc: CircuitDoc): CompileResult {
         kind === 'darlington_array' ||
         kind === 'h_bridge' ||
         kind === 'relay_module' ||
+        /**
+         * A 16-pin LCD wired in 4-bit mode leaves FIVE pins deliberately unused
+         * — D0-D3 and, on the common wiring, R/W — and the backlight pair is
+         * optional on top of that. Six "wired to nothing" notices on a correctly
+         * built display is exactly the noise this exemption exists to stop.
+         */
+        kind === 'character_lcd' ||
         (kind === 'sensor' && def.electrical.kind === 'sensor' && def.electrical.protocol === 'mcp3008')
       ) {
         /**

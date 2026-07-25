@@ -9,7 +9,15 @@ import {
   useRef,
   useState,
 } from 'react'
+import type { DeviceState } from '@/lib/simulator/behavioural'
 import {
+  LCD_GLYPH_COLS,
+  LCD_GLYPH_ROWS,
+  lcdGlyph,
+  unpackLcdRow,
+} from '@/lib/simulator/lcd-font'
+import {
+  LCD1602_SCREEN,
   PITCH,
   getPart,
   knobAngleFor,
@@ -65,6 +73,15 @@ interface Props {
   dispatch: (a: DocAction) => void
   /** partId → 0..1 LED brightness, from the running simulation. */
   ledBrightness?: Map<string, number>
+  /**
+   * partId → whatever that part's behavioural model last reported.
+   *
+   * Only the display reads this today, and it reads it because it has to: a
+   * character LCD's whole output IS its reported state, so a canvas that could
+   * not see the snapshot would be drawing an empty screen next to a Checks panel
+   * that knew exactly what was written on it.
+   */
+  deviceStates?: Record<string, DeviceState>
   /** pinKey → net id, for highlighting connected nets. */
   netOf?: Map<string, number>
   selected: string | null
@@ -444,6 +461,7 @@ export function CircuitCanvas({
   doc,
   dispatch,
   ledBrightness,
+  deviceStates,
   netOf,
   selected,
   onSelect,
@@ -1172,6 +1190,18 @@ export function CircuitCanvas({
                   dangerouslySetInnerHTML={{ __html: def.svg }}
                 />
 
+                {/* The glass, painted over the artwork's own dark window. It is
+                    NOT part of `def.svg` because it is the only thing on this
+                    canvas whose content changes every frame from the running
+                    simulation — the static markup draws the module, this draws
+                    what the module is showing. */}
+                {def.electrical.kind === 'character_lcd' && deviceStates?.[part.id] && (
+                  <LcdScreen
+                    state={deviceStates[part.id]}
+                    backlight={ledBrightness?.get(`${part.id}.backlight`) ?? 0}
+                  />
+                )}
+
                 {def.knob && knobProp && (
                   <Knob
                     part={part}
@@ -1353,6 +1383,195 @@ function localToWorld(part: PlacedPart, def: PartDefinition, lx: number, ly: num
   const dx = lx - ox
   const dy = ly - oy
   return { x: part.x + ox + dx * cos - dy * sin, y: part.y + oy + dx * sin + dy * cos }
+}
+
+// ─── Character LCD ────────────────────────────────────────────────────────────
+
+/**
+ * One CGROM glyph as a single SVG path, in dot units.
+ *
+ * ONE PATH PER CELL rather than one rect per dot, and the arithmetic says why:
+ * 16 x 2 cells of 5 x 8 dots is 1280 rectangles, re-created on every snapshot at
+ * 20 frames a second, per display on the canvas. As paths it is 32 nodes, and
+ * the string for each is memoised on the character code — so a screen that is
+ * not changing costs one `d` attribute comparison per cell.
+ *
+ * Drawn in DOT UNITS (a dot is 1 x 1 at integer coordinates) and scaled by the
+ * caller, so the same string serves any zoom and any module geometry.
+ */
+/**
+ * A dot's size and inset inside its own pitch, as fractions of one pitch.
+ *
+ * Derived from LCD1602_SCREEN rather than chosen here, so the gap between the
+ * dots is the module's declared geometry and not a second opinion about it.
+ */
+const DOT_W = LCD1602_SCREEN.dotW / LCD1602_SCREEN.dotPitchX
+const DOT_H = LCD1602_SCREEN.dotH / LCD1602_SCREEN.dotPitchY
+const DOT_INSET_X = (1 - DOT_W) / 2
+const DOT_INSET_Y = (1 - DOT_H) / 2
+
+function dotRect(c: number, r: number): string {
+  const x = (c + DOT_INSET_X).toFixed(3)
+  const y = (r + DOT_INSET_Y).toFixed(3)
+  return `M${x} ${y}h${DOT_W.toFixed(3)}v${DOT_H.toFixed(3)}h-${DOT_W.toFixed(3)}z`
+}
+
+const glyphPathCache = new Map<number, string>()
+
+function glyphPath(code: number): string {
+  const hit = glyphPathCache.get(code)
+  if (hit !== undefined) return hit
+  const cols = lcdGlyph(code)
+  let d = ''
+  for (let c = 0; c < LCD_GLYPH_COLS; c++) {
+    for (let r = 0; r < LCD_GLYPH_ROWS; r++) {
+      if ((cols[c] >> r) & 1) d += dotRect(c, r)
+    }
+  }
+  glyphPathCache.set(code, d)
+  return d
+}
+
+/** Every dot of a cell, for the un-driven segments an over-biased panel shows. */
+const ALL_DOTS = (() => {
+  let d = ''
+  for (let c = 0; c < LCD_GLYPH_COLS; c++) {
+    for (let r = 0; r < LCD_GLYPH_ROWS; r++) d += dotRect(c, r)
+  }
+  return d
+})()
+
+/** The cursor line: row 7 of the cell, all five columns. */
+const CURSOR_LINE = (() => {
+  let d = ''
+  for (let c = 0; c < LCD_GLYPH_COLS; c++) d += dotRect(c, LCD_GLYPH_ROWS - 1)
+  return d
+})()
+
+/**
+ * The glass of a character LCD, painted from the decoded display memory.
+ *
+ * NOTHING HERE INVENTS ANYTHING. Every code it draws came out of the HD44780
+ * decoder in behavioural.ts, which got it off the data pins on an E falling
+ * edge; the contrast it draws at is `VDD − V0` as the solver found it; the
+ * backlight wash is the backlight LED's own solved current, arriving through the
+ * same brightness map every other LED on the canvas uses. If the sketch did not
+ * write it, it is not on the glass.
+ *
+ * THE TWO CONTRAST FAILURES ARE DRAWN, not just reported, because they are what
+ * a student is looking at when they ask why the display is wrong:
+ *
+ *   `contrast` fades the lit dots out as VDD − V0 falls — wind the trimmer to
+ *   VDD and the screen goes blank with the text still in memory.
+ *   `blocks` fades the UN-lit dots IN as it rises past what the panel can
+ *   reject — tie V0 to ground and every cell becomes a solid block, which is
+ *   the first thing most people ever see a 1602 do.
+ */
+function LcdScreen({
+  state,
+  backlight,
+}: {
+  state: DeviceState
+  /** 0..1 from the engine's LED brightness map, or 0 when A/K are not wired. */
+  backlight: number
+}) {
+  const s = LCD1602_SCREEN
+  const num = (k: string): number => {
+    const v = state[k]
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0
+  }
+  const powered = state.powered === true
+  const lit = state.on === true
+  const contrast = powered ? num('contrast') : 0
+  const blocks = powered ? num('blocks') : 0
+  const rows = [unpackLcdRow(String(state.row0 ?? '')), unpackLcdRow(String(state.row1 ?? ''))]
+  const cursorRow = num('cursorRow')
+  const cursorCol = num('cursorCol')
+  const onGlass = cursorCol >= 0 && cursorRow >= 0
+  const showCursor = lit && state.cursor === true && onGlass
+  /**
+   * The BLINKING cursor is a separate control bit from the underline one, and a
+   * real HD44780 draws it as the whole 5x8 cell alternating with the character
+   * at about 2.5 Hz. It is drawn here rather than merely reported for the same
+   * reason the contrast is: a student who called `lcd.blink()` is looking for it
+   * on the screen, not in a panel.
+   */
+  const showBlink = lit && state.blink === true && onGlass
+
+  /**
+   * The panel colour, from the backlight's own current.
+   *
+   * A yellow-green module is READABLE with its backlight off — it is a
+   * reflective panel and the dots are still there in ambient light — so this
+   * lightens the glass rather than gating the text on it. Gating would be the
+   * blue/white module's behaviour, and this part is drawn as the green one.
+   */
+  const glass =
+    backlight > 0.02
+      ? `rgb(${Math.round(118 + backlight * 60)} ${Math.round(168 + backlight * 62)} ` +
+        `${Math.round(60 + backlight * 34)})`
+      : '#4d6b34'
+
+  return (
+    <g pointerEvents="none" data-testid="lcd-screen">
+      {/* The blink is a wall-clock animation, not a simulated one: the HD44780
+          generates it internally from its own oscillator, so it is the one thing
+          on this part that does NOT come from the sketch. `steps(1, end)` keeps
+          it square, as the controller's is. */}
+      {showBlink && (
+        <style>{`@keyframes vlab-lcd-blink{0%,49.9%{opacity:1}50%,100%{opacity:0}}`}</style>
+      )}
+      <rect x={s.bezel.x} y={s.bezel.y} width={s.bezel.w} height={s.bezel.h} rx={1} fill={glass} />
+      {rows.map((codes, row) =>
+        codes.slice(0, s.cols).map((code, col) => {
+          const x = s.x + col * s.cellW
+          const y = s.y + row * s.cellH
+          // Dots are 1x1 in the path's own units, so the cell scales by the dot
+          // PITCH and each dot is then inset to leave the gap between them.
+          const t = `translate(${x} ${y}) scale(${s.dotPitchX} ${s.dotPitchY})`
+          const isCursor = showCursor && row === cursorRow && col === cursorCol
+          return (
+            <g key={`${row}-${col}`} transform={t}>
+              {blocks > 0.01 && (
+                <path d={ALL_DOTS} fill="#0d2a12" opacity={blocks * 0.85} />
+              )}
+              {lit && contrast > 0.01 && (
+                <path
+                  d={glyphPath(code)}
+                  fill="#0b2b0b"
+                  opacity={contrast}
+                 
+                />
+              )}
+              {isCursor && (
+                <path d={CURSOR_LINE} fill="#0b2b0b" opacity={Math.max(contrast, 0.6)} />
+              )}
+              {showBlink && row === cursorRow && col === cursorCol && (
+                <path
+                  d={ALL_DOTS}
+                  fill="#0b2b0b"
+                  opacity={Math.max(contrast, 0.6)}
+                  style={{ animation: 'vlab-lcd-blink 0.8s steps(1, end) infinite' }}
+                />
+              )}
+            </g>
+          )
+        }),
+      )}
+      {/* The bezel outline, drawn LAST so the dots never spill over its edge
+          when the glass is tinted by a bright backlight. */}
+      <rect
+        x={s.bezel.x}
+        y={s.bezel.y}
+        width={s.bezel.w}
+        height={s.bezel.h}
+        rx={1}
+        fill="none"
+        stroke="#0a2b1b"
+        strokeWidth={0.6}
+      />
+    </g>
+  )
 }
 
 // ─── Knob ─────────────────────────────────────────────────────────────────────

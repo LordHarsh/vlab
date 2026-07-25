@@ -1053,6 +1053,56 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
     }
   }
 
+  /**
+   * The character LCD. What it is showing, and — when it is showing nothing —
+   * WHICH of the four reasons for that it is.
+   *
+   * A blank LCD is the single most demoralising thing in this whole part
+   * library, because every one of the four causes looks identical on the glass:
+   * no supply, no ground reference, the contrast trimmer at the wrong end, or a
+   * sketch that never sent the display-on instruction. The model knows which,
+   * and the entire value of this row is saying so.
+   */
+  if (el.kind === 'character_lcd') {
+    const line = (v: unknown): string => String(v ?? '').padEnd(16, ' ')
+    const bus = `${Math.round(num('busWidth')) || 8}-bit`
+    if (s.powered !== true) {
+      return {
+        headline: 'dark — no supply',
+        detail: `VDD − VSS is ${num('supplyVolts').toFixed(2)} V; the controller needs 2.7 V to run`,
+      }
+    }
+    if (num('contrast') < 0.05) {
+      return {
+        headline: 'blank — contrast off',
+        detail:
+          `VDD − V0 is only ${num('bias').toFixed(2)} V. Wind the trimmer on V0 towards ` +
+          `ground: the text is in memory, it is just not being driven onto the glass.`,
+      }
+    }
+    if (s.on !== true) {
+      return {
+        headline: s.initialised === true ? 'display off' : 'not initialised',
+        detail:
+          s.initialised === true
+            ? 'a function set arrived but the display-on instruction (0x0C) did not'
+            : `no function set received — ${Math.round(num('writes'))} writes, ` +
+              `${Math.round(num('reads'))} reads so far`,
+      }
+    }
+    const blocked = num('blocks') > 0.5
+    return {
+      headline: `"${line(s.text0)}" / "${line(s.text1)}"`,
+      detail:
+        (blocked
+          ? `contrast at maximum — V0 is near ground, so every cell shows a block · `
+          : '') +
+        `${bus} bus · ${Math.round(num('lines'))} line · ` +
+        `cursor ${num('cursorCol') < 0 ? 'off screen' : `${num('cursorRow')},${num('cursorCol')}`}` +
+        (num('reads') > 0 ? ` · ${Math.round(num('reads'))} reads ignored (R/W high)` : ''),
+    }
+  }
+
   // A part whose model reports a shape this panel has never seen still gets its
   // numbers shown, rather than an empty row that looks like a broken sensor.
   const pairs = Object.entries(s).map(
@@ -1088,6 +1138,9 @@ const REPORTS_STATE = new Set([
   // only way to see an L298N working was to look at the motor on the end of it.
   'h_bridge',
   'darlington_array',
+  // The display. Its row is the only place a student can read the four
+  // different reasons a blank screen is blank.
+  'character_lcd',
 ])
 
 /**
@@ -2287,6 +2340,7 @@ export function CircuitEditor({
             doc={doc}
             dispatch={dispatch}
             ledBrightness={ledBrightness}
+            deviceStates={snapshot.deviceStates}
             netOf={netOf}
             selected={selected}
             onSelect={setSelected}

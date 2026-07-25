@@ -153,7 +153,13 @@ function hasBehaviouralModel(def: PartDefinition): boolean {
     kind === 'sensor' ||
     kind === 'buzzer' ||
     kind === 'stepper' ||
-    kind === 'relay_module'
+    kind === 'relay_module' ||
+    // The character LCD declares no props today — its contrast and its backlight
+    // are both SOLVED, from V0 and from the A/K pair, which is the strongest
+    // form of reachable there is. It is listed anyway because this predicate
+    // answers "could a model read a prop on this part", and the answer for a
+    // part with a behavioural model is yes whether or not one exists yet.
+    kind === 'character_lcd'
   )
 }
 
