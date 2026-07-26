@@ -26,6 +26,8 @@
  * Run: npx tsx lib/simulator/__tests__/wirehit.test.ts
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   distToSegment,
   pinOutranks,
@@ -383,7 +385,209 @@ function midpoint(r: WireRoute): Point {
   check('the wire is still there', state.doc.wires.length === beforeCount)
 }
 
-// ─── 6. Bends stay cosmetic: the netlist never sees them ─────────────────────
+// ─── 6. Double-click INSERTS a bend, in the right slot ───────────────────────
+//
+// Double-clicking a wire's body used to delete the whole wire. It now adds a
+// bend where the pointer is, and the INDEX is the entire difficulty: a waypoint
+// list is an ORDERED path, so a bend appended to the end of a wire that already
+// has two makes the drawn wire double back on itself and cross its own middle.
+//
+// `wireTargetAt` already answers the question — segment i of
+// [from, ...waypoints, to] runs from waypoint i−1 to waypoint i, so i is also
+// the slot the new bend belongs in — and the canvas passes that number straight
+// through without a second opinion. This section is what proves the two halves
+// agree, on geometry chosen here so every figure below is worked out by hand.
+
+{
+  /**
+   * A wire straight along the x axis with two bends already on it, so that it
+   * has three segments and a middle one to aim at:
+   *
+   *     (0,0) ──0── (100,0) ──1── (200,0) ──2── (300,0)
+   *
+   * Endpoints and waypoints are given directly rather than resolved from parts:
+   * the claim under test is about ORDER, and a hand-written polyline is the only
+   * way to state the expected order without deriving it from the thing being
+   * tested.
+   */
+  const base: WireRoute = {
+    id: 'w',
+    a: p(0, 0),
+    b: p(300, 0),
+    waypoints: [p(100, 0), p(200, 0)],
+  }
+
+  /** Every segment resolves to its own index, and the ends are not confused. */
+  for (const [x, expected] of [[50, 0], [150, 1], [250, 2]] as const) {
+    const hit = wireTargetAt([base], p(x, 0), TOL)
+    check(
+      `a press at x=${x} lands on segment ${expected}`,
+      hit?.kind === 'body' && hit.index === expected,
+      JSON.stringify(hit),
+    )
+  }
+
+  /**
+   * The handles still outrank the body. x=100 is a waypoint, and pressing it has
+   * to grab that bend rather than mint a second one on top of it — which is also
+   * what keeps double-click-to-REMOVE working on a bend.
+   */
+  const onBend = wireTargetAt([base], p(100, 0), TOL)
+  check(
+    'a press on an existing bend is a handle, not a body',
+    onBend?.kind === 'handle' && onBend.index === 0,
+    JSON.stringify(onBend),
+  )
+
+  // ── the insert itself, through the real reducer ───────────────────────────
+  const doc: CircuitDoc = {
+    parts: [],
+    wires: [
+      {
+        id: 'w',
+        from: { partId: 'x', pinId: '1' },
+        to: { partId: 'y', pinId: '1' },
+        color: '#40B942',
+        waypoints: [p(100, 0), p(200, 0)],
+      },
+    ],
+  }
+  let s: DocState = docReducer(initialDocState, { type: 'load', doc: structuredClone(doc) })
+
+  const hit = wireTargetAt([base], p(150, 0), TOL)!
+  s = docReducer(s, { type: 'addWaypoint', id: 'w', index: hit.index, point: p(150, 0) })
+  const pts = s.doc.wires[0].waypoints!
+
+  check('the double-click added a bend rather than removing the wire', s.doc.wires.length === 1)
+  check('...and there are now three bends', pts.length === 3)
+  check(
+    'THE WHOLE POINT: it landed BETWEEN its two neighbours, not at the end',
+    pts[0].x === 100 && pts[1].x === 150 && pts[2].x === 200,
+    JSON.stringify(pts.map((q) => q.x)),
+  )
+
+  /**
+   * And what "at the end" would have cost, stated as geometry rather than as an
+   * index. Drag the new bend up to (150, 80) — the first thing a student does
+   * with a bend they just made — and walk the two orderings:
+   *
+   *   right: (0,0) (100,0) (150,80) (200,0) (300,0)   x runs 0→300, never back
+   *   wrong: (0,0) (100,0) (200,0) (150,80) (300,0)   x goes 200 then 150
+   *
+   * Lengths, by Pythagoras: the right one is 100 + √8900 + √8900 + 100, and the
+   * wrong one is 100 + 100 + √8900 + 170 — because √(150² + 80²) is exactly 170.
+   */
+  s = docReducer(s, { type: 'moveWaypoint', id: 'w', index: 1, x: 150, y: 80 })
+  const right = [base.a, ...s.doc.wires[0].waypoints!, base.b]
+  const wrong = [base.a, p(100, 0), p(200, 0), p(150, 80), base.b]
+
+  const monotone = (path: Point[]) => path.every((q, i) => i === 0 || q.x > path[i - 1].x)
+  const length = (path: Point[]) =>
+    path.reduce((sum, q, i) => (i === 0 ? 0 : sum + Math.hypot(q.x - path[i - 1].x, q.y - path[i - 1].y)), 0)
+
+  check('the wire runs forwards the whole way', monotone(right), JSON.stringify(right.map((q) => q.x)))
+  check('...where an appended bend would have doubled it back', !monotone(wrong))
+  check(
+    'the right ordering measures 200 + 2√8900',
+    Math.abs(length(right) - (200 + 2 * Math.sqrt(8900))) < 1e-9,
+    `${length(right)}`,
+  )
+  check(
+    'the wrong one measures 200 + √8900 + 170, which is 75.7 longer',
+    Math.abs(length(wrong) - (200 + Math.sqrt(8900) + 170)) < 1e-9,
+    `${length(wrong)}`,
+  )
+
+  /**
+   * Removing a bend is still the inverse of adding one, and still lives on the
+   * handle — the half of the old double-click behaviour that was worth keeping.
+   */
+  const handle = wireTargetAt(
+    [{ ...base, waypoints: s.doc.wires[0].waypoints }],
+    p(150, 80),
+    TOL,
+  )!
+  check('the new bend is now a handle of its own', handle.kind === 'handle' && handle.index === 1)
+  s = docReducer(s, { type: 'removeWaypoint', id: 'w', index: handle.index })
+  check('double-clicking it takes it back off', s.doc.wires[0].waypoints?.length === 2)
+  check('...leaving the wire itself alone', s.doc.wires.length === 1)
+}
+
+// ─── 6b. Nothing on this path can delete a wire any more ─────────────────────
+//
+// The regression guard for the behaviour that was REMOVED. A double-click on a
+// body used to dispatch `removeWire`, and the whole point of the change is that
+// it cannot happen by accident again — deletion is now Delete, on a wire the
+// student has selected on purpose.
+
+{
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'components/simulator/CircuitCanvas.tsx'),
+    'utf8',
+  )
+  const dbl = source.slice(
+    source.indexOf('function onCanvasDoubleClick'),
+    source.indexOf('/** Turn a finished route into a wire.'),
+  )
+  check('the double-click handler exists to be checked', dbl.length > 0)
+  check(
+    "double-click no longer dispatches 'removeWire'",
+    !dbl.includes('removeWire'),
+    dbl.includes('removeWire') ? 'STILL DELETES THE WIRE' : '',
+  )
+  check(
+    "...it dispatches 'addWaypoint' instead",
+    dbl.includes("type: 'addWaypoint'"),
+    dbl.includes("type: 'addWaypoint'") ? '' : 'NO INSERT',
+  )
+  /**
+   * Anchored to the `addWaypoint` dispatch and not merely to the handler, and
+   * that specificity is not fussiness: the REMOVE branch a few lines above also
+   * passes `index: target.index`, so an unanchored search matched it and a
+   * mutation that made the insert append at a fixed slot went straight through
+   * a green run. Found by mutation, fixed by anchoring.
+   */
+  const insertIndex = /type: 'addWaypoint'[\s\S]{0,200}?index: (target\.index|[^,\n]+)/.exec(dbl)
+  check(
+    '...at the index resolveGrab gave it, not one it recomputed',
+    insertIndex?.[1] === 'target.index',
+    insertIndex?.[1] ?? 'no index passed to addWaypoint',
+  )
+  check(
+    '...and still removes a bend when the double-click is on a handle',
+    /kind === 'handle'[\s\S]{0,200}?type: 'removeWaypoint'/.test(dbl),
+  )
+
+  /**
+   * And the replacement really is reachable: Delete has to be wired to
+   * `removeWire` in the editor, behind the same focus guard that protects a
+   * student typing in the code editor from losing their circuit to a Backspace.
+   */
+  const editor = fs.readFileSync(
+    path.join(process.cwd(), 'components/simulator/CircuitEditor.tsx'),
+    'utf8',
+  )
+  check(
+    "Delete removes a selected wire",
+    /'Delete' \|\| e\.key === 'Backspace'[\s\S]{0,700}?type: 'removeWire'/.test(editor),
+    'no Delete → removeWire path',
+  )
+  check(
+    '...behind the untouched focus guard',
+    /tag === 'INPUT' \|\| tag === 'TEXTAREA' \|\| tag === 'SELECT' \|\| t\.isContentEditable/.test(editor),
+    'the guard that stops Backspace eating a circuit while typing',
+  )
+  check(
+    'selecting a part clears the selected wire',
+    /const selectPart = useCallback\([\s\S]{0,200}?setSelectedWire\(null\)/.test(editor),
+  )
+  check(
+    'and selecting a wire clears the selected part',
+    /const selectWire = useCallback\([\s\S]{0,300}?setSelected\(null\)/.test(editor),
+  )
+}
+
+// ─── 7. Bends stay cosmetic: the netlist never sees them ─────────────────────
 
 {
   const straight = structuredClone(STARTER_ULTRASONIC_PIR)

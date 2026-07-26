@@ -9,7 +9,16 @@ import {
   useRef,
   useState,
 } from 'react'
+import type { DeviceState } from '@/lib/simulator/behavioural'
 import {
+  LCD_GLYPH_COLS,
+  LCD_GLYPH_ROWS,
+  lcdGlyph,
+  unpackLcdRow,
+} from '@/lib/simulator/lcd-font'
+import {
+  DC_MOTOR_READOUT,
+  LCD1602_SCREEN,
   PITCH,
   getPart,
   knobAngleFor,
@@ -19,12 +28,16 @@ import {
   ledGlowFill,
   sliderPointFor,
   sliderValueFor,
+  targetConeEdges,
+  targetPointFor,
+  targetValuesFor,
   type KnobControl,
   type MomentaryControl,
   type PartDefinition,
   type PinGeometry,
   type PropSpec,
   type SliderControl,
+  type TargetControl,
 } from '@/lib/simulator/model/parts'
 import {
   WIRE_COLORS,
@@ -65,10 +78,35 @@ interface Props {
   dispatch: (a: DocAction) => void
   /** partId → 0..1 LED brightness, from the running simulation. */
   ledBrightness?: Map<string, number>
+  /**
+   * partId → whatever that part's behavioural model last reported.
+   *
+   * Only the display reads this today, and it reads it because it has to: a
+   * character LCD's whole output IS its reported state, so a canvas that could
+   * not see the snapshot would be drawing an empty screen next to a Checks panel
+   * that knew exactly what was written on it.
+   */
+  deviceStates?: Record<string, DeviceState>
   /** pinKey → net id, for highlighting connected nets. */
   netOf?: Map<string, number>
   selected: string | null
   onSelect: (id: string | null) => void
+  /**
+   * The selected WIRE, which is a separate id from the selected part.
+   *
+   * Two ids rather than one tagged union because they are answered by different
+   * questions — `doc.parts.find` against `doc.wires.find` — and because the
+   * inspector, the rotate key and the copy buffer all only ever mean a part. The
+   * rule that at most one of the two is set lives in CircuitEditor, in ONE place:
+   * two things highlighted at once with Delete guessing between them is worse
+   * than either.
+   */
+  selectedWire?: string | null
+  /**
+   * Report a click on a wire, or `null` where the canvas knows the selection is
+   * gone (the wire was deleted under it).
+   */
+  onSelectWire?: (id: string | null) => void
 }
 
 interface Drag {
@@ -116,6 +154,37 @@ interface SliderDrag {
   partId: string
   slider: SliderControl
   prop: PropSpec
+  /** The part's origin in WORLD units, resolved once at pointerdown. */
+  ox: number
+  oy: number
+  /** Half the part's bounding box — `partTransform`'s rotation pivot. */
+  px: number
+  py: number
+  rotation: number
+  /** Set once this gesture has landed its one undo entry. */
+  pushed: boolean
+}
+
+/**
+ * A pointer gesture moving a sensor's target about in front of it.
+ *
+ * The same frame as `SliderDrag`, and for the same reason: the pointer has to
+ * come all the way back into PART-LOCAL units before `targetValuesFor` can
+ * measure a distance and a bearing from the sensor's face, and doing that in
+ * world units would only work for an unrotated part. `ox`/`oy` is the part's
+ * origin in world units and `rotation` undoes its turn, which together are the
+ * inverse of `partTransform`.
+ *
+ * Two props move at once here where the slider moves one, so `pushed` guards
+ * both: the FIRST write of the gesture — whichever of the two it turns out to be
+ * — carries the undo entry and everything after it rides on that one.
+ */
+interface TargetDrag {
+  partId: string
+  target: TargetControl
+  prop: PropSpec
+  /** The bearing's prop, on a target with two degrees of freedom. */
+  bearingProp?: PropSpec
   /** The part's origin in WORLD units, resolved once at pointerdown. */
   ox: number
   oy: number
@@ -444,9 +513,12 @@ export function CircuitCanvas({
   doc,
   dispatch,
   ledBrightness,
+  deviceStates,
   netOf,
   selected,
   onSelect,
+  selectedWire,
+  onSelectWire,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   /**
@@ -489,8 +561,17 @@ export function CircuitCanvas({
   const [hoverWire, setHoverWire] = useState<string | null>(null)
   const [knobDrag, setKnobDrag] = useState<KnobDrag | null>(null)
   const [sliderDrag, setSliderDrag] = useState<SliderDrag | null>(null)
+  const [targetDrag, setTargetDrag] = useState<TargetDrag | null>(null)
   /** The part whose momentary control is being held down, if any. */
   const [holding, setHolding] = useState<string | null>(null)
+  /**
+   * The part whose target is being moved, if any — the PIR's `motion`.
+   *
+   * Separate from `holding` rather than folded into it because the two are
+   * released from different declarations (`momentary.key` against
+   * `target.movingKey`), and one part could legitimately have both.
+   */
+  const [moving, setMoving] = useState<string | null>(null)
 
   /**
    * Frame the whole document the first time the canvas has a size.
@@ -632,6 +713,43 @@ export function CircuitCanvas({
     [hitRoutes, pinTargets, tolerance],
   )
 
+  /**
+   * Every sensor target marker on the board, as a world-space circle.
+   *
+   * Needed because a target floats OUT IN FRONT of its part, over ground the
+   * wiring is free to cross, and the canvas's capture-phase handler claims any
+   * press within grab range of a wire before a child ever sees it. Without this
+   * a jumper draped past an ultrasonic module would make its target undraggable
+   * — the press would bend the wire instead — and the student would have no way
+   * to tell why.
+   */
+  const targetMarkers = useMemo(() => {
+    const out: { at: Point; r: number }[] = []
+    for (const part of doc.parts) {
+      const def = getPart(part.type)
+      const t = def.target
+      const prop = t ? def.props?.find((p) => p.key === t.key) : undefined
+      if (!t || !prop) continue
+      const bearingProp = t.bearingKey ? def.props?.find((p) => p.key === t.bearingKey) : undefined
+      const at = targetPointFor(
+        t,
+        Number(part.props[t.key] ?? prop.default ?? 0),
+        t.bearingKey && bearingProp
+          ? Number(part.props[t.bearingKey] ?? bearingProp.default ?? 0)
+          : 0,
+      )
+      out.push({ at: localToWorld(part, def, at.x, at.y), r: t.r })
+    }
+    return out
+  }, [doc.parts])
+
+  /** Is this press on a sensor target? Then it belongs to the target, not a wire. */
+  const onTargetMarker = useCallback(
+    (p: Point): boolean =>
+      targetMarkers.some((m) => Math.hypot(p.x - m.at.x, p.y - m.at.y) <= m.r),
+    [targetMarkers],
+  )
+
   // ─── Pointer handling ───────────────────────────────────────────────────────
 
   function onPointerMove(e: React.PointerEvent) {
@@ -706,6 +824,70 @@ export function CircuitCanvas({
         transient: sliderDrag.pushed,
       })
       if (!sliderDrag.pushed) setSliderDrag({ ...sliderDrag, pushed: true })
+      return
+    }
+
+    /**
+     * Moving a sensor's target, and it outranks everything below for the reason
+     * the other two do: the gesture began on the marker.
+     *
+     * TWO WRITES, ONE UNDO ENTRY. Distance and bearing are separate props, so a
+     * diagonal drag dispatches twice per frame; `pushed` starts false, the first
+     * dispatch of the whole gesture goes in non-transient and every one after it
+     * — including the second half of that same frame — is marked transient and
+     * rides on it. Without that, one flick of the wrist would cost forty presses
+     * of undo instead of one.
+     */
+    if (targetDrag) {
+      const t = (-targetDrag.rotation * Math.PI) / 180
+      const dx = w.x - targetDrag.ox - targetDrag.px
+      const dy = w.y - targetDrag.oy - targetDrag.py
+      const lx = dx * Math.cos(t) - dy * Math.sin(t) + targetDrag.px
+      const ly = dx * Math.sin(t) + dy * Math.cos(t) + targetDrag.py
+      const next = targetValuesFor(
+        targetDrag.target,
+        targetDrag.prop,
+        targetDrag.bearingProp,
+        lx,
+        ly,
+      )
+
+      const part = partById.get(targetDrag.partId)
+      const currentDistance = Number(
+        part?.props[targetDrag.target.key] ?? targetDrag.prop.default ?? 0,
+      )
+      const bearingKey = targetDrag.target.bearingKey
+      const currentBearing =
+        targetDrag.bearingProp && bearingKey
+          ? Number(part?.props[bearingKey] ?? targetDrag.bearingProp.default ?? 0)
+          : next.bearing
+
+      // A frame that lands on both values we already hold is dropped, so a shaky
+      // pointer inside one step neither re-renders nor burns the undo entry.
+      if (next.distance === currentDistance && next.bearing === currentBearing) return
+
+      let pushed = targetDrag.pushed
+      if (next.distance !== currentDistance) {
+        dispatch({
+          type: 'setProp',
+          id: targetDrag.partId,
+          key: targetDrag.target.key,
+          value: next.distance,
+          transient: pushed,
+        })
+        pushed = true
+      }
+      if (bearingKey && next.bearing !== currentBearing) {
+        dispatch({
+          type: 'setProp',
+          id: targetDrag.partId,
+          key: bearingKey,
+          value: next.bearing,
+          transient: pushed,
+        })
+        pushed = true
+      }
+      if (!targetDrag.pushed) setTargetDrag({ ...targetDrag, pushed: true })
       return
     }
 
@@ -784,16 +966,51 @@ export function CircuitCanvas({
    */
   function endGesture() {
     if (gesture.current) {
-      const { pointerId } = gesture.current
+      const { pointerId, wireId, moved } = gesture.current
       gesture.current = null
       setShaping(null)
       const svg = svgRef.current
       if (svg?.hasPointerCapture?.(pointerId)) svg.releasePointerCapture(pointerId)
+      /**
+       * A PRESS THAT NEVER MOVED WAS A CLICK, AND A CLICK ON A WIRE SELECTS IT.
+       *
+       * Decided here rather than on pointerdown, and that ordering is the whole
+       * reason a wire can be both selected and shaped: the same press starts a
+       * bend, so committing to "this was a selection" before knowing whether the
+       * pointer travelled would light a wire up every time a student grabbed one
+       * to drape it, and leave it lit afterwards.
+       *
+       * `moved` is `DRAG_SLOP`'s answer, the same one the bend uses — so the
+       * threshold between "I clicked this wire" and "I bent this wire" is one
+       * number in one place, and there is no gap or overlap between them.
+       */
+      if (!moved) onSelectWire?.(wireId)
     }
     setDrag(null)
     setPanning(null)
     setKnobDrag(null)
     setSliderDrag(null)
+    setTargetDrag(null)
+    /**
+     * LETTING GO OF A TARGET IS THE MOMENT THE MOVEMENT STOPS.
+     *
+     * A PIR detects movement, not presence, so `motion` is held at 1 only while
+     * the target is under the pointer — the same shape as a held button, and
+     * released here for the same reason it is: a drag that ended off the canvas
+     * would otherwise leave the sensor believing somebody is still walking about
+     * in front of it forever.
+     *
+     * This is what finally puts the datasheet's hold time on screen. Let go and
+     * OUT stays high for `hold` seconds more, then falls — which is the whole
+     * behaviour experiment 6's alarm is built on and which nothing in the UI
+     * used to show.
+     */
+    if (moving) {
+      const part = partById.get(moving)
+      const key = part && getPart(part.type).target?.movingKey
+      if (key) dispatch({ type: 'setProp', id: moving, key, value: 0 })
+      setMoving(null)
+    }
     /**
      * RELEASING A HELD BUTTON IS PART OF ENDING EVERY GESTURE, not just of
      * lifting the pointer over the button itself.
@@ -886,6 +1103,44 @@ export function CircuitCanvas({
   }
 
   /**
+   * Grab a sensor's target. Same frame resolution as the slider, plus the one
+   * thing a target does that no other canvas control does: it announces that
+   * something in front of the sensor has started MOVING.
+   */
+  function startTargetDrag(
+    e: React.PointerEvent,
+    part: PlacedPart,
+    def: PartDefinition,
+    target: TargetControl,
+    prop: PropSpec,
+    bearingProp?: PropSpec,
+  ) {
+    if (wire) return
+    e.stopPropagation()
+    onSelect(part.id)
+    setTargetDrag({
+      partId: part.id,
+      target,
+      prop,
+      bearingProp,
+      ox: part.x,
+      oy: part.y,
+      px: def.width / 2,
+      py: def.height / 2,
+      rotation: part.rotation,
+      pushed: false,
+    })
+    if (target.movingKey) {
+      setMoving(part.id)
+      // Non-transient, exactly as the momentary press is: this is a thing that
+      // HAPPENED to the circuit, and a student should be able to undo back
+      // through the moment the movement started.
+      dispatch({ type: 'setProp', id: part.id, key: target.movingKey, value: 1 })
+    }
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+  }
+
+  /**
    * Press a momentary control. Writes 1 now; `endGesture` writes the 0.
    *
    * Both edges are ordinary undoable prop changes rather than a transient pair,
@@ -965,13 +1220,15 @@ export function CircuitCanvas({
    * being on top of — or under — the wire. When it claims one it stops the
    * event, and none of them run.
    *
-   * It declines in three cases, each of which belongs to something else: a
+   * It declines in four cases, each of which belongs to something else: a
    * wire being routed (every press then belongs to that route — a turn, or the
-   * pin that ends it), a non-primary button, and a pin core (see PIN_CORE).
+   * pin that ends it), a non-primary button, a sensor's target marker, and a pin
+   * core (see PIN_CORE).
    */
   function onCanvasPointerDownCapture(e: React.PointerEvent) {
     if (wire || e.button > 0) return
     const p = toWorld(e.clientX, e.clientY)
+    if (onTargetMarker(p)) return
     const target = grabAt(p)
     if (!target) return
     startWireGesture(e, target)
@@ -987,13 +1244,37 @@ export function CircuitCanvas({
    * removes, so they can never disagree about which wire is under the pointer.
    */
   function onCanvasDoubleClick(e: React.MouseEvent) {
-    const target = grabAt(toWorld(e.clientX, e.clientY))
+    const at = toWorld(e.clientX, e.clientY)
+    const target = grabAt(at)
     if (!target) return
     e.stopPropagation()
     if (target.kind === 'handle') {
       dispatch({ type: 'removeWaypoint', id: target.wireId, index: target.index })
     } else {
-      dispatch({ type: 'removeWire', id: target.wireId })
+      /**
+       * ADD a bend here — it used to delete the whole wire.
+       *
+       * Two reasons the old behaviour had to go, and the second is the real one.
+       * A double-click is a click twice, and the FIRST of the two now selects
+       * the wire, so "select it and then destroy it" is an unpleasant thing for
+       * one gesture to mean. And deleting a lead was reachable by accident from
+       * a gesture a student makes while aiming at a bend; Delete on a selected
+       * wire is deliberate in a way that a stray double-click is not.
+       *
+       * `target.index` IS the insertion slot and nothing here recomputes it.
+       * Segment i of [from, ...waypoints, to] runs from waypoint i−1 to waypoint
+       * i, so the bend that lands on it belongs at i — which is the same number
+       * `startWireGesture`'s drag-the-body path already passes to the same
+       * action. Recomputing it from the pointer would be a second opinion about
+       * a question `wireTargetAt` has already answered, and the way a wire ends
+       * up doubling back on itself.
+       */
+      dispatch({
+        type: 'addWaypoint',
+        id: target.wireId,
+        index: target.index,
+        point: { x: snap(at.x), y: snap(at.y) },
+      })
     }
   }
 
@@ -1172,6 +1453,31 @@ export function CircuitCanvas({
                   dangerouslySetInnerHTML={{ __html: def.svg }}
                 />
 
+                {/* The glass, painted over the artwork's own dark window. It is
+                    NOT part of `def.svg` because it is the only thing on this
+                    canvas whose content changes every frame from the running
+                    simulation — the static markup draws the module, this draws
+                    what the module is showing. */}
+                {def.electrical.kind === 'character_lcd' && deviceStates?.[part.id] && (
+                  <LcdScreen
+                    state={deviceStates[part.id]}
+                    backlight={ledBrightness?.get(`${part.id}.backlight`) ?? 0}
+                  />
+                )}
+
+                {/* The shaft speed, on the case. Same rule as the glass above
+                    it: only while a simulation is reporting one. A motor with a
+                    permanent `0 rpm` on it would be claiming a measurement it
+                    has not got, and a stopped motor and an un-run circuit are
+                    not the same thing. */}
+                {def.electrical.kind === 'motor' && deviceStates?.[part.id] && (
+                  <MotorReadout
+                    partId={part.id}
+                    state={deviceStates[part.id]}
+                    rotation={part.rotation}
+                  />
+                )}
+
                 {def.knob && knobProp && (
                   <Knob
                     part={part}
@@ -1245,6 +1551,7 @@ export function CircuitCanvas({
                 lit={hoverNet != null && netOf?.get(`${w.from.partId} ${w.from.pinId}`) === hoverNet}
                 shaping={shaping === w.id}
                 hovered={hoverWire === w.id}
+                selected={selectedWire === w.id}
               />
             ))}
           </g>
@@ -1282,6 +1589,43 @@ export function CircuitCanvas({
                       onUp={(e) => onPinUp(e, { partId: part.id, pinId: pin.id })}
                     />
                   ))}
+              </g>
+            )
+          })}
+
+          {/* Sensor targets, LAST of the persistent layers and therefore on top
+              of the wiring.
+              A target is not part of the board — it is the thing the board is
+              pointed at, standing off in front of the module — so a jumper
+              draped across the space it occupies must not bury it. The cone and
+              the readout take no pointer at all; only the marker does, and
+              `onTargetMarker` keeps the canvas's own capture handler off it. */}
+          {doc.parts.map((part) => {
+            const def = getPart(part.type)
+            const t = def.target
+            const prop = t ? def.props?.find((p) => p.key === t.key) : undefined
+            if (!t || !prop) return null
+            const bearingProp = t.bearingKey
+              ? def.props?.find((p) => p.key === t.bearingKey)
+              : undefined
+            return (
+              <g
+                key={part.id}
+                transform={partTransform(part, def)}
+                data-testid={`target-layer-${part.id}`}
+              >
+                <SensorTarget
+                  part={part}
+                  def={def}
+                  target={t}
+                  prop={prop}
+                  bearingProp={bearingProp}
+                  state={deviceStates?.[part.id]}
+                  dragging={targetDrag?.partId === part.id}
+                  onGrab={(e) => startTargetDrag(e, part, def, t, prop, bearingProp)}
+                  onSet={(key, value) => dispatch({ type: 'setProp', id: part.id, key, value })}
+                  onFocus={() => onSelect(part.id)}
+                />
               </g>
             )
           })}
@@ -1353,6 +1697,550 @@ function localToWorld(part: PlacedPart, def: PartDefinition, lx: number, ly: num
   const dx = lx - ox
   const dy = ly - oy
   return { x: part.x + ox + dx * cos - dy * sin, y: part.y + oy + dx * sin + dy * cos }
+}
+
+// ─── Character LCD ────────────────────────────────────────────────────────────
+
+/**
+ * One CGROM glyph as a single SVG path, in dot units.
+ *
+ * ONE PATH PER CELL rather than one rect per dot, and the arithmetic says why:
+ * 16 x 2 cells of 5 x 8 dots is 1280 rectangles, re-created on every snapshot at
+ * 20 frames a second, per display on the canvas. As paths it is 32 nodes, and
+ * the string for each is memoised on the character code — so a screen that is
+ * not changing costs one `d` attribute comparison per cell.
+ *
+ * Drawn in DOT UNITS (a dot is 1 x 1 at integer coordinates) and scaled by the
+ * caller, so the same string serves any zoom and any module geometry.
+ */
+/**
+ * A dot's size and inset inside its own pitch, as fractions of one pitch.
+ *
+ * Derived from LCD1602_SCREEN rather than chosen here, so the gap between the
+ * dots is the module's declared geometry and not a second opinion about it.
+ */
+const DOT_W = LCD1602_SCREEN.dotW / LCD1602_SCREEN.dotPitchX
+const DOT_H = LCD1602_SCREEN.dotH / LCD1602_SCREEN.dotPitchY
+const DOT_INSET_X = (1 - DOT_W) / 2
+const DOT_INSET_Y = (1 - DOT_H) / 2
+
+function dotRect(c: number, r: number): string {
+  const x = (c + DOT_INSET_X).toFixed(3)
+  const y = (r + DOT_INSET_Y).toFixed(3)
+  return `M${x} ${y}h${DOT_W.toFixed(3)}v${DOT_H.toFixed(3)}h-${DOT_W.toFixed(3)}z`
+}
+
+const glyphPathCache = new Map<number, string>()
+
+function glyphPath(code: number): string {
+  const hit = glyphPathCache.get(code)
+  if (hit !== undefined) return hit
+  const cols = lcdGlyph(code)
+  let d = ''
+  for (let c = 0; c < LCD_GLYPH_COLS; c++) {
+    for (let r = 0; r < LCD_GLYPH_ROWS; r++) {
+      if ((cols[c] >> r) & 1) d += dotRect(c, r)
+    }
+  }
+  glyphPathCache.set(code, d)
+  return d
+}
+
+/** Every dot of a cell, for the un-driven segments an over-biased panel shows. */
+const ALL_DOTS = (() => {
+  let d = ''
+  for (let c = 0; c < LCD_GLYPH_COLS; c++) {
+    for (let r = 0; r < LCD_GLYPH_ROWS; r++) d += dotRect(c, r)
+  }
+  return d
+})()
+
+/** The cursor line: row 7 of the cell, all five columns. */
+const CURSOR_LINE = (() => {
+  let d = ''
+  for (let c = 0; c < LCD_GLYPH_COLS; c++) d += dotRect(c, LCD_GLYPH_ROWS - 1)
+  return d
+})()
+
+/**
+ * The glass of a character LCD, painted from the decoded display memory.
+ *
+ * NOTHING HERE INVENTS ANYTHING. Every code it draws came out of the HD44780
+ * decoder in behavioural.ts, which got it off the data pins on an E falling
+ * edge; the contrast it draws at is `VDD − V0` as the solver found it; the
+ * backlight wash is the backlight LED's own solved current, arriving through the
+ * same brightness map every other LED on the canvas uses. If the sketch did not
+ * write it, it is not on the glass.
+ *
+ * THE TWO CONTRAST FAILURES ARE DRAWN, not just reported, because they are what
+ * a student is looking at when they ask why the display is wrong:
+ *
+ *   `contrast` fades the lit dots out as VDD − V0 falls — wind the trimmer to
+ *   VDD and the screen goes blank with the text still in memory.
+ *   `blocks` fades the UN-lit dots IN as it rises past what the panel can
+ *   reject — tie V0 to ground and every cell becomes a solid block, which is
+ *   the first thing most people ever see a 1602 do.
+ */
+function LcdScreen({
+  state,
+  backlight,
+}: {
+  state: DeviceState
+  /** 0..1 from the engine's LED brightness map, or 0 when A/K are not wired. */
+  backlight: number
+}) {
+  const s = LCD1602_SCREEN
+  const num = (k: string): number => {
+    const v = state[k]
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0
+  }
+  const powered = state.powered === true
+  const lit = state.on === true
+  const contrast = powered ? num('contrast') : 0
+  const blocks = powered ? num('blocks') : 0
+  const rows = [unpackLcdRow(String(state.row0 ?? '')), unpackLcdRow(String(state.row1 ?? ''))]
+  const cursorRow = num('cursorRow')
+  const cursorCol = num('cursorCol')
+  const onGlass = cursorCol >= 0 && cursorRow >= 0
+  const showCursor = lit && state.cursor === true && onGlass
+  /**
+   * The BLINKING cursor is a separate control bit from the underline one, and a
+   * real HD44780 draws it as the whole 5x8 cell alternating with the character
+   * at about 2.5 Hz. It is drawn here rather than merely reported for the same
+   * reason the contrast is: a student who called `lcd.blink()` is looking for it
+   * on the screen, not in a panel.
+   */
+  const showBlink = lit && state.blink === true && onGlass
+
+  /**
+   * The panel colour, from the backlight's own current.
+   *
+   * A yellow-green module is READABLE with its backlight off — it is a
+   * reflective panel and the dots are still there in ambient light — so this
+   * lightens the glass rather than gating the text on it. Gating would be the
+   * blue/white module's behaviour, and this part is drawn as the green one.
+   */
+  const glass =
+    backlight > 0.02
+      ? `rgb(${Math.round(118 + backlight * 60)} ${Math.round(168 + backlight * 62)} ` +
+        `${Math.round(60 + backlight * 34)})`
+      : '#4d6b34'
+
+  return (
+    <g pointerEvents="none" data-testid="lcd-screen">
+      {/* The blink is a wall-clock animation, not a simulated one: the HD44780
+          generates it internally from its own oscillator, so it is the one thing
+          on this part that does NOT come from the sketch. `steps(1, end)` keeps
+          it square, as the controller's is. */}
+      {showBlink && (
+        <style>{`@keyframes vlab-lcd-blink{0%,49.9%{opacity:1}50%,100%{opacity:0}}`}</style>
+      )}
+      <rect x={s.bezel.x} y={s.bezel.y} width={s.bezel.w} height={s.bezel.h} rx={1} fill={glass} />
+      {rows.map((codes, row) =>
+        codes.slice(0, s.cols).map((code, col) => {
+          const x = s.x + col * s.cellW
+          const y = s.y + row * s.cellH
+          // Dots are 1x1 in the path's own units, so the cell scales by the dot
+          // PITCH and each dot is then inset to leave the gap between them.
+          const t = `translate(${x} ${y}) scale(${s.dotPitchX} ${s.dotPitchY})`
+          const isCursor = showCursor && row === cursorRow && col === cursorCol
+          return (
+            <g key={`${row}-${col}`} transform={t}>
+              {blocks > 0.01 && (
+                <path d={ALL_DOTS} fill="#0d2a12" opacity={blocks * 0.85} />
+              )}
+              {lit && contrast > 0.01 && (
+                <path
+                  d={glyphPath(code)}
+                  fill="#0b2b0b"
+                  opacity={contrast}
+                 
+                />
+              )}
+              {isCursor && (
+                <path d={CURSOR_LINE} fill="#0b2b0b" opacity={Math.max(contrast, 0.6)} />
+              )}
+              {showBlink && row === cursorRow && col === cursorCol && (
+                <path
+                  d={ALL_DOTS}
+                  fill="#0b2b0b"
+                  opacity={Math.max(contrast, 0.6)}
+                  style={{ animation: 'vlab-lcd-blink 0.8s steps(1, end) infinite' }}
+                />
+              )}
+            </g>
+          )
+        }),
+      )}
+      {/* The bezel outline, drawn LAST so the dots never spill over its edge
+          when the glass is tinted by a bright backlight. */}
+      <rect
+        x={s.bezel.x}
+        y={s.bezel.y}
+        width={s.bezel.w}
+        height={s.bezel.h}
+        rx={1}
+        fill="none"
+        stroke="#0a2b1b"
+        strokeWidth={0.6}
+      />
+    </g>
+  )
+}
+
+// ─── DC motor ─────────────────────────────────────────────────────────────────
+
+/**
+ * The shaft speed, painted on the motor's case while a simulation is running.
+ *
+ * NOTHING HERE INVENTS ANYTHING, and this part has a specific reason to say so.
+ * The rpm is not a property of the motor and not a number the canvas computes:
+ * `SimulationEngine.states()` takes the TIME-AVERAGED armature current — the
+ * average, because a PWM-driven motor sits at two DC operating points and a
+ * snapshot of either is a speed the shaft never runs at — and converts it
+ * through `DCMotor.rpmFor`, which is the datasheet's own no-load-to-stall line.
+ * What is drawn here is that number, rounded, and nothing else.
+ *
+ * The direction and the stall go in the tooltip rather than on the case: a
+ * 50 x 40 part has room for one line, and the number is the one a student is
+ * looking for. A stall is still visible at a glance, because a stalled motor
+ * reads `0 rpm` while drawing current — which is exactly what a stall is.
+ */
+function MotorReadout({
+  partId,
+  state,
+  rotation,
+}: {
+  partId: string
+  state: DeviceState
+  /** The part's own rotation, undone so the number is never read sideways. */
+  rotation: number
+}) {
+  const r = DC_MOTOR_READOUT
+  const rpm =
+    typeof state.rpm === 'number' && Number.isFinite(state.rpm) ? Math.round(state.rpm) : 0
+  const amps = typeof state.amps === 'number' && Number.isFinite(state.amps) ? state.amps : 0
+  const direction = typeof state.direction === 'string' ? state.direction : 'stopped'
+  const note =
+    state.stalled === true
+      ? `stalled — ${(Math.abs(amps) * 1000).toFixed(0)} mA and not turning`
+      : rpm === 0
+        ? 'stopped'
+        : direction
+
+  return (
+    <g
+      data-testid={`motor-readout-${partId}`}
+      pointerEvents="none"
+      /* Counter-rotated about the plate's own centre, so a motor dropped
+         sideways still reads left to right. The pins and the case turn; a
+         number that turned with them would be upside down at 180°. */
+      transform={`rotate(${-rotation} ${r.x} ${r.y - r.fontSize / 3})`}
+    >
+      <rect
+        x={r.plate.x}
+        y={r.plate.y}
+        width={r.plate.w}
+        height={r.plate.h}
+        rx={r.plate.rx}
+        fill="#f4f6f8"
+        stroke={state.stalled === true ? '#c0392b' : '#6d757e'}
+        strokeWidth={0.6}
+        opacity={0.95}
+      />
+      <text
+        x={r.x}
+        y={r.y}
+        data-testid={`motor-rpm-${partId}`}
+        textAnchor="middle"
+        fontSize={r.fontSize}
+        fontFamily="ui-monospace, monospace"
+        fill={state.stalled === true ? '#c0392b' : '#1f2933'}
+      >
+        {`${rpm} rpm`}
+      </text>
+      <title>{`${rpm} rpm — ${note}`}</title>
+    </g>
+  )
+}
+
+// ─── Sensor target ────────────────────────────────────────────────────────────
+
+/**
+ * The line above the marker: what the sensor is actually reporting.
+ *
+ * READ OFF THE DEVICE STATE WHENEVER THERE IS ONE, and off the document only
+ * when there is not. That order is the whole point of the control. The document
+ * says where the student PUT the target; the report says what the module MADE OF
+ * it, and they are not always the same sentence — an HC-SR04 target at 420 cm is
+ * past the datasheet's 400 cm window, so the module answers with its 38 ms
+ * timeout pulse and the honest readout is `no echo`, not `420 cm`. A label
+ * rendered from the prop would cheerfully print a distance the sketch will never
+ * receive.
+ */
+function targetReadout(
+  def: PartDefinition,
+  state: DeviceState | undefined,
+  distance: number,
+): string {
+  const el = def.electrical
+  const num = (k: string, fallback: number): number => {
+    const v = state?.[k]
+    return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+  }
+
+  if (el.kind === 'sensor' && el.protocol === 'hc_sr04') {
+    const cm = num('distanceCm', distance)
+    // Both units, as Tinkercad's readout gives them, because a lab sheet that
+    // says "hold it 18 inches away" and a sketch that prints centimetres are
+    // both things a student is holding in their head at the same time.
+    const both = `${round1(cm)} cm · ${round1(cm / 2.54)} in`
+    return state && state.inRange === false ? `${both} · no echo` : both
+  }
+
+  if (el.kind === 'sensor' && el.protocol === 'pir') {
+    const metres = `${round1(num('distanceCm', distance) / 100)} m`
+    if (!state) return metres
+    if (state.warming === true) return `${metres} · warming up`
+    if (state.powered === false) return `${metres} · unpowered`
+    return `${metres} · ${state.motion === true ? 'motion' : 'clear'}`
+  }
+
+  return String(distance)
+}
+
+/** One decimal place, with a trailing `.0` trimmed — 113.4, 44.6, 3, 7.5. */
+function round1(v: number): string {
+  const s = (Math.round(v * 10) / 10).toFixed(1)
+  return s.endsWith('.0') ? s.slice(0, -2) : s
+}
+
+/**
+ * A draggable object out in front of a sensor, with the field it is or is not
+ * inside, and a live readout of what the module makes of it.
+ *
+ * THE COLOUR OF THE CONE COMES FROM THE SOLVED STATE AND FROM NOWHERE ELSE, and
+ * that is the assertion the test file exists to defend. Ticking `motion` in the
+ * inspector does not light this cone; the HC-SR501 model reporting `motion:
+ * true` lights it. The two are different by a hold time, a 2.5 s block window
+ * and a warm-up — every one of which is a real datasheet behaviour that was
+ * previously invisible, and all three of which a cone painted from the document
+ * would flatly contradict.
+ *
+ * Everything the knob and the slider do about accessibility applies here
+ * unchanged: a pointer drag on a 7-unit marker is unavailable to a keyboard,
+ * switch or screen-reader user, so this is a real `role="slider"` with a name, a
+ * range, a live value and arrow keys — up and down for distance, left and right
+ * for bearing — and the panel sliders stay, writing the same document values.
+ */
+function SensorTarget({
+  part,
+  def,
+  target,
+  prop,
+  bearingProp,
+  state,
+  dragging,
+  onGrab,
+  onSet,
+  onFocus,
+}: {
+  part: PlacedPart
+  def: PartDefinition
+  target: TargetControl
+  prop: PropSpec
+  bearingProp?: PropSpec
+  state: DeviceState | undefined
+  dragging: boolean
+  onGrab: (e: React.PointerEvent) => void
+  onSet: (key: string, value: number) => void
+  onFocus: () => void
+}) {
+  const [focused, setFocused] = useState(false)
+  const min = prop.min ?? 0
+  const max = prop.max ?? 100
+  const step = prop.step ?? 1
+  const distance = Number(part.props[target.key] ?? prop.default ?? 0)
+  const bearing =
+    target.bearingKey && bearingProp
+      ? Number(part.props[target.bearingKey] ?? bearingProp.default ?? 0)
+      : 0
+  const at = targetPointFor(target, distance, bearing)
+  const reading = targetReadout(def, state, distance)
+  const label = `${def.label} target`
+
+  /** The sensor is reporting a detection right now. NOT the document's opinion. */
+  const detecting = state?.motion === true
+  const warming = state?.warming === true
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    const big = Math.max(step, (max - min) / 10)
+    // Left/right swing the target across the field; up/down push it out and
+    // pull it in. On a target with one degree of freedom all four move the
+    // distance, so an arrow key is never inert.
+    const bearingStep = bearingProp?.step ?? 5
+    let key = target.key
+    let next: number | null = null
+    if (e.key === 'ArrowUp') next = distance + step
+    else if (e.key === 'ArrowDown') next = distance - step
+    else if (e.key === 'PageUp') next = distance + big
+    else if (e.key === 'PageDown') next = distance - big
+    else if (e.key === 'Home') next = min
+    else if (e.key === 'End') next = max
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      const delta = e.key === 'ArrowRight' ? bearingStep : -bearingStep
+      if (bearingProp && target.bearingKey) {
+        key = target.bearingKey
+        next = Math.min(
+          bearingProp.max ?? 90,
+          Math.max(bearingProp.min ?? -90, bearing + delta),
+        )
+      } else {
+        next = distance + (e.key === 'ArrowRight' ? step : -step)
+      }
+    }
+    if (next === null) return
+    e.preventDefault()
+    e.stopPropagation()
+    onSet(key, key === target.key ? Math.min(max, Math.max(min, next)) : next)
+  }
+
+  return (
+    <g
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={distance}
+      aria-valuetext={reading}
+      data-testid={`target-${part.id}`}
+      onPointerDown={onGrab}
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        setFocused(true)
+        onFocus()
+      }}
+      onBlur={() => setFocused(false)}
+      className={dragging ? 'cursor-grabbing outline-none' : 'cursor-grab outline-none'}
+    >
+      {target.cone && (
+        <path
+          d={conePath(target, target.cone, bearing)}
+          data-testid={`target-cone-${part.id}`}
+          fill={detecting ? CONE_DETECTING : CONE_IDLE}
+          fillOpacity={detecting ? 0.3 : 0.11}
+          stroke={detecting ? CONE_DETECTING_EDGE : CONE_IDLE}
+          strokeWidth={0.8}
+          strokeDasharray={warming ? '3 3' : undefined}
+          opacity={0.95}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* The sight line. On the ultrasonic, which has no cone, this IS the
+          beam — and it is why the marker never looks like it is floating
+          unattached to the module that is measuring it. */}
+      <line
+        x1={target.cx}
+        y1={target.cy}
+        x2={at.x}
+        y2={at.y}
+        stroke={detecting ? CONE_DETECTING_EDGE : '#8f959c'}
+        strokeWidth={0.9}
+        strokeDasharray="3 2.5"
+        pointerEvents="none"
+      />
+
+      {/* The marker: a reticle, deliberately unlike the slider's plain handle,
+          because this one is an OBJECT in the world rather than a position on a
+          track. Filled `transparent` under the artwork so the whole disc takes
+          the pointer — an unfilled shape takes none at all. */}
+      <circle cx={at.x} cy={at.y} r={target.r} fill="transparent" />
+      <circle
+        cx={at.x}
+        cy={at.y}
+        r={target.r * 0.72}
+        data-testid={`target-marker-${part.id}`}
+        fill="#ffffff"
+        stroke={dragging || focused ? ACCENT : '#5a6672'}
+        strokeWidth={focused && !dragging ? 1.8 : 1.2}
+      />
+      <circle cx={at.x} cy={at.y} r={target.r * 0.22} fill={dragging || focused ? ACCENT : '#5a6672'} />
+      {(dragging || focused) && (
+        <circle
+          cx={at.x}
+          cy={at.y}
+          r={target.r + 2.5}
+          data-testid={`target-ring-${part.id}`}
+          fill="none"
+          stroke={ACCENT}
+          strokeWidth={focused && !dragging ? 1.2 : 1}
+          strokeDasharray={focused && !dragging ? '2 2' : undefined}
+          opacity={0.85}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* The readout, counter-rotated for the reason the motor's is: the target
+          turns with the part it belongs to, and a reading printed upside down on
+          a module rotated 180° is a reading nobody can use. */}
+      <g transform={`rotate(${-part.rotation} ${at.x} ${at.y - target.r - 4})`}>
+        <text
+          x={at.x}
+          y={at.y - target.r - 4}
+          data-testid={`target-readout-${part.id}`}
+          textAnchor="middle"
+          fontSize={7}
+          fontFamily="ui-monospace, monospace"
+          fill={detecting ? '#8a5a00' : '#34495e'}
+          paintOrder="stroke"
+          stroke="#ffffff"
+          strokeWidth={2.4}
+          strokeLinejoin="round"
+        >
+          {reading}
+        </text>
+      </g>
+      <title>
+        {`${label}: ${reading} — drag it, or use the arrow keys`}
+      </title>
+    </g>
+  )
+}
+
+/** Detection amber, its edge, and the neutral a field that sees nothing takes. */
+const CONE_DETECTING = '#f0b429'
+const CONE_DETECTING_EDGE = '#b57d0a'
+const CONE_IDLE = '#8f959c'
+
+/**
+ * The wedge, in part-local units.
+ *
+ * The arc's sweep flag is 1 — clockwise on screen — because our angles run
+ * clockwise from twelve o'clock and SVG's y axis points down, so increasing the
+ * angle really does sweep that way. `largeArc` is computed rather than fixed at
+ * 0: a part could legitimately declare a field wider than 180°, and a 0 there
+ * would silently draw the complement of it.
+ */
+function conePath(target: TargetControl, cone: { halfAngleDeg: number; range: number }, bearing: number): string {
+  const { fromDeg, toDeg } = targetConeEdges(cone, bearing)
+  const radius = cone.range * target.scale
+  const point = (deg: number) => {
+    const a = (deg * Math.PI) / 180
+    return {
+      x: target.cx + radius * Math.sin(a),
+      y: target.cy - radius * Math.cos(a),
+    }
+  }
+  const a = point(fromDeg)
+  const b = point(toDeg)
+  const largeArc = Math.abs(toDeg - fromDeg) > 180 ? 1 : 0
+  return (
+    `M${target.cx.toFixed(2)} ${target.cy.toFixed(2)} ` +
+    `L${a.x.toFixed(2)} ${a.y.toFixed(2)} ` +
+    `A${radius.toFixed(2)} ${radius.toFixed(2)} 0 ${largeArc} 1 ${b.x.toFixed(2)} ${b.y.toFixed(2)} Z`
+  )
 }
 
 // ─── Knob ─────────────────────────────────────────────────────────────────────
@@ -1753,6 +2641,7 @@ function Wire({
   lit,
   shaping,
   hovered,
+  selected,
 }: {
   wire: DocWire
   a: Point
@@ -1762,10 +2651,12 @@ function Wire({
   shaping: boolean
   /** The pointer is over this wire — resolved by proximity, in the canvas. */
   hovered: boolean
+  /** This wire is the one Delete would remove. */
+  selected: boolean
 }) {
   const points = wire.waypoints ?? []
   const d = wirePath(a, b, wire.waypoints)
-  const show = hovered || shaping
+  const show = hovered || shaping || selected
 
   return (
     <g data-testid={`wire-${wire.id}`}>
@@ -1782,6 +2673,25 @@ function Wire({
           strokeLinecap="round"
           strokeLinejoin="round"
           opacity={WIRE_HALO_OPACITY}
+          pointerEvents="none"
+        />
+      )}
+      {/* The selection, drawn as a dashed accent OVER the halo and UNDER the
+          wire's own colours — the same marching outline a selected part gets,
+          for the same reason: a student has to be able to see which of the two
+          Delete is about to take. Never a recolour of the core, because a wire's
+          colour is information (black is ground, red is supply) and a selection
+          that repainted it would be lying about the circuit while it was lit. */}
+      {selected && (
+        <path
+          d={d}
+          data-testid={`wire-selected-${wire.id}`}
+          fill="none"
+          stroke={ACCENT}
+          strokeWidth={WIRE_CASING + 2.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray="5 4"
           pointerEvents="none"
         />
       )}
@@ -1821,7 +2731,7 @@ function Wire({
         pointerEvents="stroke"
         className="cursor-pointer"
       >
-        <title>Drag to bend · double-click to remove</title>
+        <title>Click to select · drag to bend · double-click to add a bend</title>
       </path>
 
       {show &&

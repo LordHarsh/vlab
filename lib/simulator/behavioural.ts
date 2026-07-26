@@ -22,6 +22,8 @@ import {
   halfStepsPerRevolution,
   type StepperParams,
 } from './devices'
+import { lcdChar, packLcdRow } from './lcd-font'
+import { HC_SR501_FIELD } from './model/parts'
 
 const CLOCK_HZ = 16_000_000
 const VCC = 5
@@ -394,7 +396,15 @@ export class HCSR04 implements BehaviouralDevice {
 
 // ─── HC-SR501 PIR motion sensor ───────────────────────────────────────────────
 
-/** HC-SR501 datasheet figures. */
+/**
+ * HC-SR501 datasheet figures.
+ *
+ * The FIELD figures — the 100° cone angle and the 7 m reach — are not here; they
+ * are `HC_SR501_FIELD` in model/parts.ts, because the canvas has to draw the
+ * same wedge this model gates on and one declaration read by both is the only
+ * arrangement in which the picture cannot promise a field the physics does not
+ * have. Same contract RESISTOR_DEFAULT_OHMS has with compile.ts.
+ */
 export const HC_SR501 = {
   /** "Output: High 3.3 V / Low 0 V" — TTL, and NOT the 5 V supply rail. */
   OUTPUT_HIGH_VOLTS: 3.3,
@@ -468,7 +478,25 @@ export class PIRSensor implements BehaviouralDevice {
     const warmupCycles = warmupSeconds * CLOCK_HZ
     const warming = now < warmupCycles
     const holdSeconds = Math.max(0.3, numProp(p, 'hold', HC_SR501.DEFAULT_HOLD_SECONDS))
-    const motion = numProp(p, 'motion', 0) >= 0.5
+    /**
+     * WHERE the movement is, not just whether there is any.
+     *
+     * A real HC-SR501 sees a 100° cone out to about 7 m and nothing outside it,
+     * and that boundary is the single most useful thing about the part: it is
+     * why a sensor pointed at a doorway does not trigger on the street. The
+     * canvas draws the same wedge from the same declaration, so a target the
+     * student can see is outside the cone is one this model also refuses.
+     *
+     * The fallbacks are the prop defaults, which is what keeps a document
+     * written before this existed behaving exactly as it did: 3 m dead ahead is
+     * inside the field, so `motion` alone still decides everything.
+     */
+    const distanceCm = Math.max(0, numProp(p, 'distance', HC_SR501_FIELD.DEFAULT_TARGET_CM))
+    const bearingDeg = numProp(p, 'bearing', 0)
+    const inField =
+      distanceCm <= HC_SR501_FIELD.RANGE_CM &&
+      Math.abs(bearingDeg) <= HC_SR501_FIELD.HALF_ANGLE_DEG
+    const motion = numProp(p, 'motion', 0) >= 0.5 && inField
 
     if (!powered) {
       this.high = false
@@ -494,6 +522,12 @@ export class PIRSensor implements BehaviouralDevice {
       warmupRemaining: warming ? (warmupCycles - now) / CLOCK_HZ : 0,
       holdSeconds,
       powered,
+      // Where the model believes the target is, so the canvas paints the cone
+      // this poll actually used rather than re-deriving it from the document and
+      // hoping the two agree.
+      distanceCm,
+      bearingDeg,
+      inField,
     })
   }
 }
@@ -2123,6 +2157,569 @@ export class MCP3008Device implements BehaviouralDevice {
       mode: this.lastMode,
       vref,
       conversions: this.transactions,
+    })
+  }
+}
+
+// ─── HD44780 character LCD ────────────────────────────────────────────────────
+
+/**
+ * Hitachi HD44780U figures, and what the model does with each one.
+ *
+ *   [sheet] marks a printed datasheet line; [judged] a number the sheet does not
+ *   give, with the reasoning that bounds it.
+ */
+export const HD44780 = {
+  /**
+   * [sheet] Operating supply: VCC 2.7 V to 5.5 V. Below the minimum the
+   * controller is not running, so nothing it was told survives — the model does
+   * a genuine power-on reset when the supply comes back, exactly as the silicon
+   * does.
+   */
+  MIN_SUPPLY_VOLTS: 2.7,
+
+  /**
+   * [sheet] Input high/low levels. The sheet prints these TWICE, once as absolute
+   * volts for a 5 V part and once as fractions of VCC for a low-voltage one:
+   *
+   *   VCC = 4.5-5.5 V   VIH1 = 2.2 V min,   VIL1 = 0.6 V max
+   *   VCC = 2.7-4.5 V   VIH1 = 0.7 VCC,     VIL1 = 0.2 VCC
+   *
+   * Both are used, chosen by the supply that was actually solved — which is the
+   * difference between a 3.3 V Pico's 3.3 V high being comfortably above a 2.31 V
+   * threshold and it being compared against a 5 V part's numbers by accident.
+   */
+  VIH_5V: 2.2,
+  VIL_5V: 0.6,
+  VIH_FRACTION: 0.7,
+  VIL_FRACTION: 0.2,
+  /** The supply at which the sheet switches from one pair to the other. */
+  LEVEL_SPLIT_VOLTS: 4.5,
+
+  /**
+   * LCD DRIVING VOLTAGE, VCC − V0, which is what the contrast trimmer sets.
+   *
+   * [sheet] A 1602 module's own spec gives "LCD driving voltage (VDD−V0) 4.2 V
+   *         typ at 25 °C" and nothing either side of it.
+   * [judged] The two ends. Below 3.8 V the segments are not driven hard enough
+   *          to be seen at all (a blank screen with the trimmer wound to VDD is
+   *          the single commonest "my LCD does not work"); above 4.6 V the
+   *          UN-driven segments start to show as well, and by 5.0 V — V0 tied
+   *          straight to ground — every cell is a solid block whether anything
+   *          was written to it or not. Both ends are the observed behaviour of
+   *          the part; the exact volt at which each begins is a judgement.
+   */
+  BIAS_TEXT_MIN_VOLTS: 3.8,
+  BIAS_TEXT_FULL_VOLTS: 4.2,
+  BIAS_BLOCKS_MIN_VOLTS: 4.6,
+  BIAS_BLOCKS_FULL_VOLTS: 5.0,
+
+  /** Visible columns and lines of the 1602 module. */
+  COLUMNS: 16,
+  ROWS: 2,
+  /** [sheet] DDRAM per line in 2-line mode: 40 characters, 0x00-0x27. */
+  LINE_CHARS: 40,
+  /** [sheet] The second line's DDRAM base address. */
+  LINE2_BASE: 0x40,
+  /** [sheet] DDRAM in 1-line mode: 80 characters, 0x00-0x4F. */
+  ONE_LINE_CHARS: 80,
+} as const
+
+/** DDRAM cells the model keeps: two lines of 40. */
+const DDRAM_SIZE = HD44780.LINE_CHARS * HD44780.ROWS
+
+/** The code a cleared HD44780 fills its DDRAM with: a space. */
+const BLANK_CODE = 0x20
+
+/** Linear ramp from 0 at `lo` to 1 at `hi`. */
+function ramp(v: number, lo: number, hi: number): number {
+  if (!(hi > lo)) return v >= hi ? 1 : 0
+  return Math.max(0, Math.min(1, (v - lo) / (hi - lo)))
+}
+
+/**
+ * HD44780 character LCD, decoded from the wire.
+ *
+ * ─── WHY THIS IS NOT SHAPED LIKE THE SENSORS ABOVE ────────────────────────────
+ *
+ * Every other protocol part in this file is a SENSOR: it owns a line, drives it,
+ * and the MCU reads what it said. A display is the mirror image — the MCU owns
+ * every line and the part's whole job is to work out what it was told. So this
+ * is a MONITOR, in the same family as BuzzerMonitor and RelayMonitor: `ports` is
+ * empty, it drives nothing, and it can never fight the sketch for the bus.
+ *
+ * ─── WHAT IS ACTUALLY DECODED ─────────────────────────────────────────────────
+ *
+ * The controller latches on the FALLING edge of E, and so does this. On each
+ * fall it samples RS, R/W and the data lines at the levels the SOLVER produced —
+ * not from any library call, and not from any AVR register. A sketch that
+ * bit-bangs the port directly and a sketch that calls LiquidCrystal::print()
+ * arrive here as the same sequence of edges, because on real hardware they are
+ * the same sequence of edges.
+ *
+ * The full instruction set is decoded: function set (which is what selects 4-bit
+ * or 8-bit, and the model follows the sketch into either), entry mode set,
+ * display/cursor/blink on-off, clear display, return home, cursor/display shift,
+ * set CGRAM address, set DDRAM address, and character writes. The address
+ * counter, the 2x40 DDRAM and the display shift are all real, so
+ * `setCursor(5, 1)` puts the next character where the glass would put it and
+ * `scrollDisplayLeft()` moves the window rather than the text.
+ *
+ * ─── WHAT IS NOT ──────────────────────────────────────────────────────────────
+ *
+ * Reads (R/W high) return nothing. A transfer with R/W high is COUNTED and
+ * reported and then ignored, which is the honest half-answer: the model knows
+ * the sketch asked and knows it did not reply. Everything Arduino's stock
+ * LiquidCrystal does is a write — it never wires R/W at all — so this costs a
+ * standard sketch nothing, and a sketch that polls the busy flag would hang on
+ * real silicon-accurate timing anyway. compile.ts says so out loud.
+ *
+ * CGRAM writes are accepted and stored so the address counter stays in step, but
+ * the eight custom characters they build are not drawn.
+ */
+export class HD44780Display implements BehaviouralDevice {
+  /** Two lines of 40 characters. Index 0-39 is line 1, 40-79 is line 2. */
+  private ddram = new Uint8Array(DDRAM_SIZE).fill(BLANK_CODE)
+  /** The 64 bytes of custom-character RAM. Stored, never drawn — see above. */
+  private cgram = new Uint8Array(64)
+
+  /** The address counter, in the controller's own address space. */
+  private ac = 0
+  /** True when the address counter is pointing into CGRAM instead of DDRAM. */
+  private cgramSelected = false
+
+  /* Entry mode set. */
+  private increment = true
+  private shiftOnWrite = false
+
+  /* Display on/off control. */
+  private displayOn = false
+  private cursorOn = false
+  private blinkOn = false
+
+  /* Function set. A powered-up HD44780 is in 8-BIT, 1-LINE mode. */
+  private fourBit = false
+  private twoLine = false
+
+  /** How far the visible window has been scrolled, in characters. */
+  private displayShift = 0
+
+  /**
+   * The high nibble of a 4-bit transfer that has not been completed yet, and the
+   * RS that came with it.
+   *
+   * RS IS CAPTURED WITH THE FIRST NIBBLE rather than read again at the second.
+   * The datasheet requires the sketch to hold RS across both halves, so in every
+   * correct sketch the two agree; where they do not, the first one is what
+   * decided which operation was begun.
+   */
+  private pendingNibble: number | null = null
+  private pendingRs = false
+
+  /** Previous level of E, so a fall can be told from a level. */
+  private eHigh = false
+  /** Last level decided for each input, so the thresholds can have hysteresis. */
+  private levels: Record<string, boolean> = {}
+
+  private isPowered = false
+  /** True once a function set has been received: the sketch has initialised it. */
+  private initialised = false
+  /** Transfers with R/W high — reads, which this model cannot answer. */
+  private reads = 0
+  /** Completed writes, so the panel can say the bus is live. */
+  private writes = 0
+
+  private lastReport = ''
+
+  constructor(
+    readonly partId: string,
+    private ctx: BehaviouralContext,
+  ) {}
+
+  poll(): void {
+    const vss = this.ctx.voltage('VSS')
+    const vdd = this.ctx.voltage('VDD') - vss
+
+    if (vdd < HD44780.MIN_SUPPLY_VOLTS) {
+      // Not running. Whatever it held is gone, and it will come back reset.
+      this.isPowered = false
+      this.publish(vdd, vss)
+      return
+    }
+    if (!this.isPowered) {
+      this.isPowered = true
+      this.powerOnReset()
+    }
+
+    const e = this.level('E', vdd, vss)
+    // Sampled at the same instant E is, because that is when the controller
+    // samples them: the datasheet's tAS/tAH hold RS and R/W either side of the
+    // enable pulse precisely so this reading is well defined.
+    const rs = this.level('RS', vdd, vss)
+    const rw = this.level('RW', vdd, vss)
+
+    if (this.eHigh && !e) this.latch(rs, rw, vdd, vss)
+    this.eHigh = e
+
+    this.publish(vdd, vss)
+  }
+
+  refresh(): void {
+    // Contrast and supply move without any pin edge (a student turning the
+    // trimmer is a document edit, not a port write), so the reported view has to
+    // be able to close over the current solve at snapshot time.
+    const vss = this.ctx.voltage('VSS')
+    this.publish(this.ctx.voltage('VDD') - vss, vss)
+  }
+
+  /**
+   * The state the controller's own reset circuit leaves it in, verbatim from the
+   * datasheet's "Initializing by Internal Reset Circuit":
+   *
+   *   1. Display clear          — DDRAM filled with 0x20, address counter 0
+   *   2. Function set           — DL = 1 (8-bit), N = 0 (1 line), F = 0 (5x8)
+   *   3. Display on/off control — D = 0, C = 0, B = 0 (everything off)
+   *   4. Entry mode set         — I/D = 1 (increment), S = 0 (no shift)
+   *
+   * Item 3 is the one worth knowing: a freshly powered HD44780 has its display
+   * OFF, so a sketch that writes characters without ever sending a display-on
+   * shows nothing, and this model shows nothing too.
+   */
+  private powerOnReset(): void {
+    this.ddram.fill(BLANK_CODE)
+    this.cgram.fill(0)
+    this.ac = 0
+    this.cgramSelected = false
+    this.increment = true
+    this.shiftOnWrite = false
+    this.displayOn = false
+    this.cursorOn = false
+    this.blinkOn = false
+    this.fourBit = false
+    this.twoLine = false
+    this.displayShift = 0
+    this.pendingNibble = null
+    this.pendingRs = false
+    this.eHigh = false
+    this.levels = {}
+    this.initialised = false
+    this.reads = 0
+    this.writes = 0
+  }
+
+  /** One input pin as a logic level, with the datasheet's own thresholds. */
+  private level(signal: string, vdd: number, vss: number): boolean {
+    const v = this.ctx.voltage(signal) - vss
+    const high = vdd >= HD44780.LEVEL_SPLIT_VOLTS
+    const vih = high ? HD44780.VIH_5V : HD44780.VIH_FRACTION * vdd
+    const vil = high ? HD44780.VIL_5V : HD44780.VIL_FRACTION * vdd
+    const prev = this.levels[signal] ?? false
+    // Between the two thresholds the part is not specified either way, so it
+    // holds — which is also what stops a half-driven line rattling.
+    const next = v >= vih ? true : v <= vil ? false : prev
+    this.levels[signal] = next
+    return next
+  }
+
+  /** D7..D4 as the high half of a byte. */
+  private highNibble(vdd: number, vss: number): number {
+    return (
+      ((this.level('D7', vdd, vss) ? 1 : 0) << 3) |
+      ((this.level('D6', vdd, vss) ? 1 : 0) << 2) |
+      ((this.level('D5', vdd, vss) ? 1 : 0) << 1) |
+      (this.level('D4', vdd, vss) ? 1 : 0)
+    )
+  }
+
+  /** D3..D0, read only in 8-bit mode. */
+  private lowNibble(vdd: number, vss: number): number {
+    return (
+      ((this.level('D3', vdd, vss) ? 1 : 0) << 3) |
+      ((this.level('D2', vdd, vss) ? 1 : 0) << 2) |
+      ((this.level('D1', vdd, vss) ? 1 : 0) << 1) |
+      (this.level('D0', vdd, vss) ? 1 : 0)
+    )
+  }
+
+  /** One E fall: assemble whatever the data lines are carrying and act on it. */
+  private latch(rs: boolean, rw: boolean, vdd: number, vss: number): void {
+    if (rw) {
+      // A read cycle. The controller would drive the data bus here; this model
+      // does not, so the only honest thing to do is count it and say so.
+      this.reads++
+      return
+    }
+
+    const hi = this.highNibble(vdd, vss)
+
+    if (this.fourBit) {
+      if (this.pendingNibble === null) {
+        this.pendingNibble = hi
+        this.pendingRs = rs
+        return
+      }
+      const byte = (this.pendingNibble << 4) | hi
+      const forData = this.pendingRs
+      this.pendingNibble = null
+      this.execute(byte, forData)
+      return
+    }
+
+    /**
+     * 8-BIT MODE, WHICH IS ALSO HOW EVERY 4-BIT SKETCH STARTS.
+     *
+     * A part comes out of reset in 8-bit mode, so the three 0x3 nibbles and the
+     * single 0x2 that every 4-bit initialisation opens with are latched HERE, as
+     * whole 8-bit bytes whose low half comes from D3-D0. On a 4-bit wiring those
+     * four pins are not connected to anything, so they solve at 0 V and read
+     * low, and the bytes come out as 0x30, 0x30, 0x30, 0x20 — which is exactly
+     * what the silicon sees and exactly why the sequence works.
+     */
+    this.execute((hi << 4) | this.lowNibble(vdd, vss), rs)
+  }
+
+  /** A complete byte, with the RS that came with it. */
+  private execute(byte: number, isData: boolean): void {
+    this.writes++
+    if (isData) this.write(byte)
+    else this.command(byte)
+  }
+
+  /**
+   * The instruction table, tested from the most significant bit down — which is
+   * how the controller decodes it, and why the order below cannot be rearranged.
+   */
+  private command(byte: number): void {
+    if (byte & 0x80) {
+      // Set DDRAM address.
+      this.cgramSelected = false
+      this.ac = byte & 0x7f
+      return
+    }
+    if (byte & 0x40) {
+      // Set CGRAM address.
+      this.cgramSelected = true
+      this.ac = byte & 0x3f
+      return
+    }
+    if (byte & 0x20) {
+      // Function set: DL, N, F.
+      this.fourBit = (byte & 0x10) === 0
+      this.twoLine = (byte & 0x08) !== 0
+      this.initialised = true
+      // Switching the data length abandons any half-assembled transfer; the
+      // controller has just been told the bus is a different width.
+      this.pendingNibble = null
+      return
+    }
+    if (byte & 0x10) {
+      /**
+       * Cursor or display shift. S/C picks which, R/L picks the direction — and
+       * the two directions do NOT mean the same thing to the two targets, which
+       * is the trap this decoded backwards on the first pass:
+       *
+       *   cursor right  moves the address counter UP by one.
+       *   display left  moves the TEXT left across the glass, which means the
+       *                 visible window moves UP the DDRAM — so `displayShift`
+       *                 goes up when R/L says left, not down.
+       *
+       * `lcd.scrollDisplayLeft()` sends 0x18 (R/L = 0), and on a bench the
+       * message walks off the left-hand edge. Adding −1 here made it walk the
+       * other way.
+       */
+      const right = (byte & 0x04) !== 0
+      if (byte & 0x08) this.displayShift = this.wrapShift(this.displayShift + (right ? -1 : 1))
+      else this.ac = this.stepAddress(this.ac, right)
+      return
+    }
+    if (byte & 0x08) {
+      // Display on/off control: D, C, B.
+      this.displayOn = (byte & 0x04) !== 0
+      this.cursorOn = (byte & 0x02) !== 0
+      this.blinkOn = (byte & 0x01) !== 0
+      return
+    }
+    if (byte & 0x04) {
+      // Entry mode set: I/D, S.
+      this.increment = (byte & 0x02) !== 0
+      this.shiftOnWrite = (byte & 0x01) !== 0
+      return
+    }
+    if (byte & 0x02) {
+      // Return home. DDRAM is NOT cleared — only the counter and the shift.
+      this.ac = 0
+      this.cgramSelected = false
+      this.displayShift = 0
+      return
+    }
+    if (byte & 0x01) {
+      // Clear display. Also sets I/D to 1, which the datasheet states and which
+      // a sketch that relies on it (clear() then print()) depends on.
+      this.ddram.fill(BLANK_CODE)
+      this.ac = 0
+      this.cgramSelected = false
+      this.increment = true
+      this.displayShift = 0
+    }
+    // byte === 0: a NOP. Real sketches emit them while the bus settles.
+  }
+
+  /** A character write, to whichever memory the address counter is pointing at. */
+  private write(byte: number): void {
+    if (this.cgramSelected) {
+      this.cgram[this.ac & 0x3f] = byte
+      this.ac = (this.ac + (this.increment ? 1 : 63)) & 0x3f
+      return
+    }
+    const cell = this.ddramIndex(this.ac)
+    if (cell >= 0) this.ddram[cell] = byte
+    this.ac = this.stepAddress(this.ac, this.increment)
+    // Entry-mode S: the whole display follows the cursor, which is how a
+    // right-justified readout is built without rewriting the line.
+    if (this.shiftOnWrite) {
+      this.displayShift = this.wrapShift(this.displayShift + (this.increment ? 1 : -1))
+    }
+  }
+
+  /**
+   * A DDRAM address as an index into the 2x40 store, or −1 for an address the
+   * configured display does not have.
+   *
+   * The gap is real: in 2-line mode 0x28-0x3F is not memory at all, and a sketch
+   * that lands there writes nothing. Silently folding it onto line 2 would make
+   * `setCursor(40, 0)` appear to work.
+   */
+  private ddramIndex(ac: number): number {
+    if (!this.twoLine) return ac < HD44780.ONE_LINE_CHARS ? ac % DDRAM_SIZE : -1
+    if (ac < HD44780.LINE_CHARS) return ac
+    const off = ac - HD44780.LINE2_BASE
+    return off >= 0 && off < HD44780.LINE_CHARS ? HD44780.LINE_CHARS + off : -1
+  }
+
+  /**
+   * The address counter's next value.
+   *
+   * In 2-line mode it runs 0x00-0x27 and then jumps to 0x40, skipping the hole,
+   * so a sketch that writes 41 characters without moving the cursor puts the
+   * 41st at the start of line 2 — which is what the hardware does and what
+   * surprises everybody the first time.
+   */
+  private stepAddress(ac: number, up: boolean): number {
+    if (!this.twoLine) {
+      const n = HD44780.ONE_LINE_CHARS
+      return up ? (ac + 1) % n : (ac + n - 1) % n
+    }
+    if (up) {
+      if (ac === HD44780.LINE_CHARS - 1) return HD44780.LINE2_BASE
+      if (ac === HD44780.LINE2_BASE + HD44780.LINE_CHARS - 1) return 0
+      return ac + 1
+    }
+    if (ac === 0) return HD44780.LINE2_BASE + HD44780.LINE_CHARS - 1
+    if (ac === HD44780.LINE2_BASE) return HD44780.LINE_CHARS - 1
+    return ac - 1
+  }
+
+  private wrapShift(s: number): number {
+    const n = HD44780.LINE_CHARS
+    return ((s % n) + n) % n
+  }
+
+  /** The 16 codes visible on one line, after the display shift. */
+  private visibleRow(row: number): number[] {
+    const out: number[] = []
+    for (let col = 0; col < HD44780.COLUMNS; col++) {
+      if (!this.twoLine) {
+        // A 1-line function set on a 16x2 module leaves the lower line dark.
+        if (row > 0) {
+          out.push(BLANK_CODE)
+          continue
+        }
+        const idx = (this.displayShift + col) % HD44780.ONE_LINE_CHARS
+        out.push(idx < DDRAM_SIZE ? this.ddram[idx] : BLANK_CODE)
+        continue
+      }
+      const idx = row * HD44780.LINE_CHARS + ((this.displayShift + col) % HD44780.LINE_CHARS)
+      out.push(this.ddram[idx])
+    }
+    return out
+  }
+
+  /** Where the cursor is on the GLASS, or null when it is scrolled off it. */
+  private cursorCell(): { row: number; col: number } | null {
+    if (this.cgramSelected) return null
+    const row = this.twoLine && this.ac >= HD44780.LINE2_BASE ? 1 : 0
+    const offset = row === 1 ? this.ac - HD44780.LINE2_BASE : this.ac
+    const span = this.twoLine ? HD44780.LINE_CHARS : HD44780.ONE_LINE_CHARS
+    if (offset < 0 || offset >= span) return null
+    const col = ((offset - this.displayShift) % span + span) % span
+    return col < HD44780.COLUMNS ? { row, col } : null
+  }
+
+  private publish(vdd: number, vss: number): void {
+    const powered = vdd >= HD44780.MIN_SUPPLY_VOLTS
+
+    /**
+     * CONTRAST IS SOLVED, NOT A PROP.
+     *
+     * V0 is a real pin on a real net, so the trimmer between VDD and VSS that
+     * every wiring diagram shows is doing here what it does on a bench: the
+     * bias the segments are driven at is VDD − V0, and the two thresholds it is
+     * measured against are the ones on HD44780 above. Wind it to VDD and the
+     * screen goes blank with the text still in DDRAM; wind it to VSS and every
+     * cell fills in whether anything was written to it or not.
+     */
+    const bias = powered ? vdd - (this.ctx.voltage('V0') - vss) : 0
+    const contrast = ramp(bias, HD44780.BIAS_TEXT_MIN_VOLTS, HD44780.BIAS_TEXT_FULL_VOLTS)
+    const blocks = ramp(bias, HD44780.BIAS_BLOCKS_MIN_VOLTS, HD44780.BIAS_BLOCKS_FULL_VOLTS)
+
+    const row0 = this.visibleRow(0)
+    const row1 = this.visibleRow(1)
+    const cursor = this.cursorCell()
+    const lit = powered && this.displayOn
+
+    const hex0 = packLcdRow(row0)
+    const hex1 = packLcdRow(row1)
+    const sig =
+      `${hex0}|${hex1}|${lit ? 1 : 0}|${this.cursorOn ? 1 : 0}|${this.blinkOn ? 1 : 0}|` +
+      `${cursor ? `${cursor.row},${cursor.col}` : '-'}|${contrast.toFixed(3)}|` +
+      `${blocks.toFixed(3)}|${powered ? 1 : 0}|${vdd.toFixed(3)}|${this.reads}|${this.writes}|` +
+      `${this.fourBit ? 4 : 8}|${this.twoLine ? 2 : 1}`
+    if (sig === this.lastReport) return
+    this.lastReport = sig
+
+    this.ctx.report({
+      /**
+       * The visible codes, packed as hex, because the RENDERER needs the code
+       * and not a decoded character: it paints dots out of the CGROM table, and
+       * a string would already have discarded the codes it cannot draw.
+       */
+      row0: hex0,
+      row1: hex1,
+      /** The same two lines as text, for the panel and for tests. */
+      text0: row0.map(lcdChar).join(''),
+      text1: row1.map(lcdChar).join(''),
+      /** D of the display on/off instruction, ANDed with having a supply. */
+      on: lit,
+      cursor: this.cursorOn,
+      blink: this.blinkOn,
+      /** Cursor position on the glass. −1 when it is not on the glass. */
+      cursorRow: cursor ? cursor.row : -1,
+      cursorCol: cursor ? cursor.col : -1,
+      /** 0 = invisible, 1 = fully driven. See the note above. */
+      contrast,
+      /** 0 = clean, 1 = every cell a solid block. Over-driven bias. */
+      blocks,
+      /** Volts across the LCD itself: VDD − V0. */
+      bias,
+      powered,
+      supplyVolts: vdd,
+      /** 4 or 8. Follows the function set the sketch actually sent. */
+      busWidth: this.fourBit ? 4 : 8,
+      lines: this.twoLine ? 2 : 1,
+      initialised: this.initialised,
+      writes: this.writes,
+      /** Transfers with R/W high. Counted, not answered — see the class note. */
+      reads: this.reads,
     })
   }
 }

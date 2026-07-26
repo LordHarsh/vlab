@@ -1053,6 +1053,56 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
     }
   }
 
+  /**
+   * The character LCD. What it is showing, and — when it is showing nothing —
+   * WHICH of the four reasons for that it is.
+   *
+   * A blank LCD is the single most demoralising thing in this whole part
+   * library, because every one of the four causes looks identical on the glass:
+   * no supply, no ground reference, the contrast trimmer at the wrong end, or a
+   * sketch that never sent the display-on instruction. The model knows which,
+   * and the entire value of this row is saying so.
+   */
+  if (el.kind === 'character_lcd') {
+    const line = (v: unknown): string => String(v ?? '').padEnd(16, ' ')
+    const bus = `${Math.round(num('busWidth')) || 8}-bit`
+    if (s.powered !== true) {
+      return {
+        headline: 'dark — no supply',
+        detail: `VDD − VSS is ${num('supplyVolts').toFixed(2)} V; the controller needs 2.7 V to run`,
+      }
+    }
+    if (num('contrast') < 0.05) {
+      return {
+        headline: 'blank — contrast off',
+        detail:
+          `VDD − V0 is only ${num('bias').toFixed(2)} V. Wind the trimmer on V0 towards ` +
+          `ground: the text is in memory, it is just not being driven onto the glass.`,
+      }
+    }
+    if (s.on !== true) {
+      return {
+        headline: s.initialised === true ? 'display off' : 'not initialised',
+        detail:
+          s.initialised === true
+            ? 'a function set arrived but the display-on instruction (0x0C) did not'
+            : `no function set received — ${Math.round(num('writes'))} writes, ` +
+              `${Math.round(num('reads'))} reads so far`,
+      }
+    }
+    const blocked = num('blocks') > 0.5
+    return {
+      headline: `"${line(s.text0)}" / "${line(s.text1)}"`,
+      detail:
+        (blocked
+          ? `contrast at maximum — V0 is near ground, so every cell shows a block · `
+          : '') +
+        `${bus} bus · ${Math.round(num('lines'))} line · ` +
+        `cursor ${num('cursorCol') < 0 ? 'off screen' : `${num('cursorRow')},${num('cursorCol')}`}` +
+        (num('reads') > 0 ? ` · ${Math.round(num('reads'))} reads ignored (R/W high)` : ''),
+    }
+  }
+
   // A part whose model reports a shape this panel has never seen still gets its
   // numbers shown, rather than an empty row that looks like a broken sensor.
   const pairs = Object.entries(s).map(
@@ -1088,6 +1138,9 @@ const REPORTS_STATE = new Set([
   // only way to see an L298N working was to look at the motor on the end of it.
   'h_bridge',
   'darlington_array',
+  // The display. Its row is the only place a student can read the four
+  // different reasons a blank screen is blank.
+  'character_lcd',
 ])
 
 /**
@@ -1217,6 +1270,31 @@ export function CircuitEditor({
     return { doc, past: [], future: [] }
   })
   const [selected, setSelected] = useState<string | null>(null)
+  /**
+   * The selected WIRE, and the two selections are mutually exclusive.
+   *
+   * Wires became selectable when double-click stopped deleting them: a
+   * double-click is a click twice, and once the first of the two selects a wire,
+   * having the pair destroy it is a gesture nobody would design on purpose. So
+   * deletion moved to the key that already deletes the selected part — which
+   * only works if exactly one thing is ever selected. Delete guessing between a
+   * highlighted part and a highlighted wire would be worse than either.
+   *
+   * The two setters below are the ONLY place that rule lives. The canvas reports
+   * "a part was clicked" and "a wire was clicked" and does not know about the
+   * exclusion, so there is no second copy of it to fall out of step.
+   */
+  const [selectedWire, setSelectedWire] = useState<string | null>(null)
+  const selectPart = useCallback((id: string | null) => {
+    setSelected(id)
+    setSelectedWire(null)
+  }, [])
+  const selectWire = useCallback((id: string | null) => {
+    setSelectedWire(id)
+    // Only a real selection clears the part. A `null` here is the canvas saying
+    // "the wire you had is gone", which must not also deselect a part.
+    if (id !== null) setSelected(null)
+  }, [])
   const [hexUrl, setHexUrl] = useState(FIRMWARE[0].url)
   /**
    * Copy/paste buffer. Deliberately NOT the system clipboard: reading that
@@ -1245,8 +1323,8 @@ export function CircuitEditor({
         props: { ...src.props },
       },
     })
-    setSelected(id)
-  }, [])
+    selectPart(id)
+  }, [selectPart])
 
   /**
    * Keyboard shortcuts for the canvas.
@@ -1276,6 +1354,12 @@ export function CircuitEditor({
       }
       const mod = e.ctrlKey || e.metaKey
       const part = selected ? (state.doc.parts.find((p) => p.id === selected) ?? null) : null
+      // Resolved against the document, not trusted from state: a wire whose part
+      // was deleted takes its wires with it, and a stale id must not make Delete
+      // dispatch a removal for something that is not there.
+      const wire = selectedWire
+        ? (state.doc.wires.find((w) => w.id === selectedWire) ?? null)
+        : null
 
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault()
@@ -1295,10 +1379,20 @@ export function CircuitEditor({
           placeCopy(clipboard)
         }
       } else if (!mod && (e.key === 'Delete' || e.key === 'Backspace')) {
+        /**
+         * THE ONLY WAY TO DELETE A WIRE, since double-click started adding a
+         * bend instead. `part` and `wire` cannot both be set — see selectPart /
+         * selectWire above — so this is not a precedence rule, and the `else if`
+         * is here to say that out loud rather than to arbitrate.
+         */
         if (part) {
           e.preventDefault()
           dispatch({ type: 'removePart', id: part.id })
           setSelected(null)
+        } else if (wire) {
+          e.preventDefault()
+          dispatch({ type: 'removeWire', id: wire.id })
+          setSelectedWire(null)
         }
       } else if (!mod && (e.key === 'r' || e.key === 'R')) {
         if (part) dispatch({ type: 'rotatePart', id: part.id })
@@ -1312,7 +1406,7 @@ export function CircuitEditor({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, clipboard, state.doc, placeCopy])
+  }, [selected, selectedWire, clipboard, state.doc, placeCopy])
 
   /**
    * The experiment's AUTHORED program — what "Reset to starter" goes back to,
@@ -2287,10 +2381,121 @@ export function CircuitEditor({
             doc={doc}
             dispatch={dispatch}
             ledBrightness={ledBrightness}
+            deviceStates={snapshot.deviceStates}
             netOf={netOf}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectPart}
+            selectedWire={selectedWire}
+            onSelectWire={selectWire}
           />
+
+          {/*
+           * THE INSPECTOR, AND WHY IT IS NOT IN THE PARTS RAIL.
+           *
+           * It used to live at the top of the Components rail, above "Add a
+           * part". That put two unrelated things in one panel under one
+           * heading: what you are EDITING and what you can ADD. Selecting a
+           * resistor made its properties appear inside the parts drawer, which
+           * reads as though the drawer itself had changed, and closing the
+           * drawer to get canvas width also took away the only way to change
+           * the selected part's value.
+           *
+           * So it floats over the canvas instead, next to the thing it
+           * describes, and the rail goes back to being only a palette. It is
+           * absolutely positioned inside the canvas wrapper — which is already
+           * `relative` — so it costs the canvas no layout width and needs no
+           * change to CircuitCanvas itself. Only its own box takes pointer
+           * events; the canvas keeps the rest.
+           */}
+          {selectedPart && selectedDef && (
+            <div
+              data-testid="inspector"
+              aria-label={`${selectedDef.label} properties`}
+              className="absolute top-3 right-3 z-20 w-56 md:w-60 max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-[4px] border border-[#dfe3e8] bg-white/95 shadow-lg backdrop-blur-sm"
+            >
+              <div className="sticky top-0 flex h-9 items-center gap-2 border-b border-[#dfe3e8] bg-white px-3">
+                <span className={SECTION_LABEL}>Selected</span>
+                <button
+                  type="button"
+                  data-testid="inspector-close"
+                  aria-label="Deselect this part"
+                  onClick={() => setSelected(null)}
+                  className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1]"
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="px-3 py-3">
+                <div className="mb-3 font-semibold text-[#34495e]">{selectedDef.label}</div>
+
+                {selectedDef.props?.map((prop) => (
+                  <PropControl
+                    /**
+                     * Keyed by PART as well as by prop, so selecting a different
+                     * resistor remounts the field. The value/unit control holds
+                     * the half-typed figure in its own state, and without the id
+                     * in the key React would reuse the mounted instance and show
+                     * the previous resistor's draft over the new one's value.
+                     */
+                    key={`${selectedPart.id}:${prop.key}`}
+                    prop={prop}
+                    /**
+                     * The engine falls back to the declared default when a part
+                     * carries no value for a prop, so the control shows that same
+                     * default — otherwise the panel and the simulation disagree
+                     * before the student has touched anything.
+                     *
+                     * `?? prop.options?.[0]` USED TO BE THE NEXT LINK IN THIS
+                     * CHAIN and it was the bug. A resistor's options start at 0 Ω
+                     * — "none (wire)" — so a resistor arriving from a saved
+                     * document, an authored starter or `loadInto` without an
+                     * explicit `ohms` displayed "none (wire)" while compile.ts
+                     * solved it at its 220 Ω default. Inventing a value from the
+                     * options list is what let the two drift; the declaration is
+                     * now the only source, and parts.ts's
+                     * propDeclarationProblems() shouts if a prop omits one. The
+                     * trailing `?? 0` only satisfies Number() and is unreachable
+                     * while that check is clean.
+                     */
+                    value={selectedPart.props[prop.key] ?? prop.default ?? 0}
+                    onChange={(value) =>
+                      dispatch({ type: 'setProp', id: selectedPart.id, key: prop.key, value })
+                    }
+                  />
+                ))}
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => dispatch({ type: 'rotatePart', id: selectedPart.id })}
+                    title="Rotate 90° (R)"
+                    className={`${BTN} flex-1`}
+                  >
+                    Rotate
+                  </button>
+                  <button
+                    onClick={() => placeCopy(selectedPart)}
+                    data-testid="duplicate-part"
+                    title="Duplicate (Ctrl+D)"
+                    className={`${BTN} flex-1`}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    onClick={() => {
+                      dispatch({ type: 'removePart', id: selectedPart.id })
+                      setSelected(null)
+                    }}
+                    data-testid="delete-part"
+                    title="Delete (Del)"
+                    className="h-8 flex-1 rounded-[3px] border border-red-200 bg-white px-2.5 text-xs text-red-600 transition-colors hover:border-red-500"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* The code panel DOCKS beside the circuit rather than covering it: the
@@ -2418,79 +2623,6 @@ export function CircuitEditor({
           {error && (
             <div className="px-4 py-3 bg-red-50 text-red-700 text-xs" data-testid="error">
               {error}
-            </div>
-          )}
-
-          {/* Selected part */}
-          {selectedPart && selectedDef && (
-            <div className="px-4 py-4 border-b border-[#dfe3e8]">
-              <div className={`${SECTION_LABEL} mb-2`}>Selected</div>
-              <div className="text-[#34495e] font-semibold mb-3">{selectedDef.label}</div>
-
-              {selectedDef.props?.map((prop) => (
-                <PropControl
-                  /**
-                   * Keyed by PART as well as by prop, so selecting a different
-                   * resistor remounts the field. The value/unit control holds
-                   * the half-typed figure in its own state, and without the id
-                   * in the key React would reuse the mounted instance and show
-                   * the previous resistor's draft over the new one's value.
-                   */
-                  key={`${selectedPart.id}:${prop.key}`}
-                  prop={prop}
-                  /**
-                   * The engine falls back to the declared default when a part
-                   * carries no value for a prop, so the control shows that same
-                   * default — otherwise the panel and the simulation disagree
-                   * before the student has touched anything.
-                   *
-                   * `?? prop.options?.[0]` USED TO BE THE NEXT LINK IN THIS
-                   * CHAIN and it was the bug. A resistor's options start at 0 Ω
-                   * — "none (wire)" — so a resistor arriving from a saved
-                   * document, an authored starter or `loadInto` without an
-                   * explicit `ohms` displayed "none (wire)" while compile.ts
-                   * solved it at its 220 Ω default. Inventing a value from the
-                   * options list is what let the two drift; the declaration is
-                   * now the only source, and parts.ts's
-                   * propDeclarationProblems() shouts if a prop omits one. The
-                   * trailing `?? 0` only satisfies Number() and is unreachable
-                   * while that check is clean.
-                   */
-                  value={selectedPart.props[prop.key] ?? prop.default ?? 0}
-                  onChange={(value) =>
-                    dispatch({ type: 'setProp', id: selectedPart.id, key: prop.key, value })
-                  }
-                />
-              ))}
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => dispatch({ type: 'rotatePart', id: selectedPart.id })}
-                  title="Rotate 90° (R)"
-                  className={`${BTN} flex-1`}
-                >
-                  Rotate
-                </button>
-                <button
-                  onClick={() => placeCopy(selectedPart)}
-                  data-testid="duplicate-part"
-                  title="Duplicate (Ctrl+D)"
-                  className={`${BTN} flex-1`}
-                >
-                  Duplicate
-                </button>
-                <button
-                  onClick={() => {
-                    dispatch({ type: 'removePart', id: selectedPart.id })
-                    setSelected(null)
-                  }}
-                  data-testid="delete-part"
-                  title="Delete (Del)"
-                  className="h-8 flex-1 px-2.5 rounded-[3px] text-xs border border-red-200 bg-white text-red-600 transition-colors hover:border-red-500"
-                >
-                  Delete
-                </button>
-              </div>
             </div>
           )}
 

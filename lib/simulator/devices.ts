@@ -585,6 +585,109 @@ export const SENSOR_SUPPLIES: Record<string, SensorSupplyParams> = {
 }
 
 /**
+ * The logic supply of an HD44780 character LCD module.
+ *
+ * NOT in SENSOR_SUPPLIES, deliberately: that record is keyed by the `protocol`
+ * string of a `kind:'sensor'` part and compile()'s sensor branch indexes it
+ * directly, so putting a display in it would be claiming the display is a
+ * sensor. It is the same DEVICE (SensorSupply models any module's supply pin —
+ * a load plus the three ways a supply destroys the part), stamped from a
+ * different branch.
+ *
+ *   [sheet]  HD44780U operating supply VCC 2.7 V to 5.5 V
+ *   [sheet]  HD44780U absolute maximum supply voltage -0.3 V to +7.0 V
+ *   [judged] 4.5 V as the bottom of the WORKING window rather than 2.7 V. The
+ *            controller runs from 2.7 V, but a 1602 MODULE is the controller
+ *            plus a glass panel whose bias network is trimmed for a 5 V rail —
+ *            below ~4.5 V the segments cannot be driven hard enough to read,
+ *            which is a display that does not display. 2.7 V is the figure the
+ *            behavioural model uses for "the controller is running", and this
+ *            one is the figure for "you can see it".
+ *   [judged] 1.5 mA supply current. The HD44780U's own IDD is 0.35 mA typ at
+ *            270 kHz, and the module adds an I/O expander's worth of nothing —
+ *            but every 1602 module measured in the wild draws 1-2 mA with the
+ *            backlight off, which is the part a student is actually powering.
+ *   [judged] The two output figures are the D0-D7 pads' own ratings (IOH
+ *            -0.205 mA at VOH 2.4 V, IOL 1.2 mA at VOL 0.4 V from the sheet,
+ *            rounded to the nearest tenth of a milliamp). NOTHING READS THEM
+ *            TODAY, and that is stated rather than hidden: the model never
+ *            drives the data bus because it does not answer reads (see
+ *            HD44780Display in behavioural.ts). They are the correct numbers for
+ *            the day it does, and they are declared here because the shared
+ *            SensorSupplyParams shape requires a value, not because a check
+ *            consults them.
+ */
+export const HD44780_SUPPLY: SensorSupplyParams = {
+  minVolts: 4.5,
+  maxVolts: 5.5,
+  absMaxVolts: 7.0,
+  absMaxReverseVolts: 0.3,
+  supplyAmps: 1.5e-3,
+  outputRatedAmps: 0.0012,
+  outputMaxAmps: 0.0012,
+  label: 'a 16x2 LCD',
+  supplyPin: 'VDD',
+}
+
+/**
+ * Every logic input of an HD44780, as a resistance to its own VSS.
+ *
+ *   [sheet] Input leakage current |ILI| = 1 uA max, VIN = 0 V to VCC.
+ *
+ * 5 MΩ is 5 V / 1 µA — the worst-case leakage the sheet permits, expressed as
+ * the resistance that would produce it. Two things follow, and the second is
+ * why this is stamped at all rather than left as an ideal open:
+ *
+ *   - RS, R/W, E and D0-D7 have a defined level when the sketch is not driving
+ *     them. A 4-bit wiring leaves D0-D3 unconnected, and they must read LOW,
+ *     because that is what makes the 8-bit bytes of the initialisation sequence
+ *     come out as 0x30/0x30/0x30/0x20 on real hardware.
+ *   - it returns to the module's OWN VSS, never to net 0. An LCD whose ground
+ *     lead is missing therefore has no reference at all and decodes nothing,
+ *     which is exactly what a bench does — the same rule the ULN2003 and the
+ *     relay board follow.
+ */
+export const HD44780_INPUT_OHMS = 5e6
+
+/**
+ * The LED backlight of a 1602 module, between pins 15 (A) and 16 (K).
+ *
+ * WHICH MODULE THIS IS, because they differ and the difference is a factor of
+ * ten in current: the common yellow-green STN part (a Winstar WH1602-class
+ * module and every clone of it) with the 100 Ω ballast resistor its breakout
+ * carries between pin 15 and the array. A module WITHOUT that resistor — some
+ * are sold with a jumper in its place — draws about 240 mA from a 5 V rail
+ * against this one's 12 mA, and is destroyed by it, which is precisely why the
+ * resistor is there. HD44780_BACKLIGHT_OHMS below is that resistor, and it is
+ * stamped, so the current the Measurements panel reports is the current of THIS
+ * module and not of an idealised one.
+ *
+ *   [sheet]  LED backlight forward voltage 4.2 V typ at 25 °C, forward current
+ *            120 mA for the array.
+ *   [judged] `is` and `n` are fitted to that one point rather than quoted: the
+ *            array is two ~2.1 V yellow-green junctions in series, so n is
+ *            2 x 1.8 = 3.6 and `is` = 3.9e-20 puts the ARRAY (junction plus its
+ *            own 2 x LED_SERIES_R of bulk) at 4.20 V for 120 mA and 3.83 V for
+ *            20 mA — the shape of a real LED curve through the one point the
+ *            sheet gives.
+ *   [judged] 120 mA rated / 160 mA absolute maximum. The sheet gives only the
+ *            first; the second is the usual 1.33x headroom an LED array is
+ *            specified with, and it is what makes "wired straight across 5 V
+ *            with no resistor anywhere" report as destruction rather than as a
+ *            merely warm backlight.
+ */
+export const HD44780_BACKLIGHT: DiodeParams = {
+  is: 3.9e-20,
+  n: 3.6,
+  ratedAmps: 0.12,
+  maxAmps: 0.16,
+  label: 'an LCD backlight',
+}
+
+/** The module's on-board backlight ballast, ohms. See HD44780_BACKLIGHT. */
+export const HD44780_BACKLIGHT_OHMS = 100
+
+/**
  * A sensor module's supply pin: the load it draws, and every way that supply
  * can destroy it.
  *

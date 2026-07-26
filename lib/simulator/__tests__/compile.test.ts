@@ -26,6 +26,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { analogDeviceStates } from '../analog-state'
 import { compile } from '../model/compile'
+import { detectBoard } from '../model/boards'
 import type { CircuitDoc, DocWire, PlacedPart } from '../model/document'
 import { EXPERIMENT_01 } from '../model/examples'
 import { PART_LIBRARY, getPart } from '../model/parts'
@@ -1296,6 +1297,69 @@ group('15. the dead kind:\'load\' variant is gone')
     getPart('buzzer').electrical.kind === 'buzzer' &&
       getPart('dc_motor').electrical.kind === 'motor',
     'buzzer + motor', `${getPart('buzzer').electrical.kind} + ${getPart('dc_motor').electrical.kind}`)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+group('16. two of the SAME board is refused, not silently merged')
+// ══════════════════════════════════════════════════════════════════════════════
+{
+  /**
+   * detectBoard() collected into a `Set<BoardType>`, so it deduplicated by board
+   * TYPE. An Uno beside a Mega was caught; an Uno beside an Uno was not — the
+   * set held one entry, the function reported a single valid board, and the
+   * Checks panel said nothing was wrong.
+   *
+   * That mattered because compile() keys `mcuPorts` by BARE pin name — both
+   * engines look up "D13"/"GP15" while mapping a CPU port-and-bit onto a pad and
+   * have no part id to qualify it with. So the second Uno's "D13" overwrote the
+   * first's, the engine drove whichever board sorted last in `doc.parts`, and
+   * the other sat wired, powered and inert with nothing on screen saying why.
+   *
+   * Both halves are asserted here, because fixing only the message would leave
+   * the collision one refactor away from mattering again.
+   */
+  const mcu = (id: string, type: string, x: number): PlacedPart =>
+    ({ id, type, x, y: 0, rotation: 0, props: {} })
+
+  const wiredOne = JSON.parse(JSON.stringify(EXPERIMENT_01)) as CircuitDoc
+  const wiredTwo = JSON.parse(JSON.stringify(EXPERIMENT_01)) as CircuitDoc
+  wiredTwo.parts.push(mcu('uno2', 'arduino_uno', 900))
+
+  const one = detectBoard(wiredOne)
+  const two = detectBoard(wiredTwo)
+
+  truth('one Uno still resolves to a runnable board',
+    one.board?.type === 'arduino_uno' && one.problem === null,
+    'arduino_uno / no problem', `${one.board?.type ?? 'null'} / ${one.problem ?? 'no problem'}`)
+
+  truth('a SECOND Uno is refused rather than deduplicated away',
+    two.board === null && two.problem !== null,
+    'refused', two.board ? `ran ${two.board.type}` : 'refused')
+
+  truth('...and the message counts them instead of naming the type once',
+    (two.problem ?? '').includes('2 Arduino Unos'),
+    'names "2 Arduino Unos"', two.problem ?? '(none)')
+
+  // The collision itself. A single board keeps its watch list; two boards get
+  // none, so no pin can be driven by the wrong CPU.
+  truth('one Uno registers its wired pin in mcuPorts',
+    compile(wiredOne).mcuPorts.has('D13'), 'D13 present', String(compile(wiredOne).mcuPorts.has('D13')))
+  truth('two Unos register NO mcuPorts, so neither D13 can shadow the other',
+    compile(wiredTwo).mcuPorts.size === 0, '0 ports', String(compile(wiredTwo).mcuPorts.size))
+
+  // Two Picos exercise the same path on the other track.
+  const picos = detectBoard({ parts: [mcu('p1', 'raspberry_pi_pico', 0), mcu('p2', 'raspberry_pi_pico', 600)], wires: [] })
+  truth('two Picos are refused too, and counted',
+    picos.board === null && (picos.problem ?? '').includes('2 Raspberry Pi Picos'),
+    'refused, "2 Raspberry Pi Picos"', picos.problem ?? '(none)')
+
+  // The article was a hardcoded "an", right for both Arduinos and wrong for the
+  // Pico since the day it was added.
+  const mixed = detectBoard({ parts: [mcu('u', 'arduino_uno', 0), mcu('p', 'raspberry_pi_pico', 600)], wires: [] })
+  truth('the mixed-board sentence reads "a Raspberry Pi Pico", not "an"',
+    (mixed.problem ?? '').includes('a Raspberry Pi Pico') &&
+      !(mixed.problem ?? '').includes('an Raspberry'),
+    'a Raspberry Pi Pico', mixed.problem ?? '(none)')
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────

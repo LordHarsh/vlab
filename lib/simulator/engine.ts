@@ -22,6 +22,7 @@ import {
   FlowSensor,
   G_RELEASED,
   HCSR04,
+  HD44780Display,
   MCP3008Device,
   PIRSensor,
   PulseSensor,
@@ -1209,6 +1210,8 @@ function makeBehavioural(
       return new MCP3008Device(partId, ctx)
     case 'relay':
       return new RelayMonitor(partId, ctx, RELAY_MODULE_4CH)
+    case 'hd44780':
+      return new HD44780Display(partId, ctx)
     default:
       return null
   }
