@@ -23,18 +23,23 @@ export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | 'static' | (st
  *     twelve experiments. Rendered for sections of type `static`.
  *
  * They are not substitutes: one is a workbench, the other is a figure in a
- * textbook. Defaulting to `false` therefore means ALONGSIDE — nothing about
- * any existing section changes, and the ported view appears only where a
- * simulations row is explicitly typed `static`. No migration ships with this;
- * no row is `static` yet, so today this renders for nobody.
+ * textbook. `false` means ALONGSIDE — the ported view appears only where a
+ * simulations row is explicitly typed `static`. `true` means REPLACE: every
+ * `native` section renders the read-only port INSTEAD of our editor,
+ * everywhere at once, with no migration needed.
  *
- * Flip to `true` and every `native` section renders the read-only port
- * INSTEAD of our editor, everywhere at once. That is the "replace" answer,
- * and it is a content decision, not a code one — which is why it is a single
- * boolean here rather than a guess spread through the file.
+ * SET TO `true` ON THE OWNER'S INSTRUCTION. All twelve experiments show the
+ * read-only circuit and code. Our own editor is not deleted and not broken —
+ * it is simply not what a student sees on the lesson page while this is true.
+ * Development of it continues on the `dynamic-simulator` branch, which is why
+ * the two were split; flipping this back is the whole of the way to return it
+ * to students.
+ *
+ * It stays a single boolean rather than a guess spread through the file
+ * because it is a content decision, and content decisions change.
  * ────────────────────────────────────────────────────────────────────────────
  */
-const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = false
+const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = true
 
 /**
  * The native circuit editor is lazy-loaded with `ssr: false` so the heavy
