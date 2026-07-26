@@ -1,0 +1,238 @@
+/* 
+ * SNITCH UI FRAMEWORK 
+ * A premium, exclusive UI component and styling framework.
+ */
+
+:root {
+  --snitch-bg-base: #f8fafc;
+  --snitch-bg-surface: #ffffff;
+  --snitch-bg-alt: #f1f5f9;
+  --snitch-bg-dark: #0f172a;
+  
+  --snitch-primary: #FF6B35;
+  --snitch-primary-hover: #ff804d;
+  --snitch-primary-light: rgba(255, 107, 53, 0.1);
+  --snitch-primary-glow: rgba(255, 107, 53, 0.25);
+  
+  --snitch-text-main: #0f172a;
+  --snitch-text-muted: #64748b;
+  --snitch-text-light: #f8fafc;
+  
+  --snitch-border: #e2e8f0;
+  
+  --snitch-radius-sm: 0.5rem;
+  --snitch-radius-md: 0.75rem;
+  --snitch-radius-lg: 1rem;
+  --snitch-radius-xl: 1.5rem;
+  
+  --snitch-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --snitch-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --snitch-shadow-glow: 0 4px 15px var(--snitch-primary-glow);
+}
+
+/* Base Layout & Spacing */
+.snitch-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+.snitch-flex { display: flex; }
+.snitch-flex-col { display: flex; flex-direction: column; }
+.snitch-items-center { align-items: center; }
+.snitch-justify-between { justify-content: space-between; }
+.snitch-justify-center { justify-content: center; }
+.snitch-gap-sm { gap: 0.5rem; }
+.snitch-gap-md { gap: 1rem; }
+.snitch-gap-lg { gap: 1.5rem; }
+.snitch-gap-xl { gap: 2rem; }
+
+.snitch-w-full { width: 100%; }
+.snitch-h-full { height: 100%; }
+
+.snitch-p-md { padding: 1rem; }
+.snitch-p-lg { padding: 1.5rem; }
+.snitch-p-xl { padding: 2rem; }
+
+/* Typography */
+.snitch-text-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--snitch-text-main);
+  margin-bottom: 0.5rem;
+}
+.snitch-text-subtitle {
+  font-size: 0.875rem;
+  color: var(--snitch-text-muted);
+  line-height: 1.5;
+}
+.snitch-text-body {
+  font-size: 1rem;
+  color: var(--snitch-text-main);
+}
+.snitch-text-brand {
+  color: var(--snitch-primary);
+  font-weight: bold;
+}
+
+/* Surfaces & Components */
+.snitch-card {
+  background: var(--snitch-bg-surface);
+  border: 1px solid var(--snitch-border);
+  border-radius: var(--snitch-radius-xl);
+  box-shadow: var(--snitch-shadow-sm);
+  overflow: hidden;
+}
+
+.snitch-card-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--snitch-border);
+  background: var(--snitch-bg-alt);
+}
+
+.snitch-card-body {
+  padding: 1.5rem;
+}
+
+/* Buttons */
+.snitch-btn-primary {
+  background-color: var(--snitch-primary);
+  color: #fff;
+  font-weight: 700;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--snitch-radius-md);
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: var(--snitch-shadow-glow);
+  transition: all 0.2s ease;
+}
+.snitch-btn-primary:hover {
+  background-color: var(--snitch-primary-hover);
+  transform: translateY(-1px);
+}
+
+.snitch-btn-icon {
+  background-color: var(--snitch-primary-light);
+  color: var(--snitch-primary);
+  border-radius: var(--snitch-radius-md);
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.snitch-btn-icon:hover {
+  background-color: var(--snitch-primary);
+  color: #fff;
+}
+
+/* Grid */
+.snitch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.snitch-grid-cols-3 {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 2rem;
+}
+
+/* Media Containers */
+.snitch-video-container {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 Aspect Ratio */
+  background: var(--snitch-bg-dark);
+  border-radius: var(--snitch-radius-md);
+  overflow: hidden;
+}
+.snitch-video-container iframe,
+.snitch-video-container video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* Code Viewer (Dark Theme) */
+.snitch-code-block {
+  background-color: var(--snitch-bg-dark);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--snitch-radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.snitch-code-header {
+  background-color: rgba(0,0,0,0.3);
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  color: var(--snitch-text-muted);
+}
+.snitch-code-content {
+  padding: 1.5rem;
+  color: #e2e8f0;
+  font-family: monospace;
+  font-size: 0.875rem;
+  overflow-x: auto;
+  margin: 0;
+}
+
+/* List Items */
+.snitch-list-item {
+  padding: 1rem;
+  border: 1px solid var(--snitch-border);
+  border-radius: var(--snitch-radius-md);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--snitch-bg-surface);
+  color: var(--snitch-text-main);
+}
+.snitch-list-item:hover {
+  border-color: var(--snitch-primary);
+  background-color: var(--snitch-primary-light);
+}
+.snitch-list-item.active {
+  border-color: var(--snitch-primary);
+  background-color: var(--snitch-primary-light);
+  box-shadow: 0 0 0 2px var(--snitch-primary-light);
+}
+
+/* Header Branding Specific */
+.snitch-branding {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.snitch-logo-box {
+  padding: 0.5rem;
+  background-color: var(--snitch-primary-light);
+  border-radius: var(--snitch-radius-sm);
+  border: 1px solid var(--snitch-primary-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.snitch-brand-text {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--snitch-text-main);
+}
