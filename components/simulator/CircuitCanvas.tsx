@@ -371,9 +371,18 @@ const FIT_MIN_Z = 0.45
 /**
  * The bounding box of everything in the document, in world units.
  *
- * Parts only, not wires: a wire's waypoints are always between two pins, so the
- * parts' boxes already contain them. Returns null for an empty document, which
- * is what tells the caller there is nothing to fit to.
+ * PARTS AND BEND POINTS. It used to be parts only, on the reasoning that "a
+ * wire's waypoints are always between two pins, so the parts' boxes already
+ * contain them" — which is false, and visibly so: a turn is a point a wire is
+ * routed THROUGH, and the useful ones are exactly the ones outside the part
+ * boxes. A supply pair that leaves a board's underside and runs along beneath
+ * it before climbing to the rails has its whole lower run below every part in
+ * the document, and fitting to the parts alone crops it off the bottom edge.
+ *
+ * Returns null for an empty document, which is what tells the caller there is
+ * nothing to fit to. Documents with no `waypoints` anywhere — which is every
+ * starter in lib/simulator/model/examples.ts — get exactly the box they got
+ * before.
  */
 function docBounds(doc: CircuitDoc): { x: number; y: number; w: number; h: number } | null {
   if (doc.parts.length === 0) return null
@@ -399,6 +408,14 @@ function docBounds(doc: CircuitDoc): { x: number; y: number; w: number; h: numbe
     y0 = Math.min(y0, cy - h / 2)
     x1 = Math.max(x1, cx + w / 2)
     y1 = Math.max(y1, cy + h / 2)
+  }
+  for (const wire of doc.wires) {
+    for (const p of wire.waypoints ?? []) {
+      x0 = Math.min(x0, p.x)
+      y0 = Math.min(y0, p.y)
+      x1 = Math.max(x1, p.x)
+      y1 = Math.max(y1, p.y)
+    }
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
 }
@@ -454,6 +471,8 @@ function allVisible(
 type ViewAction =
   /** First paint, once the canvas has a size. Ignored if a view already exists. */
   | { type: 'fit'; doc: CircuitDoc; width: number; height: number }
+  /** The canvas changed size. Unconditional — see the case for who sends it. */
+  | { type: 'refit'; doc: CircuitDoc; width: number; height: number }
   | { type: 'pan'; dx: number; dy: number }
   | { type: 'zoom'; factor: number; cx: number; cy: number }
 
@@ -493,6 +512,30 @@ function viewReducer(state: ViewState, action: ViewAction): ViewState {
         view: fitView(action.doc, action.width, action.height),
         fitted: partSignature(action.doc),
       }
+    }
+    /**
+     * Frame the document again for a canvas of a NEW size.
+     *
+     * Unlike `fit`, this replaces an existing view — that is the whole point of
+     * it, and it is why only a READ-ONLY canvas ever sends it. A figure nobody
+     * can pan has no view of its own to protect, so the only right answer when
+     * its box changes shape is the framing for the box it now has; the editor,
+     * whose view is a place the student chose to be standing, never gets this
+     * action and is untouched.
+     *
+     * IDEMPOTENT ON PURPOSE. It returns the SAME state object when the framing
+     * has not actually moved, so a `ResizeObserver` that fires on subscribe —
+     * once per document identity, and this document's props are rewritten four
+     * times a second by the showreel — costs no render at all.
+     */
+    case 'refit': {
+      const view = fitView(action.doc, action.width, action.height)
+      const sig = partSignature(action.doc)
+      const cur = state.view
+      if (cur && cur.x === view.x && cur.y === view.y && cur.z === view.z && state.fitted === sig) {
+        return state
+      }
+      return { view, fitted: sig }
     }
     case 'pan': {
       const cur = state.view ?? DEFAULT_VIEW
@@ -563,6 +606,12 @@ export function CircuitCanvas({
    */
   const [viewState, dispatchView] = useReducer(viewReducer, { view: null, fitted: '' })
   /**
+   * The document the resize observer below should frame, without that observer
+   * having to be torn down and rebuilt every time the document object changes
+   * identity — which, under the showreel's playback, is four times a second.
+   */
+  const docRef = useRef(doc)
+  /**
    * What the readers below use. The fallback covers the single frame between
    * mount and the layout effect, so nothing ever renders at the origin.
    */
@@ -613,10 +662,51 @@ export function CircuitCanvas({
    * with it.
    */
   useLayoutEffect(() => {
+    docRef.current = doc
     const rect = svgRef.current?.getBoundingClientRect()
     if (!rect || rect.width === 0 || rect.height === 0) return
     dispatchView({ type: 'fit', doc, width: rect.width, height: rect.height })
   }, [doc])
+
+  /**
+   * Keep a READ-ONLY figure framed to its box, whatever size that box becomes.
+   *
+   * The fit above lands once, against whatever the canvas measured on first
+   * paint, and nothing has ever re-run it. In the editor that is correct — the
+   * view belongs to the student from the moment they touch it. In a read-only
+   * figure it is a bug with teeth: the panel's canvas is 260 px tall on a
+   * phone, 320 at `sm` and 380 at `lg`, and its width follows the viewport, so
+   * a window that is resized (or that settles to its final width a beat after
+   * mount) leaves the drawing framed for a canvas that no longer exists. A
+   * SHRINKING box is the ugly one: a centred document overflows all four edges
+   * at once, which is exactly what it looks like — a circuit cropped on every
+   * side by a panel it used to fit.
+   *
+   * A `ResizeObserver` rather than a window `resize` listener because the box
+   * changes for reasons the window does not: a `lg:flex-row` that rewraps, a
+   * scrollbar appearing beside twelve panels, a lesson page laying out around
+   * it. The observer's first callback on subscribe is also the belt to the
+   * layout effect's braces — a canvas that measured zero on first paint (a
+   * panel mounted inside something not yet laid out) gets framed the moment it
+   * has a size, instead of drawing at DEFAULT_VIEW forever.
+   */
+  useEffect(() => {
+    if (!readOnly) return
+    const svg = svgRef.current
+    if (!svg) return
+    const observer = new ResizeObserver(() => {
+      const rect = svg.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+      dispatchView({
+        type: 'refit',
+        doc: docRef.current,
+        width: rect.width,
+        height: rect.height,
+      })
+    })
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [readOnly])
 
   /**
    * Escape abandons a wire being routed.
