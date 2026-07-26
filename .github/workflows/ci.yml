@@ -1,0 +1,61 @@
+name: CI
+
+# Nothing ran the test suites before this file existed. ~3,300 assertions —
+# including the two guards written after real production bugs, the prop
+# reachability probe and the canvas SVG-difference checks — were reachable only
+# by a human remembering a command that was not in package.json.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # The simulator suites are the slow part: ~6.5 minutes locally, because each
+    # one boots a real AVR/RP2040 emulator and solves real circuits rather than
+    # asserting against mocks. The default 360-minute timeout is far too loose to
+    # catch a hang, so cap it well above the honest runtime and no further.
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The AVR toolchain is ~23 MB of WASM plus the Arduino core sources,
+      # fetched by scripts/build-avr-hex.mjs into a gitignored directory. Caching
+      # it keeps the build honest without re-downloading on every run; the key is
+      # the script itself, since that is what pins the versions.
+      - name: Cache AVR toolchain
+        uses: actions/cache@v4
+        with:
+          path: .cache/avr
+          key: avr-${{ runner.os }}-${{ hashFiles('scripts/build-avr-hex.mjs') }}
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      # Runs every suite and exits non-zero if any assertion fails or any suite
+      # crashes before printing a tally.
+      - run: npm test
+
+      # `next build --webpack` — the flag is not optional. Turbopack cannot build
+      # this app; see docs/BUILD_NOTES.md. This step also proves the toolchain
+      # fetch works from cold, which is what a deploy depends on.
+      - run: npm run build
+        env:
+          # Build-time placeholders. These are public-prefixed or non-secret
+          # stand-ins so the build can resolve imports; nothing here reaches a
+          # deployed environment, and no real secret belongs in this file.
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ci_placeholder
+          CLERK_SECRET_KEY: sk_test_ci_placeholder
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci_placeholder_anon_key
+          SUPABASE_SERVICE_ROLE_KEY: ci_placeholder_service_key

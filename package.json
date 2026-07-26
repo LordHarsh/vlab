@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "node scripts/build-avr-hex.mjs --toolchain-only && next build --webpack",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.36.5",

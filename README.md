@@ -43,9 +43,13 @@ Sign out and back in — you will land on `/admin`.
 |---|---|
 | `npm run dev` | dev server |
 | `npm run build` | production build — the gate for main |
+| `npm test` | every simulator suite (~6.5 min — it runs real emulators) |
+| `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | eslint |
-| `npx tsc --noEmit` | typecheck |
-| `npx tsx lib/simulator/__tests__/<name>.test.ts` | run one simulator suite (see below) |
+| `npx tsx lib/simulator/__tests__/<name>.test.ts` | one suite on its own |
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and the build on every
+push to `main` and every pull request.
 
 ### Two things about the build
 
@@ -101,24 +105,30 @@ parts, and `lib/simulator/passive.ts` solves a board-less document, so battery �
 
 ### Tests
 
-There is **no `npm test`**. Each suite is a standalone script that prints a table and
-exits non-zero on failure:
+Each suite is a standalone script that prints a comparison table and exits non-zero on
+failure — deliberately not a test framework, because those tables are what a human reads
+when a number drifts.
 
 ```bash
-npx tsx lib/simulator/__tests__/transient.test.ts
-for f in lib/simulator/__tests__/*.test.ts; do npx tsx "$f"; done   # all of them
+npm test                                              # all of them
+npx tsx lib/simulator/__tests__/transient.test.ts     # just one
 ```
 
-20 files, ~3,300 assertions. The house style is that **expected values are derived by
+20 files, 3,309 assertions, about 6.5 minutes — they boot real emulators and solve real
+circuits rather than asserting against mocks. The house style is that **expected values are derived by
 hand from theory, never captured from the engine's own output** — a test that records
 what the code currently does proves only that it still does it.
 `transient.test.ts` and `lcd.test.ts` are the ones to read before writing a new suite.
 
 Two guards worth knowing about, both written after real bugs:
 
-- `lib/simulator/model/prop-reachability.ts` fails the build when a part declares a
-  property that never reaches the solver. The LED colour table sat complete in `parts.ts`
-  while `compile.ts` never read it, so every LED solved as red.
+- `lib/simulator/model/prop-reachability.ts` catches a part that declares a property
+  which never reaches the solver. It compiles the circuit twice with only that property
+  changed and compares the serialised result, so a value nothing reads shows up as "no
+  difference". The LED colour table sat complete in `parts.ts` while `compile.ts` never
+  read it, and every LED solved as red. The module is deliberately non-throwing — it is
+  asserted on by `compile.test.ts`, `lcd.test.ts` and `sources.test.ts` rather than
+  failing the build on its own.
 - Several suites render the real canvas and assert on the emitted SVG, then assert the
   *same* state with one input changed produces different pixels. Correct data that
   nothing reads looks identical to working code until you check the output.
