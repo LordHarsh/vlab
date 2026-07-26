@@ -28,18 +28,20 @@ export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | 'static' | (st
  * `native` section renders the read-only port INSTEAD of our editor,
  * everywhere at once, with no migration needed.
  *
- * SET TO `true` ON THE OWNER'S INSTRUCTION. All twelve experiments show the
- * read-only circuit and code. Our own editor is not deleted and not broken —
- * it is simply not what a student sees on the lesson page while this is true.
- * Development of it continues on the `dynamic-simulator` branch, which is why
- * the two were split; flipping this back is the whole of the way to return it
- * to students.
+ * BACK TO `false`. It was briefly `true`, and the consequence was immediate
+ * and correct: a static figure does not simulate. No running MCU, no solved
+ * voltages, no LED that lights, because the read-only port deliberately ships
+ * without an execution engine. Students get the working simulator again —
+ * emulated CPU, real compilation, solved circuit.
+ *
+ * The read-only port stays available for sections explicitly typed `static`,
+ * where a labelled reference figure is the thing actually wanted.
  *
  * It stays a single boolean rather than a guess spread through the file
  * because it is a content decision, and content decisions change.
  * ────────────────────────────────────────────────────────────────────────────
  */
-const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = true
+const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = false
 
 /**
  * The native circuit editor is lazy-loaded with `ssr: false` so the heavy
