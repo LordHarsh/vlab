@@ -4,6 +4,10 @@ Virtual Lab platform for interactive science and engineering experiments. Studen
 class with a code, work through structured experiment sections (aim, theory, procedure,
 simulation, quizzes, feedback), and their progress persists per class.
 
+The simulation section is a circuit simulator built into the app — real emulated
+microcontrollers running real compiled firmware against a real analog solver. It is the
+bulk of the codebase; see [The simulator](#the-simulator).
+
 Next.js 16 (App Router) · React 19 · TypeScript · Clerk · Supabase · Tailwind + shadcn/ui
 
 ## Getting started
@@ -40,6 +44,84 @@ Sign out and back in — you will land on `/admin`.
 | `npm run dev` | dev server |
 | `npm run build` | production build — the gate for main |
 | `npm run lint` | eslint |
+| `npx tsc --noEmit` | typecheck |
+| `npx tsx lib/simulator/__tests__/<name>.test.ts` | run one simulator suite (see below) |
+
+### Two things about the build
+
+`npm run build` is `node scripts/build-avr-hex.mjs --toolchain-only && next build --webpack`,
+and neither half is incidental.
+
+The script fetches the ~23 MB WASM AVR toolchain into `.cache/avr/`, which is gitignored.
+A clean deploy without it has no compiler, and students cannot compile a sketch.
+
+`--webpack` is there because **Turbopack cannot build this app** — it panics writing the
+file-trace manifest for the compile route (`NftJsonAsset: cannot handle filepath
+node:crypto`). Isolated by building the same tree both ways. See
+[`docs/BUILD_NOTES.md`](./docs/BUILD_NOTES.md), and retry without the flag after any
+Turbopack upgrade.
+
+## The simulator
+
+A student places parts on a canvas, wires them, writes code, and runs it. Nothing is
+mocked: the firmware is really compiled, the CPU is really emulated, and the voltages
+come out of a real solver.
+
+**Boards** — Arduino Uno and Mega 2560 (avr8js, Arduino C++) and Raspberry Pi Pico
+(rp2040js, MicroPython). One board runs at a time; two are refused with an explanation,
+because each is its own CPU with its own clock.
+
+**Compilation** is real. `app/api/compile/` runs `avr-gcc`/`cc1plus` compiled to WASM in a
+worker thread against the actual Arduino core sources, and returns Intel HEX plus genuine
+GCC diagnostics. There is no sketch interpreter and no library interception.
+
+**The analog side** is modified nodal analysis. Linear devices stamp conductances;
+nonlinear ones (diodes, LEDs, transistor-class models) are solved by Newton–Raphson with
+gmin stepping. When the circuit holds a reactive element — a capacitor, an inductor, a
+motor or relay winding — the engine additionally steps a backward-Euler transient, with
+the timestep tuned from the circuit's own smallest time constant.
+
+**A circuit needs no microcontroller.** Batteries and a bench supply are first-class
+parts, and `lib/simulator/passive.ts` solves a board-less document, so battery → resistor
+→ LED works and lights.
+
+### Layout
+
+| | |
+|---|---|
+| Part library — art, pins, props, 30 parts | `lib/simulator/model/parts.ts` |
+| Document model, actions, undo | `lib/simulator/model/document.ts` |
+| Netlist + device instantiation | `lib/simulator/model/compile.ts` |
+| Device models (the physics) | `lib/simulator/devices.ts` |
+| MNA solver, Newton, transient stepping | `lib/simulator/solver.ts` |
+| AVR engine · Pico engine | `lib/simulator/engine.ts` · `lib/simulator/pico/engine.ts` |
+| Protocol state machines (DHT11, 1-Wire, SPI, HD44780 …) | `lib/simulator/behavioural.ts` |
+| Board-less DC solve | `lib/simulator/passive.ts` |
+| Canvas + editor UI | `components/simulator/` |
+
+### Tests
+
+There is **no `npm test`**. Each suite is a standalone script that prints a table and
+exits non-zero on failure:
+
+```bash
+npx tsx lib/simulator/__tests__/transient.test.ts
+for f in lib/simulator/__tests__/*.test.ts; do npx tsx "$f"; done   # all of them
+```
+
+20 files, ~3,300 assertions. The house style is that **expected values are derived by
+hand from theory, never captured from the engine's own output** — a test that records
+what the code currently does proves only that it still does it.
+`transient.test.ts` and `lcd.test.ts` are the ones to read before writing a new suite.
+
+Two guards worth knowing about, both written after real bugs:
+
+- `lib/simulator/model/prop-reachability.ts` fails the build when a part declares a
+  property that never reaches the solver. The LED colour table sat complete in `parts.ts`
+  while `compile.ts` never read it, so every LED solved as red.
+- Several suites render the real canvas and assert on the emitted SVG, then assert the
+  *same* state with one input changed produces different pixels. Correct data that
+  nothing reads looks identical to working code until you check the output.
 
 ## Where things live
 
@@ -47,11 +129,17 @@ Sign out and back in — you will land on `/admin`.
 |---|---|
 | **Project context, owner's aims, hard-won lessons** | [`PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md) — **read this first** |
 | Design system | [`DESIGN.md`](./DESIGN.md) |
+| Build gotchas | [`docs/BUILD_NOTES.md`](./docs/BUILD_NOTES.md) |
+| What our parts can do | [`OUR_DEVICE_CAPABILITIES.md`](./OUR_DEVICE_CAPABILITIES.md) |
+| Tinkercad feature comparison | [`TINKERCAD_DEVICE_PARITY.md`](./TINKERCAD_DEVICE_PARITY.md) |
 | Schema (source of truth) | `supabase/migrations/` |
 | DB types (must mirror migrations) | `types/database.ts` |
 | Auth + route protection | `proxy.ts` (Next 16 exports middleware as `proxy`) |
 | Server actions | `lib/actions/` |
 | Supabase clients | `lib/supabase/` — `server`, `client`, `admin` (service role) |
+
+`SIMULATOR_ARCHITECTURE.md` is design intent, not an as-built record — it describes
+things that were never implemented. Trust the code.
 
 ## Access model
 
@@ -63,3 +151,7 @@ Route access is enforced in each route group's `layout.tsx`. Data access is enfo
 RLS — including content, which is gated on an active enrollment in a class that has the
 parent lab assigned (`013_gate_content_on_enrollment.sql`). Quiz answer keys are
 protected by column-level grants and are readable only through the service-role client.
+
+**Do not revoke `EXECUTE` on the RLS helper functions.** Supabase's advisor flags them;
+revoking breaks every gated read with `42501`, because policy expressions are evaluated
+against the invoking role's privileges. Migration 014's comment block explains it.
