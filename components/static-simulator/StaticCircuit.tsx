@@ -6,6 +6,7 @@ import { COMPONENT_DEFINITIONS } from './utils/componentDefinitions'
 import { getSchematicDimensions, getSchematicPinCoords } from './utils/schematicLayout'
 import { ComponentSVGs } from './ComponentSVGs'
 import { Wire } from './features/Wire'
+import { IDLE_FRAME, type ShowreelFrame } from './showreel/useShowreel'
 
 /**
  * A read-only drawing of one experiment's circuit.
@@ -26,6 +27,15 @@ import { Wire } from './features/Wire'
  * handlers on this tree at all, so there is nothing to accidentally re-enable
  * and nothing that can mutate the circuit. The component takes an Experiment
  * and renders it; it holds no state.
+ *
+ * IT DOES NOT HOLD A CLOCK EITHER. The `frame` prop is what makes the picture
+ * move — which pins are high, what the sensors read, which properties are
+ * overridden at this instant — and it is produced by useShowreel in the panel
+ * above, so that the artwork, the serial log and the elapsed timer are three
+ * views of one index and cannot drift apart. Omit `frame` and the circuit
+ * draws inert, exactly as it did before any of this existed.
+ *
+ * `frame` is scripted playback, not simulation. See showreel/timelines.ts.
  */
 
 /* ── Geometry, transcribed from upstream ──────────────────────────────── */
@@ -172,10 +182,13 @@ export function StaticCircuit({
   experiment,
   viewMode = 'breadboard',
   className = '',
+  frame = IDLE_FRAME,
 }: {
   experiment: Experiment
   viewMode?: 'breadboard' | 'schematic'
   className?: string
+  /** The current instant of the scripted playback. Defaults to everything off. */
+  frame?: ShowreelFrame
 }) {
   const { components, wires } = useMemo(() => normaliseCircuit(experiment), [experiment])
 
@@ -211,17 +224,28 @@ export function StaticCircuit({
         ? getSchematicDimensions(comp.type)
         : { width: meta?.width ?? 60, height: meta?.height ?? 40 }
 
+    // A few parts (the button cap, the relay's own flag) are drawn from
+    // `properties` rather than from a pin. The override is layered on a copy;
+    // EXPERIMENTS is a module-level constant and must not be written to.
+    const overrides = frame.propertiesFor(comp.id)
+    const instance = overrides
+      ? { ...comp, properties: { ...comp.properties, ...overrides } }
+      : comp
+
     return (
       <g
         key={comp.id}
         transform={`translate(${comp.x}, ${comp.y}) rotate(${comp.rotation} ${dims.width / 2} ${dims.height / 2})`}
       >
         <ComponentSVGs
-          instance={comp}
+          instance={instance}
           viewMode={viewMode}
-          // No circuit is energised in a static view, so every pin reads
-          // inactive and every LED, relay and bulb draws in its off state.
-          isPinActive={() => false}
+          // Both are asked for: the ported artwork reads some parts as a
+          // logic level and others as a voltage, and they have to agree.
+          isPinActive={(pinId) => frame.isPinHigh(comp.id, pinId)}
+          getPinVoltage={(pinId) => frame.pinVoltage(comp.id, pinId)}
+          sensorValues={frame.sensors}
+          rawPinStates={frame.rawPinStates}
         />
 
         {/* Upstream also drew a pin layer here — visible breadboard holes plus

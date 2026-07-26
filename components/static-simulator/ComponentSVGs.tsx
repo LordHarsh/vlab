@@ -923,9 +923,24 @@ export const ComponentSVGs: React.FC<ComponentRendererProps> = ({
           {/* Circular housing */}
           <circle cx={20} cy={20} r={14} fill="#D1D5DB" />
           
-          {/* Tactile plunger switch */}
-          <circle cx={20} cy={20} r={10} fill={properties.pressed ? '#DC2626' : '#EF4444'} className="active:scale-95 transition-transform" />
-          
+          {/* Tactile plunger switch.
+              PORT DEVIATION: upstream's pressed state was #DC2626 against
+              #EF4444 — two reds a few per cent apart, which at this size is
+              not a visible press at all. The cap now sinks as well as
+              darkens, which is the one part of this component that really
+              does move. */}
+          <circle
+            cx={20}
+            cy={20}
+            r={properties.pressed ? 7.5 : 10}
+            fill={properties.pressed ? '#B91C1C' : '#EF4444'}
+            className="active:scale-95 transition-transform"
+            style={{ transition: 'r 70ms ease-out, fill 70ms ease-out' }}
+          />
+          {properties.pressed && (
+            <circle cx={20} cy={20} r={10} fill="none" stroke="#7F1D1D" strokeWidth={1.5} />
+          )}
+
           {/* Corner legs */}
           <rect x={-3} y={8} width={6} height={6} fill="#94A3B8" rx={1} />
           <rect x={-3} y={26} width={6} height={6} fill="#94A3B8" rx={1} />
@@ -1004,8 +1019,32 @@ export const ComponentSVGs: React.FC<ComponentRendererProps> = ({
           {/* Crystal Oscillator component */}
           <rect x={41} y={4} width={8} height={12} fill="#94a3b8" rx={1} />
 
+          {/* PORT ADDITION: the burst leaving the transmitter while TRIG is
+              being pulsed. Upstream drew nothing for it, so the sensor at the
+              centre of experiments 2 and 11 never looked like it was doing
+              anything. Purely cosmetic — it draws when the pin is high. */}
+          {isPinActive('trig') && (
+            <g stroke="#7dd3fc" strokeWidth={1.5} fill="none" opacity={0.85}>
+              <path d="M 8 16 A 12 12 0 0 0 8 34" />
+              <path d="M 3 10 A 18 18 0 0 0 3 40" />
+            </g>
+          )}
+
           {/* Pins labels */}
           <text x={45} y={42} fill="#93c5fd" fontSize={6} textAnchor="middle">HC-SR04</text>
+
+          {/* PORT ADDITION: the measured range. The HC-SR04 has no display of
+              its own, and without one the only thing a distance can change on
+              this artwork is nothing at all. Sits under the board so no
+              existing element moves. */}
+          {typeof sensorValues.distance === 'number' && (
+            <g>
+              <rect x={20} y={53} width={50} height={14} fill="#0f172a" stroke="#1e3a8a" strokeWidth={1} rx={3} />
+              <text x={45} y={63} fill="#7dd3fc" fontSize={8} fontFamily="monospace" fontWeight="bold" textAnchor="middle">
+                {sensorValues.distance} cm
+              </text>
+            </g>
+          )}
         </g>
       );
 
@@ -1055,26 +1094,51 @@ export const ComponentSVGs: React.FC<ComponentRendererProps> = ({
         </g>
       );
 
-    case 'yf_s201':
+    case 'yf_s201': {
+      const flowRate = typeof sensorValues.flowRate === 'number' ? sensorValues.flowRate : null;
+      const isFlowing = flowRate !== null && flowRate > 0;
+
       return (
         <g>
           {/* Black plastic circular impeller body */}
           <circle cx={35} cy={35} r={30} fill="#1e293b" stroke="#0f172a" strokeWidth={2} />
-          
+
           {/* Flanges for pipe connectors */}
           <rect x={-8} y={23} width={12} height={24} fill="#0f172a" rx={1} />
           <rect x={66} y={23} width={12} height={24} fill="#0f172a" rx={1} />
 
-          {/* Rotor spinning effect if flow rate active */}
-          <g transform={`rotate(${sensorValues.flowRate > 0 ? (Date.now() / 5) % 360 : 0} 35 35)`}>
+          {/* PORT DEVIATION: upstream turned this rotor with `Date.now()` read
+              during render, which only moved when something else happened to
+              re-render — and differed between the server's HTML and the
+              client's first paint. It is a CSS animation now: genuinely
+              smooth, no timer, no hydration mismatch, and switched off with
+              the rest of them under prefers-reduced-motion.
+
+              The period is a DISPLAY MAPPING, not a measurement: more litres a
+              minute, faster wheel. It is not what a 450-pulse-per-litre hall
+              rotor really does at this scale, and it is not meant to be. */}
+          <g
+            className={isFlowing ? 'flow-rotor spin-cw' : 'flow-rotor'}
+            style={isFlowing ? { animationDuration: `${Math.max(0.18, 1.6 / flowRate).toFixed(2)}s` } : undefined}
+          >
             <circle cx={35} cy={35} r={18} fill="none" stroke="#64748b" strokeWidth={2} strokeDasharray="6,8" />
             <line x1={35} y1={17} x2={35} y2={53} stroke="#64748b" strokeWidth={2} />
             <line x1={17} y1={35} x2={53} y2={35} stroke="#64748b" strokeWidth={2} />
           </g>
 
           <text x={35} y={15} fill="#94a3b8" fontSize={6} textAnchor="middle" fontWeight="bold">YF-S201</text>
+
+          {/* PORT ADDITION: the rate itself. A wheel that turns tells you there
+              is flow but never how much, and the sketch's whole subject is the
+              number. */}
+          {flowRate !== null && (
+            <text x={35} y={58} fill="#7dd3fc" fontSize={7} fontFamily="monospace" fontWeight="bold" textAnchor="middle">
+              {flowRate.toFixed(1)} L/min
+            </text>
+          )}
         </g>
       );
+    }
 
     case 'relay':
       return <RelayModule instance={instance} signalNodeId={`${instance.id}/in`} rawPinStates={rawPinStates} />;

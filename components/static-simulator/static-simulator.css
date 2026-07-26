@@ -632,3 +632,69 @@
   filter: drop-shadow(0px 0px 20px #ffea00) !important;
   transition: all 0.1s ease-in-out;
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * NOT UPSTREAM — support for the scripted playback in showreel/.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/* The YF-S201 impeller. `transform-box: fill-box` makes `transform-origin:
+   center` mean the centre of THIS group rather than the centre of the whole
+   SVG viewport, which is what lets the existing spin-cw keyframes turn it on
+   the spot. The rotor's own `animation-duration` is set inline from the flow
+   rate — see the yf_s201 case in ComponentSVGs.tsx. */
+.static-sim .flow-rotor {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* The running dot next to "Simulation running". Deliberately not the ported
+   .pulse-glow: that one is tuned for an LED halo inside the dark canvas, and
+   this sits on the white panel chrome. */
+@keyframes showreel-blip {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+}
+
+.static-sim .showreel-blip {
+  animation: showreel-blip 1.4s ease-in-out infinite;
+}
+
+/*
+ * REDUCED MOTION.
+ *
+ * useShowreel stops its clock for this query and holds one representative
+ * frame, but the ported artwork also animates itself through six sets of
+ * keyframes that know nothing about that clock — a frozen circuit with a
+ * still-pulsing LED halo and a still-shaking buzzer is not what was asked
+ * for. They all stop here, in one place, so the whole panel goes quiet
+ * together.
+ *
+ * Nothing is hidden and no state changes: an LED that is lit stays lit, the
+ * relay stays closed. Only the movement stops.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .static-sim .wire-animated,
+  .static-sim .pulse-glow,
+  .static-sim .pin-snap-pulse,
+  .static-sim .buzzer-ringing,
+  .static-sim .motor-spin-cw,
+  .static-sim .spin-cw,
+  .static-sim .motor-spin-ccw,
+  .static-sim .spin-ccw,
+  .static-sim .showreel-blip {
+    animation: none;
+  }
+
+  .static-sim .buzzer-ringing {
+    /* The class also carries a transform and a glow; keep the glow, drop the
+       shake, so an active buzzer still reads as active. */
+    transform: none;
+  }
+}
