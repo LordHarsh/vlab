@@ -26,8 +26,10 @@ import {
   ledBodyFill,
   ledColour,
   ledGlowFill,
+  SUPPLY_READOUT,
   sliderPointFor,
   sliderValueFor,
+  sourceSetting,
   targetConeEdges,
   targetPointFor,
   targetValuesFor,
@@ -1428,6 +1430,30 @@ export function CircuitCanvas({
               const down = Number(part.props[def.momentary.key] ?? momentaryProp.default ?? 0) >= 0.5
               vars[def.momentary.pressedVar] = down ? '1' : '0'
             }
+            /**
+             * A BATTERY PACK THAT LOOKS LIKE THE PACK IT IS.
+             *
+             * `Count` is a real electrical prop — four cells in series is 6.0 V
+             * and one is 1.5 V — so a holder drawn with four cells whatever the
+             * selectbox says would be a picture that contradicts both the
+             * inspector and the solved voltage. Same mechanism as the LED's dome
+             * and the button's pressed cap, for the same reason: the artwork is
+             * shared raw markup and a custom property is the only thing that
+             * reaches into it. Resolved through sourceSetting() rather than by
+             * reading the props again, so the drawing and the matrix cannot
+             * disagree about how many cells there are.
+             */
+            if (def.electrical.kind === 'source' && def.electrical.supply === 'pack') {
+              const set = sourceSetting(def, part.props)
+              for (let cell = 2; cell <= 4; cell++) {
+                vars[`--pack-cell-${cell}`] = cell <= set.count ? '1' : '0.12'
+              }
+              vars['--pack-switch'] = set.switched ? '1' : '0'
+              // The actuator slides to the right when the switch is closed. In
+              // part-local units, which is what an SVG `translateX` in px means
+              // inside a viewBox-less group.
+              vars['--pack-switch-dx'] = set.on ? '12px' : '1px'
+            }
 
             return (
               <g
@@ -1477,6 +1503,20 @@ export function CircuitCanvas({
                     rotation={part.rotation}
                   />
                 )}
+
+                {/* The bench supply's display. Same rule as the motor's plate
+                    and the LCD's glass: only while something is reporting an
+                    operating point. An instrument showing a permanent `0.00 V`
+                    would be claiming a measurement it has not taken. */}
+                {def.electrical.kind === 'source' &&
+                  def.electrical.supply === 'bench' &&
+                  deviceStates?.[part.id] && (
+                    <SupplyReadout
+                      partId={part.id}
+                      state={deviceStates[part.id]}
+                      rotation={part.rotation}
+                    />
+                  )}
 
                 {def.knob && knobProp && (
                   <Knob
@@ -1960,6 +2000,95 @@ function MotorReadout({
         {`${rpm} rpm`}
       </text>
       <title>{`${rpm} rpm — ${note}`}</title>
+    </g>
+  )
+}
+
+// ─── Bench supply display ─────────────────────────────────────────────────────
+
+/**
+ * The supply's two live readings, in its own display window.
+ *
+ * THE TWO NUMBERS ARE NOT THE SAME NUMBER AS THE DIALS, and that is the entire
+ * reason this is drawn from the solve rather than from the props. The voltage
+ * dial says what the regulator is AIMING at; the display says what the terminals
+ * are AT, and they part company in the two cases that matter — a load past the
+ * current limit, and a supply switched off with 12 V still on its dial. A panel
+ * that rendered the setting would be a picture of the knob, not an instrument.
+ *
+ * The current AUTO-RANGES into µA/mA/A, which is what the real part does
+ * (observed on Tinkercad's own supply: `5.00 A`, then `556 µA` after the knob
+ * was turned) and what makes the reading usable at all — a 12 mA circuit shown
+ * as `0.01 A` is a display saying nothing.
+ */
+function SupplyReadout({
+  partId,
+  state,
+  rotation,
+}: {
+  partId: string
+  state: DeviceState
+  /** The part's own rotation, undone so the numbers are never read sideways. */
+  rotation: number
+}) {
+  const r = SUPPLY_READOUT
+  const num = (k: string): number => {
+    const v = state[k]
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0
+  }
+  const on = state.on === true
+  const volts = num('volts')
+  const amps = Math.abs(num('amps'))
+  const limiting = state.limiting === true
+
+  const ampText =
+    amps >= 1
+      ? `${amps.toFixed(2)} A`
+      : amps >= 1e-3
+        ? `${(amps * 1e3).toFixed(amps >= 0.1 ? 0 : 1)} mA`
+        : `${(amps * 1e6).toFixed(0)} µA`
+
+  // Amber in current limit, exactly as the Checks badge is: the supply is
+  // working, it is simply no longer doing what the voltage dial says.
+  const ink = !on ? '#3f6b52' : limiting ? '#f0b429' : '#7bf1a8'
+
+  return (
+    <g
+      data-testid={`supply-readout-${partId}`}
+      pointerEvents="none"
+      transform={`rotate(${-rotation} ${r.volts.x} ${r.volts.y - r.volts.fontSize / 3})`}
+    >
+      <text
+        x={r.volts.x}
+        y={r.volts.y}
+        data-testid={`supply-volts-${partId}`}
+        textAnchor="middle"
+        fontSize={r.volts.fontSize}
+        fontFamily="ui-monospace, monospace"
+        fill={ink}
+      >
+        {on ? `${volts.toFixed(2)} V` : 'OFF'}
+      </text>
+      <text
+        x={r.amps.x}
+        y={r.amps.y}
+        data-testid={`supply-amps-${partId}`}
+        textAnchor="middle"
+        fontSize={r.amps.fontSize}
+        fontFamily="ui-monospace, monospace"
+        fill={ink}
+      >
+        {on ? ampText : ''}
+      </text>
+      <title>
+        {on
+          ? `${volts.toFixed(2)} V at ${ampText}` +
+            (limiting
+              ? ` — in CURRENT LIMIT at ${num('limitAmps').toFixed(2)} A, so this is not the ` +
+                `${num('setVolts').toFixed(2)} V it is set to`
+              : ` — set to ${num('setVolts').toFixed(2)} V`)
+          : `Output off. Set to ${num('setVolts').toFixed(2)} V.`}
+      </title>
     </g>
   )
 }

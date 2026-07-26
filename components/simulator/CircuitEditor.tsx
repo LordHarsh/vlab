@@ -32,6 +32,7 @@ import {
 } from '@/lib/simulator/model/code'
 import { useSketchCompile } from './useSketchCompile'
 import { compile } from '@/lib/simulator/model/compile'
+import { hasNoBoard, solvePassive } from '@/lib/simulator/passive'
 import {
   FARAD_UNITS,
   HENRY_UNITS,
@@ -42,6 +43,7 @@ import {
   formatValueUnit,
   getPart,
   parseValueUnit,
+  selectOptionLabel,
   splitValueUnit,
   type BoardType,
   type PartDefinition,
@@ -633,13 +635,11 @@ function PropControl({
         onChange={(e) => onChange(Number(e.target.value))}
         className={`${FIELD} w-full`}
       >
+        {/* The label rule lives in parts.ts beside the other formatting, so it
+            can be asserted without mounting anything — see selectOptionLabel. */}
         {prop.options?.map((o) => (
           <option key={o} value={o}>
-            {o === 0
-              ? 'none (wire)'
-              : o >= 1000
-                ? `${o / 1000} k${prop.unit}`
-                : `${o} ${prop.unit}`}
+            {selectOptionLabel(o, prop.unit)}
           </option>
         ))}
       </select>
@@ -704,6 +704,47 @@ function describeDevice(def: PartDefinition, s: DeviceState): Readout {
           ? `steady ${volts.toFixed(2)} V across it — a piezo only sounds when that voltage changes (tone(), not digitalWrite())`
           : `${volts.toFixed(2)} V across it — not enough to drive it`,
     }
+  }
+
+  if (el.kind === 'source') {
+    const volts = num('volts')
+    const amps = num('amps')
+    const setVolts = num('setVolts')
+    const current = Math.abs(amps) >= 1 ? `${amps.toFixed(2)} A` : `${(amps * 1000).toFixed(1)} mA`
+
+    if (s.on !== true) {
+      return {
+        headline: 'switched off',
+        detail: `${setVolts.toFixed(2)} V is still in there — the switch is what is open`,
+      }
+    }
+    if (s.connected !== true) {
+      // Open circuit. The terminal voltage IS the set voltage, and saying so is
+      // more use than a bare "not connected": it is what a meter across the
+      // posts of an unwired battery would actually read.
+      return { headline: `${volts.toFixed(2)} V`, detail: 'open circuit — nothing is drawing from it' }
+    }
+    if (s.limiting === true) {
+      return {
+        headline: `${current} — current limited`,
+        detail:
+          `holding ${num('limitAmps').toFixed(2)} A, so its terminals are at ` +
+          `${volts.toFixed(2)} V instead of the ${setVolts.toFixed(2)} V it is set to`,
+      }
+    }
+    /**
+     * The droop, spelled out, because it is the lesson. A 6 V pack reading
+     * 5.96 V is not a rounding error and is not a bug — it is i·R across the
+     * cells' own internal resistance, and it is the first thing internal
+     * resistance ever does that a student can see.
+     */
+    const droop = setVolts - volts
+    const sag =
+      droop > 0.005
+        ? ` · ${(droop * 1000).toFixed(0)} mV below its ${setVolts.toFixed(2)} V open-circuit ` +
+          `voltage, dropped across its own internal resistance`
+        : ''
+    return { headline: `${volts.toFixed(2)} V · ${current}`, detail: `${String(s.cellLabel)}${sag}` }
   }
 
   if (el.kind === 'motor') {
@@ -1141,6 +1182,11 @@ const REPORTS_STATE = new Set([
   // The display. Its row is the only place a student can read the four
   // different reasons a blank screen is blank.
   'character_lcd',
+  // Every power source. Its row carries the one comparison the part exists to
+  // make — what it is SET to against what its terminals are actually at — which
+  // is how a 6 V pack sagging to 5.96 V under load, or a supply that has fallen
+  // out of constant voltage, becomes visible instead of mysterious.
+  'source',
 ])
 
 /**
@@ -2002,20 +2048,56 @@ export function CircuitEditor({
    */
   const compiled = useMemo(() => compile(doc), [doc])
   const netOf = compiled.netOf
+
+  /**
+   * A DOCUMENT WITH NO MCU IN IT, SOLVED HERE — the whole reason batteries are
+   * worth having.
+   *
+   * Neither engine can run without a CPU (see passive.ts), so until this existed
+   * a battery-resistor-LED circuit reached no solver at all: the LED stayed
+   * dark, Measurements stayed empty, and a shorted coin cell raised nothing. The
+   * document already had to be compiled on this thread for pin-hover
+   * highlighting, so the whole addition is one `solve()`.
+   *
+   * NOT gated on the Start button, deliberately, and it is the one place this
+   * editor departs from "a stopped part and an un-run circuit are not the same
+   * thing". There is nothing to start: no firmware to load, no clock to advance,
+   * no program whose first line has not run yet. What is on the canvas IS the
+   * circuit, its operating point is a property of the drawing, and a Start
+   * button that only made the answer appear would be theatre.
+   *
+   * Withheld when the document has boards it merely cannot RUN — two Unos, say.
+   * `sim.track === 'none'` covers that case too, and passively energising rails
+   * belonging to boards the editor has just refused to run would contradict the
+   * message next to it.
+   */
+  const passive = useMemo(
+    () => (hasNoBoard(doc) ? solvePassive(doc, compiled) : null),
+    [doc, compiled],
+  )
+
   const usingLocalCompile = sim.track === 'none' || (!ready && !running)
   const problems = usingLocalCompile ? compiled.problems : snapshot.problems
-  const limitations = usingLocalCompile ? compiled.limitations : snapshot.limitations
+  const limitations = passive
+    ? passive.limitations
+    : usingLocalCompile
+      ? compiled.limitations
+      : snapshot.limitations
   const unknowns = usingLocalCompile ? compiled.unknowns : snapshot.unknowns
+  const faults = passive ? passive.faults : snapshot.faults
+  const solveError = passive ? passive.solveError : snapshot.solveError
+  const deviceStates = passive ? passive.deviceStates : snapshot.deviceStates
+  const currents = passive ? passive.currents : snapshot.currents
 
   const ledBrightness = useMemo(
-    () => new Map(Object.entries(snapshot.ledBrightness)),
-    [snapshot.ledBrightness],
+    () => new Map(Object.entries(passive ? passive.ledBrightness : snapshot.ledBrightness)),
+    [passive, snapshot.ledBrightness],
   )
 
   const selectedPart = doc.parts.find((p) => p.id === selected) ?? null
   const selectedDef = selectedPart ? getPart(selectedPart.type) : null
 
-  const readings = Object.entries(snapshot.currents)
+  const readings = Object.entries(currents)
   const highPins = Object.entries(snapshot.pins).filter(([, d]) => d === 'high')
 
   /**
@@ -2028,13 +2110,13 @@ export function CircuitEditor({
   const deviceRows = useMemo(() => {
     const rows: Array<{ id: string; label: string } & Readout> = []
     for (const part of doc.parts) {
-      const state = snapshot.deviceStates[part.id]
+      const state = deviceStates[part.id]
       const def = PART_LIBRARY[part.type]
       if (!state || !def) continue
       rows.push({ id: part.id, label: def.label, ...describeDevice(def, state) })
     }
     return rows
-  }, [doc.parts, snapshot.deviceStates])
+  }, [doc.parts, deviceStates])
 
   /**
    * Whether the panel is worth showing at all. A board of LEDs and resistors has
@@ -2381,7 +2463,7 @@ export function CircuitEditor({
             doc={doc}
             dispatch={dispatch}
             ledBrightness={ledBrightness}
-            deviceStates={snapshot.deviceStates}
+            deviceStates={deviceStates}
             netOf={netOf}
             selected={selected}
             onSelect={selectPart}
@@ -2811,12 +2893,12 @@ export function CircuitEditor({
                 {sim.problem}
               </p>
             )}
-            {snapshot.solveError && (
-              <p className="text-xs text-red-600 mb-2">Solver: {snapshot.solveError}</p>
+            {solveError && (
+              <p className="text-xs text-red-600 mb-2">Solver: {solveError}</p>
             )}
-            {snapshot.faults.length > 0 && (
+            {faults.length > 0 && (
               <ul className="space-y-2 mb-3" data-testid="faults">
-                {snapshot.faults.map((f, i) => {
+                {faults.map((f, i) => {
                   // A 'caution' part is stressed but alive; a 'destructive' one is
                   // gone. Amber vs the existing red so the two read apart at a
                   // glance — the wording already differs, this is colour only.
@@ -2845,15 +2927,26 @@ export function CircuitEditor({
               </ul>
             )}
             {problems.length === 0 &&
-            !snapshot.solveError &&
-            snapshot.faults.length === 0 &&
+            !solveError &&
+            faults.length === 0 &&
             /*
-             * A board — any board — has had its document compiled, either in
-             * the worker or here. Only a document with NO board has been
-             * checked by nothing, and that is the one case where silence must
-             * not be read as a clean bill of health.
+             * WHAT HAS ACTUALLY BEEN CHECKED, which is no longer the same
+             * question as "is there a board".
+             *
+             * This used to read `sim.track !== 'none'`, on the grounds that a
+             * board-less document had been checked by nothing and silence over
+             * it must not be read as a clean bill of health. That was exactly
+             * right at the time and is now wrong for the commonest board-less
+             * document there is: a battery, a resistor and a lamp HAS been
+             * compiled and HAS been solved, right here (see `passive`), faults
+             * and all. Withholding the all-clear from a circuit that has passed
+             * every check we have would tell the student their working circuit
+             * is somehow suspect.
+             *
+             * The two-board case keeps the old behaviour, and keeps it for the
+             * old reason: it has boards, it is not run, and nothing solved it.
              */
-            sim.track !== 'none' ? (
+            (passive !== null || sim.track !== 'none') ? (
               <p className="text-xs text-green-700">No problems detected.</p>
             ) : (
               <ul className="space-y-1.5">

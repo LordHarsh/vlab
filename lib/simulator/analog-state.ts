@@ -25,10 +25,10 @@
 
 import { ULN2003, type ReactiveDevice } from './devices'
 import type { DeviceState } from './behavioural'
-import type { CompiledNet, DriverChannels } from './model/compile'
+import type { CompiledNet, CompiledSource, DriverChannels } from './model/compile'
 import type { CircuitDoc } from './model/document'
 import { pinKeyOf } from './model/document'
-import { getPart, potentiometerLegs, variableResistorOhms } from './model/parts'
+import { getPart, potentiometerLegs, sourceSetting, variableResistorOhms } from './model/parts'
 import type { NetId } from './types'
 
 /**
@@ -48,6 +48,26 @@ const SETTLED_AMPS = 1e-9
  * solver resolves meaningfully and far above its numerical floor.
  */
 const SETTLED_VOLTS = 1e-6
+
+/**
+ * How bright an LED passing `amps` looks, 0…1.
+ *
+ * PERCEPTUAL, not linear: eye response to luminous flux is roughly a power law,
+ * and a straight `i / 0.02` makes an LED at a third of full current — which on a
+ * bench is plainly lit — render at 33 % opacity and read as off.
+ *
+ * ONE COPY, and that is the change. This literal was written out four separate
+ * times (twice in each engine's publish/averaging pair), which is four chances
+ * for the curve to be adjusted in one place and not the others — and the symptom
+ * would be that an LED on an Uno and the same LED on a Pico glow differently at
+ * the same current, with nothing on screen to say why. The passive path for a
+ * circuit with no MCU in it is a fifth caller and the reason this could not stay
+ * copied any longer.
+ */
+export function ledBrightnessFor(amps: number): number {
+  const i = Math.max(amps, 0)
+  return Math.min(1, Math.pow(i / 0.02, 0.45))
+}
 
 export interface AnalogStateInputs {
   doc: CircuitDoc
@@ -71,6 +91,19 @@ export interface AnalogStateInputs {
    * second copy of the decision.
    */
   drivers: Map<string, DriverChannels>
+  /**
+   * Part id → the source it was stamped as, from the same compile.
+   *
+   * Here for the same reason `drivers` is: the numbers a supply reports are not
+   * recoverable from the node voltages alone. The delivered CURRENT lives in a
+   * branch unknown, whether the supply is in current limit is a property of the
+   * segment its last solve landed on, and a switched-off pack's dial setting is
+   * not in the matrix at all — its stamped EMF is 0. Re-deriving any of that
+   * here would be a second copy of sourceSetting() and of RegulatedSupply's own
+   * decision, which is how a panel starts describing a circuit that is not the
+   * one being solved.
+   */
+  sources: Map<string, CompiledSource>
   /** True while the engine is integrating in time rather than solving DC. */
   transient: boolean
 }
@@ -249,6 +282,51 @@ export function analogDeviceStates(inp: AnalogStateInputs): Record<string, Devic
         // conducts exponentially — so the word is about which WAY it is biased,
         // which is the thing a student wired it backwards to discover.
         biased: volts > 0 ? 'forward' : volts < 0 ? 'reverse' : 'none',
+      }
+      continue
+    }
+
+    /**
+     * A POWER SOURCE, which is the one part on this canvas whose readout is the
+     * whole point of the part.
+     *
+     * Two numbers matter and they are not the same number: what the source is
+     * SET to, and what its terminals are actually AT. A bench supply on 12 V
+     * whose current limit has engaged sits at 1 V; a battery pack sags under
+     * load; a switched-off pack has 6 V of chemistry in it and 0 V across its
+     * posts. Reporting only one of them is how a display comes to disagree with
+     * the circuit it is bolted to, which is exactly the confusion a supply's own
+     * front panel exists to remove.
+     */
+    if (el.kind === 'source') {
+      const source = inp.sources.get(part.id)
+      const p = voltageOf(inp, live, part.id, el.pos)
+      const n = voltageOf(inp, live, part.id, el.neg)
+      const connected = source !== undefined && p !== undefined && n !== undefined
+      const set = source?.setting ?? sourceSetting(def, part.props)
+      // The delivered current: signed positive out of the positive terminal by
+      // both devices, so the panel never has to know which one it is looking at.
+      const amps = !connected
+        ? 0
+        : source.kind === 'cell'
+          ? source.esr.current
+          : source.supply.current
+      out[part.id] = {
+        connected,
+        // Terminal voltage from the SOLVE. An unwired source reports its
+        // open-circuit setting instead, because that is what a meter on its
+        // posts would read and a bare 0.00 V would look like a flat battery.
+        volts: connected ? (p as number) - (n as number) : set.on ? set.setVolts : 0,
+        amps,
+        setVolts: set.setVolts,
+        on: set.on,
+        switched: set.switched,
+        cells: set.count,
+        cellLabel: set.cell?.label ?? 'regulated supply',
+        // Only a bench supply has these; a cell has no second regulation loop.
+        adjustable: set.limitAmps !== null,
+        limitAmps: set.limitAmps ?? 0,
+        limiting: source?.kind === 'supply' ? source.supply.limiting : false,
       }
       continue
     }

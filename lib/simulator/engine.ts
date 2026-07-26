@@ -11,7 +11,7 @@
  */
 
 import { CPU, avrInstruction, AVRTimer, AVRIOPort, AVRUSART, AVRADC } from 'avr8js'
-import { analogDeviceStates } from './analog-state'
+import { analogDeviceStates, ledBrightnessFor } from './analog-state'
 import { SerialTextDecoder } from './serial-text'
 import { chipForDoc, type AvrChip } from './avr/chip'
 import { compile, type CompileResult } from './model/compile'
@@ -880,9 +880,7 @@ export class SimulationEngine {
     const currents: Record<string, number> = {}
     for (const [partId, dev] of this.compiled.meters) currents[partId] = dev.current
     for (const [partId, diode] of this.compiled.leds) {
-      const i = Math.max(diode.current, 0)
-      // Perceptual curve — a linear map makes a dim LED look completely off.
-      brightness[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
+      brightness[partId] = ledBrightnessFor(diode.current)
     }
     this.latest = {
       brightness,
@@ -1030,7 +1028,7 @@ export class SimulationEngine {
     const out: Record<string, number> = {}
     for (const partId of Object.keys(this.latest.brightness)) {
       const i = Math.max(this.avg.get(partId) ?? this.latest.currents[partId] ?? 0, 0)
-      out[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
+      out[partId] = ledBrightnessFor(i)
     }
     return out
   }
@@ -1116,6 +1114,7 @@ export class SimulationEngine {
         voltages: this.voltages,
         reactive: this.compiled.reactive,
         drivers: this.compiled.drivers,
+        sources: this.compiled.sources,
         transient: this.transient,
       }),
       ...this.deviceStates,

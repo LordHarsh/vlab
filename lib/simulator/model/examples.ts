@@ -426,7 +426,7 @@ export const STARTER_DS18B20_PICO: CircuitDoc = {
  * with a common ground, and the stepper's ULN2003 IN1–IN4 on GPIO 17, 27, 22
  * and 5.
  *
- * TWO THINGS IN THE PUBLISHED CIRCUIT DO NOT EXIST ON THIS BOARD, and both are
+ * TWO THINGS IN THE PUBLISHED CIRCUIT ARE NOT PRE-WIRED HERE, and both are
  * recorded rather than quietly fudged:
  *
  *   GPIO23 AND GPIO24 ARE NOT ON A PICO'S HEADER. The published content targets
@@ -439,20 +439,25 @@ export const STARTER_DS18B20_PICO: CircuitDoc = {
  *   GP18, so ENA/IN1/IN2 stay three consecutive pins on the real board. The
  *   MicroPython in pico/experiments.ts uses the same three numbers.
  *
- *   THERE IS NO 12 V SUPPLY, and the starter does not pretend otherwise. The
- *   part library has no bench supply; the only rail on this board above the
- *   3.3 V logic rail is VBUS, the Pico's `5V` pad, which is USB power passed
- *   straight through. That is enough — an L298N needs Vss in 4.5–7 V and Vs at
- *   least VIH + 2.5 = 4.8 V, so 5 V clears both, by 0.2 V in the second case —
- *   and it makes the part's real cost visible instead of hiding it: two
- *   transistors in series drop about 2.55 V, so a motor fed from 5 V through the
- *   bridge sees about 2.44 V. A student who wonders why their motor is limp has
- *   met the L298N, not a bug.
+ *   THE 12 V SUPPLY IS NOT PRE-WIRED, and this note used to say something
+ *   stronger and no longer true: that "there is no bench supply" in the part
+ *   library at all, so the starter settled for VBUS — the Pico's `5V` pad, USB
+ *   power passed straight through. There IS one now (`power_supply`, adjustable
+ *   0–30 V with a current limit), and the student can drag it in and dial 12 V,
+ *   which is what the published circuit asks for.
+ *
+ *   The starter still ships with the motor rail UNWIRED, and that is unchanged
+ *   and deliberate: getting a supply to Vs is part of the exercise, and it is
+ *   the right part to leave open, because wiring a motor supply to Vss is how an
+ *   L298N is destroyed and HBridgeChannel.safety() says so in as many words.
+ *   Either rail teaches something. VBUS at 5 V clears the L298N's minimum by
+ *   0.2 V and leaves the motor about 2.44 V after the bridge's ~2.55 V drop — a
+ *   limp motor, which is the L298N and not a bug. The bench supply at 12 V
+ *   leaves it about 9.4 V, which is the motor the experiment intends.
  *
  * The pre-wired rails carry 3.3 V, the LOGIC rail, exactly as in every other
- * Pico starter. Getting VBUS to the driver is therefore part of the exercise,
- * and it is the right part to leave open: wiring a motor supply to Vss is how an
- * L298N is destroyed, and HBridgeChannel.safety() says so in as many words.
+ * Pico starter — so the motor rail, from whichever source the student picks, is
+ * theirs to run.
  */
 export const STARTER_MOTOR_CONTROL_PICO: CircuitDoc = {
   parts: [

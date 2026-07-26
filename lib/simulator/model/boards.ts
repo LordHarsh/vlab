@@ -127,11 +127,31 @@ export function detectBoard(doc: CircuitDoc): BoardDetection {
 
   if (mcus.length === 1) return { board: BOARDS[mcus[0]], present, problem: null }
   if (mcus.length === 0) {
+    /**
+     * NOT AN ERROR ANY MORE, and the wording had to stop implying it was.
+     *
+     * This sentence used to be the whole answer for a board-less document,
+     * back when a board was the only thing in the library that could push a
+     * current — no MCU meant nothing to run AND nothing to solve. With
+     * batteries and a bench supply on the palette that is no longer true: the
+     * circuit is solved on the main thread (see passive.ts) and its LEDs light.
+     * What is genuinely missing is a place to put CODE, so that is what it
+     * says, and it offers the boards rather than demanding one.
+     */
+    /**
+     * "or", not `listOf`'s "and". The list is a CHOICE of one board, and the
+     * multi-board branch below refuses a document that takes two of them — so
+     * "add an Arduino Uno, an Arduino Mega and a Pico" is advice this same
+     * function would then reject.
+     */
     const names = (Object.keys(BOARDS) as BoardType[]).map((b) => BOARDS[b].label)
+    const choice = `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
     return {
       board: null,
       present,
-      problem: `No microcontroller in the circuit — add ${listOf(names)}.`,
+      problem:
+        `No microcontroller in the circuit, so there is no code to run — the circuit itself ` +
+        `is still solved. Add ${choice} if you want to program it.`,
     }
   }
   /**
