@@ -103,15 +103,30 @@ export interface BoardDetection {
  * first and leaving the other board inert but wired.
  */
 export function detectBoard(doc: CircuitDoc): BoardDetection {
-  const seen = new Set<BoardType>()
+  /**
+   * Count MCU *parts*, not distinct board TYPES.
+   *
+   * This used to collect into a `Set<BoardType>`, which meant two Arduino Unos
+   * collapsed to a single entry and the function reported one valid board and
+   * no problem at all — the exact silent-and-wired outcome the doc comment
+   * above says we refuse to produce. And it hit the commonest way a student
+   * draws two boards: dragging the same one in twice. An Uno beside a Mega was
+   * caught; an Uno beside an Uno was not.
+   *
+   * It was not cosmetic. compile.ts registers MCU pins into `mcuPorts` keyed by
+   * bare pin name, so a second Uno's "D13" overwrote the first's and the engine
+   * drove whichever board happened to come last in `doc.parts`. The other one
+   * sat there looking connected and doing nothing.
+   */
+  const mcus: BoardType[] = []
   for (const part of doc.parts) {
     const el = getPart(part.type).electrical
-    if (el.kind === 'mcu') seen.add(el.board)
+    if (el.kind === 'mcu') mcus.push(el.board)
   }
-  const present = (Object.keys(BOARDS) as BoardType[]).filter((b) => seen.has(b))
+  const present = (Object.keys(BOARDS) as BoardType[]).filter((b) => mcus.includes(b))
 
-  if (present.length === 1) return { board: BOARDS[present[0]], present, problem: null }
-  if (present.length === 0) {
+  if (mcus.length === 1) return { board: BOARDS[mcus[0]], present, problem: null }
+  if (mcus.length === 0) {
     const names = (Object.keys(BOARDS) as BoardType[]).map((b) => BOARDS[b].label)
     return {
       board: null,
@@ -120,21 +135,39 @@ export function detectBoard(doc: CircuitDoc): BoardDetection {
     }
   }
   /**
-   * Two boards, listed by name rather than hardcoded.
+   * More than one board, named and COUNTED rather than hardcoded.
    *
-   * The reason holds even for two boards on the SAME track: an Uno and a Mega
+   * The reason holds even for two boards on the same track: an Uno and a Mega
    * are both avr8js, but they are still two CPUs with two independent clocks,
-   * and one engine advances one of them. Naming the actual pair matters now
-   * that there are three boards and therefore three possible pairs.
+   * and one engine advances one of them. It holds just as hard for two of the
+   * SAME board, which is why the count is spelled out — "This circuit has 2
+   * Arduino Unos" is the sentence a student who dragged one in twice needs, and
+   * naming the type alone would read as though one of them were fine.
    */
+  const count = new Map<BoardType, number>()
+  for (const b of mcus) count.set(b, (count.get(b) ?? 0) + 1)
+  const named = present.map((b) => {
+    const n = count.get(b) ?? 0
+    return n === 1 ? `${article(BOARDS[b].label)} ${BOARDS[b].label}` : `${n} ${BOARDS[b].label}s`
+  })
   return {
     board: null,
     present,
     problem:
-      `This circuit has ${listOf(present.map((b) => `an ${BOARDS[b].label}`))}. ` +
+      `This circuit has ${listOf(named)}. ` +
       `Only one board can run at a time — each is its own CPU with its own ` +
       `clock, and the engine advances one. Remove all but one.`,
   }
+}
+
+/**
+ * "an Arduino Uno", but "a Raspberry Pi Pico".
+ *
+ * The article used to be a hardcoded "an", which was right for both Arduinos
+ * and wrong for the Pico from the day it was added.
+ */
+function article(label: string): string {
+  return /^[aeiou]/i.test(label) ? 'an' : 'a'
 }
 
 /** "a, b and c" — for a problem sentence a student reads. */

@@ -362,6 +362,12 @@ export function compile(doc: CircuitDoc): CompileResult {
     (componentPins.get(dsu.find(pinKeyOf({ partId, pinId }))) ?? 0) >= 2
 
   // ─── Instantiate devices ───
+  /**
+   * How many MCU PARTS the document holds — not how many board types. Two Unos
+   * count as two. See where `mcuPorts` is written below for why the count, not
+   * the variety, is what decides whether the engine gets a watch list.
+   */
+  const mcuPartCount = doc.parts.filter((p) => getPart(p.type).electrical.kind === 'mcu').length
   const mcuPorts = new Map<string, NortonPort>()
   const leds = new Map<string, Diode>()
   const motors = new Map<string, DCMotor>()
@@ -903,7 +909,26 @@ export function compile(doc: CircuitDoc): CompileResult {
            */
           const port = new NortonPort(`${part.id}.${pin.id}`, 0, n, 1e-8, 0)
           circuit.add(port)
-          mcuPorts.set(pin.id, port)
+          /**
+           * Keyed by BARE pin name, which is correct only because exactly one
+           * MCU may run — both engines look these up as "D13"/"GP15" while
+           * mapping a CPU port-and-bit onto a pad, and they have no part id to
+           * qualify it with.
+           *
+           * So a document holding two MCUs registers NONE of them. It used to
+           * register both, and since the key omits the part the second Uno's
+           * "D13" silently replaced the first's: the engine then drove
+           * whichever board sorted last in `doc.parts` and left the other one
+           * wired, powered and inert, with nothing on screen saying why.
+           * detectBoard() refuses such a document, so nothing can run either
+           * way — but an empty map is the honest representation of "no board
+           * is being driven", and it cannot be mistaken for a working one.
+           *
+           * The NortonPorts themselves are still stamped for every MCU, because
+           * the analog solve needs each pad's pull-up/pull-down regardless of
+           * which CPU is running. Only the engine's watch list is withheld.
+           */
+          if (mcuPartCount === 1) mcuPorts.set(pin.id, port)
           pinNets.set(pin.id, n)
           if (pin.type === 'analog') analogNets.set(pin.id, n)
         } else if (pin.id === '5V' || pin.id === '3.3V') {
