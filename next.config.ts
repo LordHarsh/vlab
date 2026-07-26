@@ -42,21 +42,16 @@ const nextConfig: NextConfig = {
     '/api/compile': ['**/.cache/avr/*.tar.bz2', '**/.cache/avr/*.tgz'],
   },
 
-  /**
-   * Deep links into the vendored colleague simulator (public/vendor-sim).
+  /* NOTE, not a doc comment for `experimental` below:
+   * there is no `rewrites()` here any more.
    *
-   * It is a Vite SPA using react-router's BrowserRouter, so `/vendor-sim/simulator/3`
-   * is a client-side route with no file behind it. Without this rewrite Next
-   * answers 404 and the iframe shows nothing.
-   *
-   * Returning a bare array puts this in the `afterFiles` phase, which is what
-   * makes it safe: real files under public/ are matched FIRST, so the hashed
-   * bundles in /vendor-sim/assets/ still serve as themselves and only paths with
-   * no file behind them fall through to index.html.
+   * It existed to serve the colleague simulator as a pre-built Vite SPA under
+   * /vendor-sim, iframed into the lesson page. That approach is gone: the
+   * simulator is now a native port under components/static-simulator, rendered
+   * inside our own React tree, so there is no second bundle to host, no
+   * client-side router to rescue from 404s, and no iframe. public/vendor-sim
+   * and scripts/build-vendor-simulator.mjs were deleted with it.
    */
-  async rewrites() {
-    return [{ source: '/vendor-sim/:path*', destination: '/vendor-sim/index.html' }]
-  },
 
   experimental: {
     serverActions: {

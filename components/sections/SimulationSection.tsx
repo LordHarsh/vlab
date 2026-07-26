@@ -6,7 +6,35 @@ import { PlayCircle, ExternalLink, LogIn, Loader2, MonitorPlay, AlertTriangle } 
 import { SIM_REGISTRY } from '@/components/simulations'
 import { FullscreenGate } from '@/components/simulator/FullscreenGate'
 
-export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | (string & {})
+export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | 'static' | (string & {})
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────
+ * THE SWITCH. One line, and it is the only one.
+ *
+ * This app now has TWO circuit simulators and nobody has said which one a
+ * student should meet:
+ *
+ *   • components/simulator      — ours. avr8js + an MNA solver, 30 parts, a
+ *     real compile/run loop, autosave into sim_attempts, 3,309 passing
+ *     assertions. Interactive. Rendered for sections of type `native`.
+ *   • components/static-simulator — the port of a colleague's simulator. A
+ *     read-only drawing of the circuit plus a read-only code listing, for all
+ *     twelve experiments. Rendered for sections of type `static`.
+ *
+ * They are not substitutes: one is a workbench, the other is a figure in a
+ * textbook. Defaulting to `false` therefore means ALONGSIDE — nothing about
+ * any existing section changes, and the ported view appears only where a
+ * simulations row is explicitly typed `static`. No migration ships with this;
+ * no row is `static` yet, so today this renders for nobody.
+ *
+ * Flip to `true` and every `native` section renders the read-only port
+ * INSTEAD of our editor, everywhere at once. That is the "replace" answer,
+ * and it is a content decision, not a code one — which is why it is a single
+ * boolean here rather than a guess spread through the file.
+ * ────────────────────────────────────────────────────────────────────────────
+ */
+const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = false
 
 /**
  * The native circuit editor is lazy-loaded with `ssr: false` so the heavy
@@ -26,6 +54,25 @@ const NativeCircuitEditor = dynamic(
 )
 
 /**
+ * The ported read-only simulator, code-split for the same reason as the editor
+ * above: its part artwork and the twelve circuit definitions are ~4,000 lines
+ * that no text, quiz or Tinkercad section should have to download.
+ *
+ * SSR is left ON, unlike the editor. This one is a static drawing with no
+ * browser-only API on its render path, so it can be server-rendered — which
+ * means the circuit is in the HTML rather than appearing a beat after
+ * hydration.
+ */
+const StaticSimulator = dynamic(
+  () => import('@/components/static-simulator/StaticSimulator').then((m) => m.StaticSimulator),
+  {
+    loading: () => (
+      <SimNotice heading="Loading circuit diagram…" body="Preparing the reference circuit." />
+    ),
+  },
+)
+
+/**
  * Dispatches a simulation section to the right renderer.
  *
  *  - `tinkercad` — the Tinkercad embed below, untouched. Migration 015 calls it
@@ -33,6 +80,8 @@ const NativeCircuitEditor = dynamic(
  *    yet cover"; it must never be removed.
  *  - `builtin`   — one of the in-app simulations keyed by `config.sim_type`.
  *  - `native`    — the native circuit editor. Not wired into sections yet.
+ *  - `static`    — the ported read-only circuit + code view. See THE SWITCH
+ *    above for how this relates to `native`.
  */
 export function SimulationSection({
   type = 'tinkercad',
@@ -73,6 +122,10 @@ export function SimulationSection({
 }) {
   if (type === 'builtin') {
     return <BuiltinSimulation simType={simType} title={title} platform={platform} />
+  }
+
+  if (type === 'static' || (type === 'native' && NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR)) {
+    return <StaticSimulator experimentSlug={experimentSlug} title={title} />
   }
 
   if (type === 'native') {

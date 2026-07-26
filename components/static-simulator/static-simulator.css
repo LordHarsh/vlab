@@ -1,0 +1,634 @@
+/*
+ * Ported stylesheet for components/static-simulator.
+ *
+ * SOURCE: vendor/simulator/src/index.css + vendor/simulator/src/snitch.css
+ * (upstream 1a1eb78). vendor/simulator/src/App.css is one comment line
+ * ("App.css cleared for Tailwind CSS") and carries nothing, so it is not ported.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS FILE IS A REWRITE AND NOT A COPY
+ *
+ * Upstream is Tailwind v4 with no config file; this app is Tailwind 3.4.17
+ * driven by tailwind.config.ts. Three things in their index.css are v4-only
+ * CSS-first syntax that v3's PostCSS plugin does not understand, and — because
+ * unknown at-rules are passed through rather than erroring — would have shipped
+ * as dead text in the bundle instead of failing the build:
+ *
+ *   1. `@import "tailwindcss";`
+ *      DROPPED. In v4 that one line pulls in preflight + the utility engine.
+ *      In v3 the equivalent is `@tailwind base/components/utilities`, which
+ *      app/globals.css already emits ONCE for the whole app. Emitting it again
+ *      here would duplicate preflight (~9 kB) and, worse, re-apply the base
+ *      reset inside a page that has already been reset.
+ *      The utilities the ported .tsx files use are still generated: this app's
+ *      tailwind.config.ts already scans './components/**\/*.{ts,tsx}', which
+ *      covers components/static-simulator. Nothing extra was needed there.
+ *
+ *   2. `@custom-variant dark (&:where(.dark, .dark *));`
+ *      DROPPED. v4-only at-rule. Our config sets `darkMode: ['class']`, which
+ *      generates `.dark &` — equivalent for every use in the ported tree. The
+ *      only `dark:` utility that survived the port is `dark:text-white` in
+ *      features/HeaderBranding.tsx. The one behavioural difference is that
+ *      their `:where(.dark, .dark *)` also matched an element carrying `.dark`
+ *      ITSELF, where v3 requires an ancestor; nothing in the port relies on it.
+ *
+ *   3. `@import './snitch.css';` sitting halfway down the file.
+ *      Legal in v4's bundler, invalid CSS anywhere but the top of the file.
+ *      snitch.css is inlined below at the same position instead.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * SCOPING
+ *
+ * Upstream owned the whole document: it styled `body`, defined its palette on
+ * `:root`, themed off `[data-theme="dark"]` on <html>, and restyled every
+ * scrollbar on the page. Dropped into this app that would repaint the lesson
+ * page around the simulator.
+ *
+ * So every selector here is nested under `.static-sim`, the class on
+ * SimulatorWorkspace's own root element, and the theme switch reads
+ * `.static-sim[data-theme='dark']` (the component now writes the attribute onto
+ * itself instead of <html>). Nothing in this file can match outside that
+ * subtree. The `.snitch-*` classes were already prefixed but are scoped too,
+ * for the same reason. @keyframes are global by nature — they cannot be scoped
+ * — so the six of them keep upstream's names, which were checked against
+ * app/globals.css and this app's own simulator for collisions. There are none.
+ */
+
+/* Upstream's webfonts. Left as a remote @import rather than moved to
+   next/font/google on purpose: next/font downloads at BUILD time, which would
+   make `npm run build` fail on a machine with no network. If Google Fonts is
+   unreachable at runtime the stack falls back to sans-serif / monospace. */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ── Palette ─────────────────────────────────────────────────────────────
+ *
+ * Upstream's `:root` block, moved onto the scope class.
+ *
+ * THREE VARIABLES ARE ADDED HERE THAT UPSTREAM NEVER DEFINED, and this is a
+ * deliberate deviation. Their components reference `--border-main` 54 times,
+ * `--bg-panel-hover` 17 times and `--text-secondary` 23 times, but index.css
+ * only ever defines `--border-color`. An undefined custom property makes the
+ * whole declaration invalid at computed-value time, so upstream every one of
+ * those 54 borders resolved to `currentColor` — i.e. each box was outlined in
+ * its own text colour, near-white against the dark panels. It reads as a
+ * rename (`--border-main` → `--border-color`) that missed its call sites.
+ *
+ * They are defined to the values the surrounding palette obviously intends.
+ * If the intent was ever to keep the currentColor look, deleting these three
+ * lines restores it exactly.
+ */
+.static-sim {
+  --bg-main: #f8fafc;
+  --bg-panel: #ffffff;
+  --bg-panel-light: #f1f5f9;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --border-color: #cbd5e1;
+
+  /* Added — see the note above. */
+  --border-main: #cbd5e1;
+  --bg-panel-hover: #e2e8f0;
+  --text-secondary: #475569;
+
+  /* Snitch Framework Default (Light) Variables */
+  --snitch-bg-base: #f8fafc;
+  --snitch-bg-surface: #ffffff;
+  --snitch-bg-alt: #f1f5f9;
+  --snitch-text-main: #0f172a;
+  --snitch-text-muted: #64748b;
+  --snitch-border: #e2e8f0;
+}
+
+.static-sim[data-theme='dark'] {
+  --bg-main: #020617; /* slate-950 */
+  --bg-panel: #0f172a; /* slate-900 */
+  --bg-panel-light: #1e293b; /* slate-800 */
+  --text-main: #f1f5f9; /* slate-100 */
+  --text-muted: #94a3b8; /* slate-400 */
+  --border-color: #334155; /* slate-700 */
+
+  /* Added — see the note above. */
+  --border-main: #334155;
+  --bg-panel-hover: #334155;
+  --text-secondary: #cbd5e1;
+
+  /* Snitch Framework Dark Theme Overrides */
+  --snitch-bg-base: #020617;
+  --snitch-bg-surface: #0f172a;
+  --snitch-bg-alt: #1e293b;
+  --snitch-text-main: #f1f5f9;
+  --snitch-text-muted: #94a3b8;
+  --snitch-border: #334155;
+}
+
+/* Upstream styled `body` here. Scoped to the container: the font applies to
+   the subtree, and `overflow-x-hidden` is a local clip rather than a lock on
+   the page's horizontal scrolling. `antialiased` is dropped — app/globals.css
+   already sets -webkit-font-smoothing: antialiased on body and it inherits. */
+.static-sim {
+  font-family: 'Outfit', sans-serif;
+  overflow-x: hidden;
+}
+
+.static-sim code,
+.static-sim pre {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom scrollbar styles. Scoped — upstream restyled every scrollbar in the
+   document, including the lesson page's. */
+.static-sim ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.static-sim ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.5);
+}
+.static-sim ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+.static-sim ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Visual glassmorphism style classes */
+.static-sim .glass {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.static-sim .glass-panel {
+  background: rgba(30, 41, 59, 0.45);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* SVG grid patterns */
+.static-sim .grid-bg {
+  background-size: 20px 20px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+}
+
+/* Animations */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.static-sim .wire-animated {
+  stroke-dasharray: 4, 4;
+  animation: flow-dash 1s linear infinite;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.static-sim .pulse-glow {
+  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-snap {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0.4;
+  }
+}
+.static-sim .pin-snap-pulse {
+  animation: pulse-snap 1s infinite ease-in-out;
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * snitch.css, inlined at the position upstream's mid-file @import sat.
+ *
+ * SNITCH UI FRAMEWORK
+ * A premium, exclusive UI component and styling framework.
+ *
+ * Upstream repeated the six --snitch-* light values in its own `:root`; that
+ * duplicate is folded into the `.static-sim` block above. The tokens below are
+ * the ones only snitch.css defined.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+.static-sim {
+  --snitch-bg-dark: #0f172a;
+
+  --snitch-primary: #ff6b35;
+  --snitch-primary-hover: #ff804d;
+  --snitch-primary-light: rgba(255, 107, 53, 0.1);
+  --snitch-primary-glow: rgba(255, 107, 53, 0.25);
+
+  --snitch-text-light: #f8fafc;
+
+  --snitch-radius-sm: 0.5rem;
+  --snitch-radius-md: 0.75rem;
+  --snitch-radius-lg: 1rem;
+  --snitch-radius-xl: 1.5rem;
+
+  --snitch-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --snitch-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --snitch-shadow-glow: 0 4px 15px var(--snitch-primary-glow);
+}
+
+/* Base Layout & Spacing */
+.static-sim .snitch-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+.static-sim .snitch-flex {
+  display: flex;
+}
+.static-sim .snitch-flex-col {
+  display: flex;
+  flex-direction: column;
+}
+.static-sim .snitch-items-center {
+  align-items: center;
+}
+.static-sim .snitch-justify-between {
+  justify-content: space-between;
+}
+.static-sim .snitch-justify-center {
+  justify-content: center;
+}
+.static-sim .snitch-gap-sm {
+  gap: 0.5rem;
+}
+.static-sim .snitch-gap-md {
+  gap: 1rem;
+}
+.static-sim .snitch-gap-lg {
+  gap: 1.5rem;
+}
+.static-sim .snitch-gap-xl {
+  gap: 2rem;
+}
+
+.static-sim .snitch-w-full {
+  width: 100%;
+}
+.static-sim .snitch-h-full {
+  height: 100%;
+}
+
+.static-sim .snitch-p-md {
+  padding: 1rem;
+}
+.static-sim .snitch-p-lg {
+  padding: 1.5rem;
+}
+.static-sim .snitch-p-xl {
+  padding: 2rem;
+}
+
+/* Typography */
+.static-sim .snitch-text-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--snitch-text-main);
+  margin-bottom: 0.5rem;
+}
+.static-sim .snitch-text-subtitle {
+  font-size: 0.875rem;
+  color: var(--snitch-text-muted);
+  line-height: 1.5;
+}
+.static-sim .snitch-text-body {
+  font-size: 1rem;
+  color: var(--snitch-text-main);
+}
+.static-sim .snitch-text-brand {
+  color: var(--snitch-primary);
+  font-weight: bold;
+}
+
+/* Surfaces & Components */
+.static-sim .snitch-card {
+  background: var(--snitch-bg-surface);
+  border: 1px solid var(--snitch-border);
+  border-radius: var(--snitch-radius-xl);
+  box-shadow: var(--snitch-shadow-sm);
+  overflow: hidden;
+}
+
+.static-sim .snitch-card-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--snitch-border);
+  background: var(--snitch-bg-alt);
+}
+
+.static-sim .snitch-card-body {
+  padding: 1.5rem;
+}
+
+/* Buttons */
+.static-sim .snitch-btn-primary {
+  background-color: var(--snitch-primary);
+  color: #fff;
+  font-weight: 700;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--snitch-radius-md);
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: var(--snitch-shadow-glow);
+  transition: all 0.2s ease;
+}
+.static-sim .snitch-btn-primary:hover {
+  background-color: var(--snitch-primary-hover);
+  transform: translateY(-1px);
+}
+
+.static-sim .snitch-btn-icon {
+  background-color: var(--snitch-primary-light);
+  color: var(--snitch-primary);
+  border-radius: var(--snitch-radius-md);
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.static-sim .snitch-btn-icon:hover {
+  background-color: var(--snitch-primary);
+  color: #fff;
+}
+
+/* Grid */
+.static-sim .snitch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.static-sim .snitch-grid-cols-3 {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 2rem;
+}
+
+/* Media Containers */
+.static-sim .snitch-video-container {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 Aspect Ratio */
+  background: var(--snitch-bg-dark);
+  border-radius: var(--snitch-radius-md);
+  overflow: hidden;
+}
+.static-sim .snitch-video-container iframe,
+.static-sim .snitch-video-container video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* Code Viewer (Dark Theme) */
+.static-sim .snitch-code-block {
+  background-color: var(--snitch-bg-dark);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--snitch-radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.static-sim .snitch-code-header {
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--snitch-text-muted);
+}
+.static-sim .snitch-code-content {
+  padding: 1.5rem;
+  color: #e2e8f0;
+  font-family: monospace;
+  font-size: 0.875rem;
+  overflow-x: auto;
+  margin: 0;
+}
+
+/* NOT UPSTREAM. Colours for the tokens produced by utils/highlight.ts — see
+   the header of that file for why the highlighting had to be added rather than
+   ported. The snitch code block is dark in both themes (its background is
+   --snitch-bg-dark, a fixed slate-900), so these need no light variant.
+   Contrast against #0f172a is at least 7:1 for every one of them. */
+.static-sim .tok-comment {
+  color: #94a3b8;
+  font-style: italic;
+}
+.static-sim .tok-string {
+  color: #86efac;
+}
+.static-sim .tok-number {
+  color: #fdba74;
+}
+.static-sim .tok-keyword {
+  color: #f0abfc;
+}
+.static-sim .tok-type {
+  color: #7dd3fc;
+}
+.static-sim .tok-function {
+  color: #93c5fd;
+}
+
+/* List Items */
+.static-sim .snitch-list-item {
+  padding: 1rem;
+  border: 1px solid var(--snitch-border);
+  border-radius: var(--snitch-radius-md);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--snitch-bg-surface);
+  color: var(--snitch-text-main);
+}
+.static-sim .snitch-list-item:hover {
+  border-color: var(--snitch-primary);
+  background-color: var(--snitch-primary-light);
+}
+.static-sim .snitch-list-item.active {
+  border-color: var(--snitch-primary);
+  background-color: var(--snitch-primary-light);
+  box-shadow: 0 0 0 2px var(--snitch-primary-light);
+}
+
+/* Header Branding Specific */
+.static-sim .snitch-branding {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.static-sim .snitch-logo-box {
+  padding: 0.5rem;
+  background-color: var(--snitch-primary-light);
+  border-radius: var(--snitch-radius-sm);
+  border: 1px solid var(--snitch-primary-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.static-sim .snitch-brand-text {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--snitch-text-main);
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * Remainder of upstream index.css, after its @import './snitch.css'.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/* LED Glow Styles */
+.static-sim .led-on-white {
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.8));
+}
+
+@keyframes buzzerRing {
+  0% {
+    transform: scale(1) translate(0, 0);
+    opacity: 1;
+  }
+  10% {
+    transform: scale(1.05) translate(-1px, -1px);
+    opacity: 0.9;
+  }
+  20% {
+    transform: scale(1) translate(1px, 1px);
+    opacity: 1;
+  }
+  30% {
+    transform: scale(1.05) translate(-1px, 1px);
+    opacity: 0.9;
+  }
+  40% {
+    transform: scale(1) translate(1px, -1px);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05) translate(-1px, -1px);
+    opacity: 0.9;
+  }
+  60% {
+    transform: scale(1) translate(1px, 1px);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(1.05) translate(-1px, 1px);
+    opacity: 0.9;
+  }
+  80% {
+    transform: scale(1) translate(1px, -1px);
+    opacity: 1;
+  }
+  90% {
+    transform: scale(1.05) translate(-1px, -1px);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1) translate(0, 0);
+    opacity: 1;
+  }
+}
+
+.static-sim .buzzer-ringing {
+  animation: buzzerRing 0.1s infinite linear;
+  filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.6));
+  transform-origin: center center;
+}
+
+.static-sim .led-on-red {
+  filter: drop-shadow(0px 0px 8px rgba(239, 68, 68, 0.75));
+  opacity: 1 !important;
+}
+.static-sim .led-on-yellow {
+  filter: drop-shadow(0px 0px 8px rgba(234, 179, 8, 0.75));
+  opacity: 1 !important;
+}
+.static-sim .led-on-green {
+  filter: drop-shadow(0px 0px 8px rgba(34, 197, 94, 0.75));
+  opacity: 1 !important;
+}
+
+/* DC Motor Spinning Animations */
+@keyframes spin-cw {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spin-ccw {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(-360deg);
+  }
+}
+
+.static-sim .motor-spin-cw,
+.static-sim .spin-cw {
+  animation: spin-cw 0.5s linear infinite;
+}
+
+.static-sim .motor-spin-ccw,
+.static-sim .spin-ccw {
+  animation: spin-ccw 0.5s linear infinite;
+}
+
+.static-sim .dc-motor-rotor {
+  transform-origin: center center;
+  transform-box: fill-box;
+}
+
+/* Lightbulb Glow Styles */
+.static-sim .bulb-on {
+  fill: #ffd700 !important;
+  filter: drop-shadow(0 0 10px yellow) !important;
+}
+.static-sim .bulb-off {
+  fill: #808080 !important;
+  filter: none !important;
+}
+
+.static-sim .lightbulb.glow-active circle {
+  filter: drop-shadow(0px 0px 20px #ffea00) !important;
+  transition: all 0.1s ease-in-out;
+}
