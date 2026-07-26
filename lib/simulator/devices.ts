@@ -339,6 +339,385 @@ export class NortonPort implements Device {
   }
 }
 
+// ─── Sources a student can power a circuit from ───────────────────────────────
+
+/**
+ * THE MEASURED FIGURES THAT MAKE A CELL A CELL RATHER THAN AN IDEAL SOURCE.
+ *
+ * An ideal `VoltageSource` with a wire across it delivers 5 V / 1 mΩ = 5000 A.
+ * The solver is right about that and the number is worthless — worse, a
+ * `MIN_RESISTANCE` short of a rail is the ONE place double precision starts
+ * annihilating the rest of the matrix (see MIN_RESISTANCE above). Real cells do
+ * not do this, and the reason is `ohms`: every electrochemical cell has an
+ * internal series resistance, and it is what sets the short-circuit current, the
+ * droop under load, and — because the droop is visible in the Measurements panel
+ * — the first lesson a student learns about why their motor browns out.
+ *
+ * `ratedAmps` and `maxAmps` are the two-tier pattern `NortonPort` uses for MCU
+ * pads, for the same reason: a coin cell asked for 5 mA is being pushed and a
+ * coin cell asked for 90 mA is being destroyed, and shouting the same words at
+ * both teaches nothing.
+ *
+ * WHERE THE NUMBERS COME FROM — manufacturers' published product datasheets, all
+ * of them quoting internal impedance at 1 kHz on a fresh cell at 21 °C:
+ *
+ *   9 V PP3 (6LR61)  Energizer 522: internal impedance 1.7–2.0 Ω. 1.7 Ω here,
+ *                    the fresh-cell end. Its own service curves are drawn for
+ *                    drains up to ~50 mA, which is `ratedAmps`; the datasheet
+ *                    characterises nothing above that, and the cell will run a
+ *                    500 mA load only briefly and hot, which is `maxAmps`.
+ *   CR2032 lithium   Energizer CR2032: internal impedance ~10 Ω, capacity quoted
+ *                    against a 15 kΩ (0.19 mA) load, "typical drain 0.2 mA".
+ *                    3 mA is the published maximum CONTINUOUS drain and 20 mA
+ *                    the pulse rating, which is exactly the rated/abs-max split.
+ *   AA alkaline      Energizer E91: internal impedance ~150 mΩ fresh (rising
+ *                    past 300 mΩ as it discharges). Its constant-current service
+ *                    curves are published up to 1000 mA — hence `ratedAmps` 1 A —
+ *                    and a fresh AA will deliver several amps into a dead short
+ *                    for a few seconds before it is ruined.
+ *   AAA alkaline     Energizer E92: same chemistry in a smaller can, so a higher
+ *                    impedance (~250 mΩ) and service curves published only up to
+ *                    250 mA.
+ *
+ * These are FRESH-CELL figures and they are held constant. A real cell's
+ * impedance climbs as it discharges and its terminal voltage sags; nothing here
+ * discharges, which is stated as a limitation in compile.ts rather than left for
+ * a student to discover.
+ */
+export interface CellParams {
+  /** What a fault message calls this cell: "CR2032 coin cell". */
+  label: string
+  /** Open-circuit EMF of ONE cell, volts. */
+  volts: number
+  /** Internal series resistance of ONE cell, ohms. */
+  ohms: number
+  /** Continuous current the datasheet characterises. Past this, a caution. */
+  ratedAmps: number
+  /** Past this the cell is being destroyed, not merely worked hard. */
+  maxAmps: number
+}
+
+/** Every cell chemistry the part library can place. */
+export type CellType = 'pp3_9v' | 'cr2032' | 'aa' | 'aaa'
+
+/**
+ * The four cells, keyed exactly as a part declares them — the same split
+ * SENSOR_SUPPLIES uses, and for the same reason: the part library says WHICH
+ * chemistry, this file says what that chemistry does. See CellParams above for
+ * every figure's source.
+ */
+export const CELLS: Record<CellType, CellParams> = {
+  pp3_9v: { label: '9 V battery', volts: 9.0, ohms: 1.7, ratedAmps: 0.05, maxAmps: 0.5 },
+  cr2032: { label: 'CR2032 coin cell', volts: 3.0, ohms: 10, ratedAmps: 0.003, maxAmps: 0.02 },
+  aa: { label: 'AA cell', volts: 1.5, ohms: 0.15, ratedAmps: 1.0, maxAmps: 3.0 },
+  aaa: { label: 'AAA cell', volts: 1.5, ohms: 0.25, ratedAmps: 0.25, maxAmps: 1.0 },
+}
+
+/**
+ * Contact resistance of one slide switch in the battery holder, ohms.
+ *
+ * A small SPDT slide switch specifies 30 mΩ or less initial contact resistance
+ * (e.g. the C&K OS series, "contact resistance 30 mΩ max"). Small enough to
+ * change nothing a student can measure, and present rather than zero because a
+ * switch that adds EXACTLY nothing would make "this pack has a switch" and "this
+ * pack does not" compile to identical circuits — which is how a control gets
+ * declared, rendered, stored and never reaches the physics.
+ */
+export const SWITCH_CONTACT_OHMS = 0.03
+
+/**
+ * The resistance of an OPEN switch or a supply that is switched off, ohms.
+ *
+ * The push button's own open-contact figure (1e12), for the reason stated there:
+ * open contacts are a very large resistance rather than a removed device, so
+ * flipping a switch never changes the shape of the matrix.
+ */
+export const OPEN_SWITCH_OHMS = 1e12
+
+/**
+ * Output impedance of a regulated bench supply in its constant-voltage region,
+ * ohms.
+ *
+ * Bench supplies specify this as LOAD REGULATION rather than as an impedance —
+ * a typical single-output linear supply quotes "< 0.01 % + 2 mV" for a full load
+ * step, which over a 5 A range works out at a few milliohms at the terminals.
+ * 10 mΩ here also covers the pair of test leads nobody can avoid, and it is what
+ * makes a 100 Ω load read 4.9995 V on a 5 V setting rather than exactly 5.
+ */
+export const SUPPLY_OUTPUT_OHMS = 0.01
+
+/**
+ * A cell (or a series stack of them) as an EMF the compiler puts in series with
+ * a real ESR — `VoltageSource` reused verbatim, plus one `Resistor`.
+ *
+ * WHAT THIS SUBCLASS ADDS IS THE VERDICT, NOT THE PHYSICS. `VoltageSource`
+ * already carries a `maxCurrent` and a fault, but the fault it raises says "that
+ * is a short circuit. On real hardware this destroys the board or the supply" —
+ * true of a bench supply's regulator and wrong about a battery, which does not
+ * destroy anything: it gets hot, its terminal voltage collapses, and it is flat.
+ * A CR2032 asked for 90 mA has not shorted a board; it has been asked for thirty
+ * times what it can give.
+ *
+ * NOTE the sign. `VoltageSource`'s branch unknown is the current flowing INTO
+ * its positive terminal from the external circuit, so a cell that is DELIVERING
+ * carries a negative branch current. Everything below takes the magnitude, which
+ * is also what makes the check symmetric: a cell being charged backwards by a
+ * bigger source is being abused in exactly the same numbers.
+ */
+export class Battery extends VoltageSource {
+  constructor(
+    id: string,
+    pos: NetId,
+    neg: NetId,
+    volts: number,
+    readonly cell: CellParams,
+    /** How many cells are in the stack, for the fault message. */
+    readonly count = 1,
+  ) {
+    super(id, pos, neg, volts)
+    // Inherited from VoltageSource, and deliberately kept in step with the
+    // chemistry rather than left at the base class's generic 1 A.
+    this.maxCurrent = cell.maxAmps
+  }
+
+  /** How a message should name this source: "4 AA cells" / "CR2032 coin cell". */
+  private get name(): string {
+    return this.count > 1 ? `${this.count} ${this.cell.label}s in series` : this.cell.label
+  }
+
+  safety(ctx: StampContext): SolveFault | null {
+    const i = Math.abs(this.branchIndex >= 0 ? ctx.x[this.branchIndex] : 0)
+    if (i <= this.cell.ratedAmps) return null
+
+    const shown = i >= 1 ? `${i.toFixed(2)} A` : `${(i * 1000).toFixed(0)} mA`
+    const rated =
+      this.cell.ratedAmps >= 1
+        ? `${this.cell.ratedAmps.toFixed(1)} A`
+        : `${(this.cell.ratedAmps * 1000).toFixed(0)} mA`
+
+    if (i <= this.cell.maxAmps) {
+      return {
+        kind: 'over_current',
+        severity: 'caution',
+        deviceId: this.id,
+        value: i,
+        message:
+          `${shown} out of ${this.name}, past the ${rated} its datasheet characterises. ` +
+          `It will run, but the cell heats, its terminal voltage sags below the ` +
+          `${this.volts.toFixed(2)} V shown here, and it goes flat fast.`,
+      }
+    }
+    return {
+      kind: 'short_circuit',
+      severity: 'destructive',
+      deviceId: this.id,
+      value: i,
+      message:
+        `${shown} out of ${this.name} — far past the ${rated} it can supply. ` +
+        `Its ${this.cell.ohms >= 1 ? this.cell.ohms.toFixed(1) : (this.cell.ohms * 1000).toFixed(0)}` +
+        `${this.cell.ohms >= 1 ? ' Ω' : ' mΩ'} of internal resistance is all that is limiting the ` +
+        `current, which means this is a short circuit: on a bench the cell gets hot enough to ` +
+        `burn, and a lithium coin cell can vent.`,
+    }
+  }
+}
+
+/**
+ * The dynamic output resistance of a bench supply once it is in CONSTANT
+ * CURRENT, ohms.
+ *
+ * A regulated supply in current limit is very nearly an ideal current source, so
+ * this wants to be large; 1 MΩ puts the residual current error at a dead short at
+ * V/1e6 — 12 µA on a 12 V setting, i.e. the fifth significant figure of the
+ * limit. Finite rather than infinite on purpose: it keeps the device's V(I)
+ * characteristic a MONOTONE piecewise-linear function of the branch current,
+ * which is what makes the Newton iteration below terminate (see stamp()).
+ */
+const CC_OUTPUT_OHMS = 1e6
+
+/**
+ * A bench power supply: constant voltage up to a current limit, constant current
+ * after it. The one source here that is NOT `VoltageSource` + a resistor, and the
+ * reason is the second regulation loop.
+ *
+ * ─── WHY THIS IS NOT A SERIES RESISTOR ────────────────────────────────────────
+ *
+ * A battery's droop and its short-circuit current are the SAME number divided
+ * two ways: ESR sets both, so one resistor expresses the whole part. A bench
+ * supply's are independent, and deliberately so — that is what "regulated" means.
+ * It holds its set voltage to a few millivolts under load (an output impedance of
+ * order 10 mΩ) AND clamps at a limit the student dials in separately. Trying to
+ * express that as one resistor forces a choice between two wrong answers: pick
+ * R = 10 mΩ and a shorted 12 V supply reports 1200 A, which is nonsense on any
+ * bench; pick R = V/Ilimit and a 100 Ω load reads 11.7 V on a supply whose
+ * display says 12.0, which is a wrong number in the one panel a student trusts.
+ *
+ * ─── THE MODEL, AND WHY NEWTON TERMINATES ─────────────────────────────────────
+ *
+ * The terminal voltage is a function of the current DELIVERED, `d`:
+ *
+ *     f(d) = V − d·Rout                                for |d| ≤ Ilimit
+ *     f(d) = V − Ilimit·Rout − (d − Ilimit)·CC_OHMS    for d > Ilimit
+ *
+ * (mirrored for d < −Ilimit). Two straight segments, monotonically decreasing.
+ * Each Newton iteration linearises about the previous branch current — which for
+ * a piecewise-LINEAR f means it simply picks a segment and solves that segment
+ * exactly — and the segments are consistent: solving the constant-voltage
+ * segment gives d > Ilimit exactly when the true answer lies on the
+ * constant-current segment, and vice versa. So the iteration cannot ping-pong;
+ * it lands on the right segment in one step and is exact on the next. `settled`
+ * withholds convergence for one iteration after a segment change, the same guard
+ * `Diode` uses, so a solution can never be declared on a stale linearisation.
+ *
+ * Checkable by hand, which is the point:
+ *   open circuit          d = 0,  V_out = V exactly
+ *   R load, no limit hit  d = V/(Rout + R)
+ *   R load, limit hit     V_out = Ilimit·R, to within V/CC_OHMS
+ *   dead short            d = Ilimit + (V − Ilimit·Rout)/CC_OHMS
+ *
+ * OFF is the same device with V = 0 and Rout enormous, so the matrix structure
+ * never changes when the student flips the switch — the rule the push button
+ * already follows.
+ *
+ * WHAT IT DOES NOT DO: a real supply cannot SINK current at all; something that
+ * pushes current back into it either does nothing or damages it. This model
+ * limits the reverse direction to the same Ilimit rather than blocking it, which
+ * is closer to a bench than an unlimited sink and is stated as a limitation.
+ */
+export class RegulatedSupply implements Device {
+  readonly nonlinear = true
+  readonly extraUnknowns = 1
+  branchIndex = -1
+
+  /** Last solved current DELIVERED out of the positive terminal, amps. */
+  current = 0
+  /** True while the supply is holding its set current rather than its voltage. */
+  limiting = false
+  /** False for one iteration after the segment changed. See Device.settled. */
+  settled = true
+
+  private lastLimiting: boolean | null = null
+
+  constructor(
+    readonly id: string,
+    private pos: NetId,
+    private neg: NetId,
+    /** The set voltage, volts. Already 0 when the supply is switched off. */
+    public volts: number,
+    /** The set current limit, amps. */
+    public limitAmps: number,
+    /** Output impedance in the constant-voltage region, ohms. */
+    public ohms: number,
+  ) {}
+
+  stamp(ctx: StampContext): void {
+    const k = this.branchIndex
+    const n = ctx.n
+    const ip = ctx.index(this.pos)
+    const im = ctx.index(this.neg)
+
+    /**
+     * The branch unknown carries the same sign convention `VoltageSource` uses —
+     * current INTO the positive terminal — so the delivered current is its
+     * negative. Getting this backwards would make the supply limit on the wrong
+     * side of zero and is silent: the circuit still solves.
+     */
+    const delivered = k >= 0 ? -ctx.x[k] : 0
+
+    const limit = Math.max(0, this.limitAmps)
+    const rOut = Math.max(this.ohms, MIN_RESISTANCE)
+    const over = Math.abs(delivered) > limit
+    if (this.lastLimiting !== null && this.lastLimiting !== over) this.settled = false
+    else this.settled = true
+    this.lastLimiting = over
+    this.limiting = over
+
+    // Thevenin equivalent of whichever segment `delivered` sits on:
+    // V_terminal = vEq − rEq · d.
+    let rEq: number
+    let vEq: number
+    if (!over) {
+      rEq = rOut
+      vEq = this.volts
+    } else {
+      const sign = delivered >= 0 ? 1 : -1
+      rEq = CC_OUTPUT_OHMS
+      // f(d) = V − sign·limit·rOut − (d − sign·limit)·CC, so the intercept is
+      // the value at d = 0 of that straight line.
+      vEq = this.volts - sign * limit * rOut + sign * limit * CC_OUTPUT_OHMS
+    }
+
+    /**
+     * Branch row: v(pos) − v(neg) − rEq·i = vEq.
+     *
+     * The MINUS is the whole correctness of this device and it is worth deriving
+     * rather than trusting. The row says v = vEq + rEq·i, and i is the current
+     * INTO the positive terminal, so i = −d and v = vEq − rEq·d — a supply whose
+     * terminal voltage FALLS as it delivers more, which is what an output
+     * impedance is. Written as `+= rEq` it becomes v = vEq + rEq·d: a source
+     * that pushes harder the more it is loaded. That is not merely a wrong
+     * number, it is a positive feedback path, and the symptom is not a bad
+     * reading — it is a shorted supply that never converges at all.
+     */
+    if (ip >= 0) {
+      ctx.A[ip * n + k] += 1
+      ctx.A[k * n + ip] += 1
+    }
+    if (im >= 0) {
+      ctx.A[im * n + k] -= 1
+      ctx.A[k * n + im] -= 1
+    }
+    ctx.A[k * n + k] -= rEq
+    ctx.b[k] += vEq
+  }
+
+  readback(ctx: StampContext): void {
+    this.current = this.branchIndex >= 0 ? -ctx.x[this.branchIndex] : 0
+    this.limiting = Math.abs(this.current) > Math.max(0, this.limitAmps)
+  }
+
+  /**
+   * Forget which segment the last solve ended on. `Circuit.resetState()` calls
+   * this before gmin stepping and at the start of a transient run; without it a
+   * remembered segment would make the FIRST iteration of the new solve report
+   * `settled: false` for a change that belongs to a solution being discarded.
+   */
+  reset(): void {
+    this.lastLimiting = null
+    this.settled = true
+  }
+
+  /** Terminal voltage from the converged solution, volts. */
+  terminalVolts(ctx: StampContext): number {
+    return ctx.voltage(this.pos) - ctx.voltage(this.neg)
+  }
+
+  /**
+   * Reaching the current limit is NOT a fault — it is the supply doing exactly
+   * what it was set to do, and a bench supply in current limit is how every
+   * cautious person powers up a new board for the first time. What IS worth
+   * saying is that the student is no longer getting the voltage on the dial,
+   * because that is the confusing part: the display says 12 V and the circuit
+   * has 1 V across it.
+   */
+  safety(ctx: StampContext): SolveFault | null {
+    if (!this.limiting || this.limitAmps <= 0) return null
+    const v = this.terminalVolts(ctx)
+    const i = Math.abs(this.current)
+    return {
+      kind: 'supply_range',
+      severity: 'caution',
+      deviceId: this.id,
+      value: i,
+      message:
+        `The supply has hit its ${this.limitAmps.toFixed(2)} A current limit, so it is holding ` +
+        `the CURRENT and no longer the voltage: its terminals are at ${v.toFixed(2)} V, not the ` +
+        `${this.volts.toFixed(2)} V it is set to. Either the load is drawing more than the limit ` +
+        `allows or something is shorted.`,
+    }
+  }
+}
+
 // ─── Sensor modules: supply and output ────────────────────────────────────────
 
 /**

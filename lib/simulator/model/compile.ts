@@ -6,6 +6,7 @@
 
 import { Circuit } from '../solver'
 import {
+  Battery,
   Buzzer,
   Capacitor,
   DCMotor,
@@ -19,6 +20,7 @@ import {
   LED_SERIES_R,
   NortonPort,
   RELAY_MODULE_4CH,
+  RegulatedSupply,
   Resistor,
   SENSOR_SUPPLIES,
   SensorPort,
@@ -38,7 +40,14 @@ import {
   type ReactiveDevice,
 } from '../devices'
 import type { NetId } from '../types'
-import { getPart, ledColour, potentiometerLegs, variableResistorOhms } from './parts'
+import {
+  getPart,
+  ledColour,
+  potentiometerLegs,
+  sourceSetting,
+  variableResistorOhms,
+  type SourceSetting,
+} from './parts'
 import { pinKeyOf, type CircuitDoc, type PinRef } from './document'
 
 export interface CompiledNet {
@@ -87,6 +96,24 @@ export type DriverChannels =
   | { kind: 'h_bridge'; channels: HBridgeChannel[] }
   | { kind: 'darlington_array'; channels: DarlingtonSink[]; indices: number[] }
 
+/**
+ * A stamped power source, handed over so the readout can describe the SAME
+ * numbers the matrix holds.
+ *
+ * Both variants carry `setting` — what the props resolved to — because the panel
+ * has to be able to say "set to 12.0 V, switched off" for a supply whose stamped
+ * EMF is 0. Deriving that a second time from the props in analog-state.ts would
+ * be a second copy of sourceSetting(), which is how a panel starts describing a
+ * circuit the solver is not solving.
+ *
+ * A discriminated union rather than two maps, for the reason DriverChannels is
+ * one: the reader has to switch on the kind anyway, and two maps would let a
+ * source appear in neither.
+ */
+export type CompiledSource =
+  | { kind: 'cell'; emf: Battery; esr: Resistor; setting: SourceSetting }
+  | { kind: 'supply'; supply: RegulatedSupply; setting: SourceSetting }
+
 export interface CompileResult {
   circuit: Circuit
   /** pinKey → solver net id. Ground is 0. */
@@ -122,6 +149,11 @@ export interface CompileResult {
    * and no way back to the part the student can see.
    */
   drivers: Map<string, DriverChannels>
+  /**
+   * Part id → the source it was stamped as, so the readout can report the
+   * terminal voltage, the current out of it and what its dials are set to.
+   */
+  sources: Map<string, CompiledSource>
   /**
    * Name → every element that stores energy: capacitors, inductors, and the
    * WINDINGS inside motors, relay coils and stepper phases.
@@ -252,6 +284,170 @@ class DSU {
   }
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════════
+ * THE DATUM: which nets are net 0, and why there is more than one answer.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * MNA solves for node voltages RELATIVE to a datum, and this compiler's datum is
+ * net 0. For most of this project's life net 0 was found one way: scan for pins
+ * typed `gnd`, union them, done. Only BOARDS declare a `gnd` pin, so that rule
+ * says, in effect, "an Arduino is the definition of ground" — and the moment a
+ * battery existed it became the thing standing between a student and the first
+ * circuit in any electronics course. A cell, a resistor and a lamp had no
+ * reference at all, and the Checks panel's advice was to add an Arduino to a
+ * circuit that does not want one.
+ *
+ * ─── WHY "IT SOLVES ANYWAY" IS NOT AN ANSWER ─────────────────────────────────
+ *
+ * The matrix is not actually SINGULAR without a datum, and it is worth being
+ * exact about that rather than repeating the usual claim. `Circuit.newton()`
+ * adds gmin (1e-12 S) from every node to ground, so a floating island always has
+ * a path to net 0 and LU always factors. What it does not have is a MEANINGFUL
+ * one. Sum the KCL rows of a floating island and every internal current cancels,
+ * leaving gmin·Σv = 0 — so the island's absolute potential is pinned by nothing
+ * but the requirement that its node voltages sum to zero. A 9 V battery across a
+ * 220 Ω resistor and an LED then solves with its terminals at roughly +6 V and
+ * −3 V instead of 9 V and 0 V. Every CURRENT is right; every VOLTAGE a student
+ * reads off the panel is wrong, and wrong in a way that looks like arithmetic.
+ * That is precisely the failure mode §2.3 forbids: not a refusal, a wrong number.
+ *
+ * ─── THE RULE ────────────────────────────────────────────────────────────────
+ *
+ * ONE REFERENCE PER ELECTRICALLY ISOLATED ISLAND, and each of them IS net 0.
+ *
+ *   1. Split the nets into islands. Two nets are on the same island when some
+ *      PART bridges them — every non-breadboard part joins all of its own pins,
+ *      because a component is one physical object and current entering it has to
+ *      leave somewhere. Breadboards are excluded: their strips are already
+ *      unioned by `buses`, and two strips are emphatically not connected.
+ *   2. An island holding a `gnd` pin already has its reference — the board's.
+ *   3. Any other island holding a SOURCE takes that source's NEGATIVE terminal,
+ *      which is what `electrical.neg` names.
+ *   4. An island with neither is left alone. It has nothing pushing current, so
+ *      every node in it genuinely is at 0 V and gmin says so; spending a chosen
+ *      datum to prove that would change nothing.
+ *
+ * ─── WHY SEVERAL ROOTS MAY MAP TO NET 0 WITHOUT SHORTING ANYTHING ────────────
+ *
+ * Two isolated islands whose references both become net 0 are joined at exactly
+ * ONE point, and a single tie point carries no current: there is no second
+ * connection to complete a loop, so the MNA solution inside each island is
+ * identical to what it would be alone. That is not a trick, it is what happens
+ * on a bench when the grounds of two isolated supplies are bonded, and it is
+ * already what this compiler does with two Arduinos that are not wired together.
+ * The only thing it changes is that each island's own reference reads 0 V, which
+ * is the thing we wanted.
+ *
+ * ─── WHY THE MERGE HAPPENS HERE AND NOT IN THE DSU ───────────────────────────
+ *
+ * These roots are mapped to net 0 in `rootToNet`; they are NOT unioned together
+ * in `dsu`. The DSU is the model of what the student WIRED, and it is read by
+ * the dangling-lead detection, the "not connected to anything" message and the
+ * breadboard channel-crossing hints — all of which must keep describing the
+ * actual wiring. Unioning a lone battery's negative terminal into an unrelated
+ * Arduino's ground root would make that battery's lead look attached, and the
+ * message a student gets for an unwired battery would then depend on whether
+ * there happened to be a board somewhere else on the canvas. Choosing a datum is
+ * a solver concern; it is not a wire.
+ *
+ * ─── THE CASES THIS HAD TO GET RIGHT ─────────────────────────────────────────
+ *
+ *   A lone battery              its NEG terminal is the datum, so it reads 0.00 V
+ *                               and its POS terminal reads the cell voltage.
+ *   Two batteries in series     ONE island, so exactly ONE of them is chosen.
+ *                               Taking both would force both negatives to 0 V and
+ *                               short the lower cell — 9 V across its own ESR,
+ *                               silently, with the stack still reporting 18 V.
+ *                               Which one is chosen is decided below.
+ *   Battery wired TO a board    one island holding a `gnd` pin, so rule 2 fires
+ *                               and the board's GND is the datum. The battery's
+ *                               negative sits wherever the circuit puts it, which
+ *                               for the usual common-ground wiring IS 0 V because
+ *                               the student wired it there — not because we did.
+ *   Battery NOT wired to a board  two islands, two references, both net 0, no
+ *                               current path between them. Neither is shorted and
+ *                               neither floats.
+ *   A half-built circuit off to one side   its own island. If it has a source it
+ *                               gets its own datum; if it has none it sits at 0 V,
+ *                               which is exactly true of a circuit with nothing
+ *                               driving it.
+ *
+ * ─── AND WHY A BATTERY'S TERMINAL IS NOT TYPED `gnd` ─────────────────────────
+ *
+ * It would have been one word in parts.ts and it would have been wrong. `gnd`
+ * pins are unioned into ONE root GLOBALLY, before islands are known — so two
+ * batteries in series would have had both terminals of the lower cell tied
+ * together through the ground net, i.e. a dead short across a cell, produced by
+ * a type annotation. `neg` names a REFERENCE CANDIDATE; `gnd` asserts a wire.
+ */
+function chooseReferences(doc: CircuitDoc, dsu: DSU, groundRoot: string | null): string[] {
+  const rootOf = (partId: string, pinId: string): string =>
+    dsu.find(pinKeyOf({ partId, pinId }))
+
+  // Islands: every non-breadboard part joins the roots of all of its own pins.
+  const islands = new DSU()
+  for (const part of doc.parts) {
+    const def = getPart(part.type)
+    if (def.electrical.kind === 'breadboard') continue
+    const pins = def.pins
+    for (let i = 1; i < pins.length; i++) {
+      islands.union(rootOf(part.id, pins[0].id), rootOf(part.id, pins[i].id))
+    }
+  }
+
+  const references: string[] = []
+  const claimed = new Set<string>()
+  if (groundRoot !== null) {
+    const root = dsu.find(groundRoot)
+    references.push(root)
+    claimed.add(islands.find(root))
+  }
+
+  const sources = doc.parts.filter((p) => getPart(p.type).electrical.kind === 'source')
+  if (sources.length === 0) return references
+
+  /**
+   * Nets that carry a source's POSITIVE terminal, so a stack can be walked to
+   * its bottom.
+   *
+   * In a series stack every negative terminal but one is bolted to the cell
+   * below it, and any of them would serve as a datum — the currents are
+   * identical whichever is picked, and only the reported node voltages move. But
+   * "identical up to a constant offset" is not the same as "the same answer to
+   * read": choosing the middle of a 3 V stack puts its terminals at −1.5 V and
+   * +1.5 V, which is a true statement about a floating supply and not what a
+   * student measuring the pack expects to see. Preferring a negative terminal
+   * that no positive terminal is tied to lands on the BOTTOM of the stack, and
+   * it does so whatever order the parts happen to sit in the document — which
+   * matters, because document order is an artefact of the order things were
+   * dropped on the canvas.
+   *
+   * A ring of sources has no bottom; the second pass takes the first one, which
+   * is as principled as it can be for a circuit that has no privileged node.
+   */
+  const positives = new Set<string>()
+  for (const part of sources) {
+    const el = getPart(part.type).electrical
+    if (el.kind !== 'source') continue
+    positives.add(rootOf(part.id, el.pos))
+  }
+
+  for (const preferBottom of [true, false]) {
+    for (const part of sources) {
+      const el = getPart(part.type).electrical
+      if (el.kind !== 'source') continue
+      const neg = rootOf(part.id, el.neg)
+      const island = islands.find(neg)
+      if (claimed.has(island)) continue
+      if (preferBottom && positives.has(neg)) continue
+      claimed.add(island)
+      references.push(neg)
+    }
+  }
+  return references
+}
+
 export function compile(doc: CircuitDoc): CompileResult {
   const dsu = new DSU()
   const problems: string[] = []
@@ -288,6 +484,8 @@ export function compile(doc: CircuitDoc): CompileResult {
       else dsu.union(k, groundRoot)
     }
   }
+
+  const referenceRoots = chooseReferences(doc, dsu, groundRoot)
 
   // Group pins by root, counting what kind of pins each net carries.
   const byRoot = new Map<string, PinRef[]>()
@@ -330,7 +528,7 @@ export function compile(doc: CircuitDoc): CompileResult {
   // so inert breadboard-only nets never reach the circuit.
   const circuit = new Circuit()
   const rootToNet = new Map<string, NetId>()
-  if (groundRoot !== null) rootToNet.set(dsu.find(groundRoot), 0)
+  for (const root of referenceRoots) rootToNet.set(root, 0)
 
   for (const [root] of byRoot) {
     if (rootToNet.has(root)) continue
@@ -379,7 +577,8 @@ export function compile(doc: CircuitDoc): CompileResult {
   const behavioural: CompileResult['behavioural'] = []
   const limitations: string[] = []
   const shortedPins: ShortedPin[] = []
-  const hasGround = groundRoot !== null
+  const sources = new Map<string, CompiledSource>()
+  const hasReference = referenceRoots.length > 0
 
   for (const part of doc.parts) {
     const def = getPart(part.type)
@@ -1069,12 +1268,122 @@ export function compile(doc: CircuitDoc): CompileResult {
       const sw = new Resistor(part.id, a, b, closed ? 0.05 : 1e12)
       circuit.add(sw)
       meters.set(part.id, sw)
+    } else if (el.kind === 'source') {
+      const pos = net({ partId: part.id, pinId: el.pos })
+      const neg = net({ partId: part.id, pinId: el.neg })
+      if (pos === undefined || neg === undefined) continue
+      const set = sourceSetting(def, part.props)
+
+      if (set.limitAmps === null && set.cell !== null) {
+        /**
+         * A CELL: `VoltageSource` and one `Resistor` in series, exactly as the
+         * primitive was always meant to be used, with an INTERNAL node between
+         * them so the ESR is a real element and not a fudge factor.
+         *
+         * The internal node costs one matrix unknown per battery, and it is what
+         * buys everything: the terminal voltage sags under load by i·R, a dead
+         * short settles at V/R instead of at the solver's numerical floor, and
+         * the current that flows is a number Battery.safety() can judge against
+         * a datasheet. Without it a coin cell driving an LED direct would report
+         * a current set by MIN_RESISTANCE — which is to say, by nothing.
+         *
+         * ORDER MATTERS AND IS NOT ARBITRARY: the EMF sits between the NEGATIVE
+         * terminal and the internal node, and the ESR between the internal node
+         * and the POSITIVE one. Putting the ESR on the negative side instead
+         * would work electrically and would move the reference off the terminal
+         * the student can see — the negative post would no longer be the datum
+         * the section above went to such lengths to establish.
+         */
+        const internal = circuit.allocNet()
+        const emf = new Battery(
+          `${part.id}.cell`,
+          internal,
+          neg,
+          set.volts,
+          set.cell,
+          set.count,
+        )
+        const esr = new Resistor(`${part.id}.esr`, internal, pos, set.ohms)
+        /**
+         * THE ESR IS NOT A QUARTER-WATT THROUGH-HOLE RESISTOR, and until this
+         * line existed it was being judged as one.
+         *
+         * `Resistor` carries a 0.25 W rating and a safety() that fires above it —
+         * correct for the component a student places, and nonsense for a cell's
+         * own internal resistance, which is an emergent property of its
+         * chemistry and has no power rating at all. Caught in the browser: a
+         * shorted 9 V battery reported the true fault ("5.29 A out of a 9 V
+         * battery… this is a short circuit") AND, immediately under it,
+         * "Resistor is dissipating 47.65 W — it is rated for 0.25 W and would
+         * burn out", against a resistor that is not on the canvas and that the
+         * student cannot see, let alone replace with a bigger one.
+         *
+         * Silencing it loses nothing: every condition this element could report
+         * is a current through the cell, and Battery.safety() judges exactly that
+         * current against the chemistry's own two ratings, in words that are
+         * about a battery.
+         */
+        esr.rating = Infinity
+        circuit.add(emf, esr)
+        // Metered on the ESR, not the EMF: a Resistor's `current` is signed the
+        // way a student expects (positive when the battery is DELIVERING), where
+        // a VoltageSource's branch unknown is the current flowing INTO its
+        // positive terminal and so reads negative for a battery doing its job.
+        meters.set(part.id, esr)
+        sources.set(part.id, { kind: 'cell', emf, esr, setting: set })
+      } else {
+        const supply = new RegulatedSupply(
+          part.id,
+          pos,
+          neg,
+          set.volts,
+          set.limitAmps ?? 0,
+          set.ohms,
+        )
+        circuit.add(supply)
+        meters.set(part.id, supply)
+        sources.set(part.id, { kind: 'supply', supply, setting: set })
+      }
+
+      /**
+       * WHAT A SOURCE IN THIS SIMULATOR DOES NOT DO, stated once per document
+       * rather than once per battery (the `new Set` at the return dedupes it).
+       *
+       * Narrow on purpose, in the shape the other four limitations use: it names
+       * the effect, gives the figure the model DOES hold constant, and says what
+       * a bench would have done instead. Capacity and runtime are the honest
+       * gap — everything about the instantaneous operating point is modelled.
+       */
+      limitations.push(
+        'Batteries and supplies here never run down. A real cell loses capacity as it is ' +
+          'used: its terminal voltage sags and its internal resistance climbs — an alkaline AA ' +
+          'roughly doubles, from about 150 mΩ fresh to over 300 mΩ near the end — so a circuit ' +
+          'that works on a fresh cell can stop working on a flat one. This model holds the ' +
+          'fresh-cell figures forever, so there is no capacity, no runtime and no fading. The ' +
+          'voltage drop under load IS modelled, from that fixed internal resistance.',
+      )
     }
   }
 
   // ─── Problems worth telling the student about, before solving ───
-  if (doc.parts.length > 0 && !hasGround) {
-    problems.push('No ground in the circuit — add an Arduino or connect to GND.')
+  /**
+   * THIS MESSAGE USED TO SAY "No ground in the circuit — add an Arduino or
+   * connect to GND", and by the time batteries existed every word of it was
+   * wrong: a battery and a lamp need no ground pin and no Arduino, and telling a
+   * student to add one would have sent them to fix a circuit that was already
+   * right.
+   *
+   * What actually remains checkable is narrower and, now, exact. A reference is
+   * established by a `gnd` pin or by any source's negative terminal (see
+   * chooseReferences), so `referenceRoots` is empty in exactly one situation:
+   * the document holds no board AND nothing that can push a current. That is not
+   * a grounding problem at all — it is a circuit with no power in it — so that
+   * is what it says.
+   */
+  if (doc.parts.length > 0 && !hasReference) {
+    problems.push(
+      'Nothing in this circuit is supplying power — add a battery, a power supply, or a board.',
+    )
   }
   // ─── Connectivity: dangling leads and channel-crossed orphans ───
   //
@@ -1242,6 +1551,7 @@ export function compile(doc: CircuitDoc): CompileResult {
     motors,
     meters,
     drivers,
+    sources,
     reactive,
     analogNets,
     pinNets,

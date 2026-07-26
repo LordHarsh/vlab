@@ -18,7 +18,7 @@
 
 import { Simulator, USBCDC, GPIOPinState, type Logger, type RP2040 } from 'rp2040js'
 import type { CPU } from 'avr8js'
-import { analogDeviceStates } from '../analog-state'
+import { analogDeviceStates, ledBrightnessFor } from '../analog-state'
 import { SerialTextDecoder } from '../serial-text'
 import { compile, type CompileResult } from '../model/compile'
 import type { CircuitDoc, PlacedPart } from '../model/document'
@@ -827,8 +827,7 @@ export class PicoSimulationEngine {
     const currents: Record<string, number> = {}
     for (const [partId, dev] of this.compiled.meters) currents[partId] = dev.current
     for (const [partId, diode] of this.compiled.leds) {
-      const i = Math.max(diode.current, 0)
-      brightness[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
+      brightness[partId] = ledBrightnessFor(diode.current)
     }
     this.latest = {
       brightness,
@@ -1062,7 +1061,7 @@ export class PicoSimulationEngine {
     const out: Record<string, number> = {}
     for (const partId of Object.keys(this.latest.brightness)) {
       const i = Math.max(this.avg.get(partId) ?? this.latest.currents[partId] ?? 0, 0)
-      out[partId] = Math.min(1, Math.pow(i / 0.02, 0.45))
+      out[partId] = ledBrightnessFor(i)
     }
     return out
   }
@@ -1159,6 +1158,7 @@ export class PicoSimulationEngine {
         voltages: this.voltages,
         reactive: this.compiled.reactive,
         drivers: this.compiled.drivers,
+        sources: this.compiled.sources,
         transient: this.transient,
       }),
       ...this.deviceStates,

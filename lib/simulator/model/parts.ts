@@ -10,6 +10,14 @@
  * to that grid.
  */
 
+import {
+  CELLS,
+  OPEN_SWITCH_OHMS,
+  SUPPLY_OUTPUT_OHMS,
+  SWITCH_CONTACT_OHMS,
+  type CellParams,
+  type CellType,
+} from '../devices'
 import { MEGA_RENAME, UNO_RENAME, wokwiGeometry } from './wokwi'
 
 export const PITCH = 10
@@ -160,6 +168,32 @@ export interface PartDefinition {
      * second row in this registry rather than as a second decoder.
      */
     | { kind: 'character_lcd'; columns: number; rows: number }
+    /**
+     * Something that PUSHES current: a battery, a pack of cells, a bench supply.
+     *
+     * Until these existed there was exactly one way to power anything in this
+     * simulator — put an Arduino on the canvas — because a board's `5V` pin was
+     * the only `VoltageSource` compile() ever stamped. A student could not build
+     * the first circuit in any electronics course.
+     *
+     * `neg` IS LOAD-BEARING AND IS NOT DECORATION. It names the terminal that
+     * becomes the voltage REFERENCE for whatever this source is wired into, which
+     * is what lets a circuit with no board in it be solved at all — see the
+     * datum section of compile() for the whole argument. Naming the wrong pin
+     * here would put a battery's own negative terminal at −9 V.
+     *
+     * `supply` says how the props become an EMF and an ESR; sourceSetting()
+     * below is the one place that conversion happens, so the panel readout and
+     * the matrix cannot disagree about what the student dialled in.
+     */
+    | ({ kind: 'source'; pos: string; neg: string } & (
+        /** A cell of a fixed chemistry: a PP3, a CR2032. */
+        | { supply: 'cell'; cell: CellType }
+        /** A 1–4 cell holder whose size, chemistry and switch are props. */
+        | { supply: 'pack' }
+        /** An adjustable, current-limited bench supply. */
+        | { supply: 'bench' }
+      ))
     | { kind: 'passive' }
   /** Editable properties surfaced in the inspector. */
   props?: PropSpec[]
@@ -479,6 +513,29 @@ export const HENRY_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
 ]
 
 /**
+ * The same ladder for volts and amps, for the bench supply's two dials.
+ *
+ * `mul: 1` is on the base unit in both, because that is what the document holds
+ * and what compile.ts hands straight to the device — there is no scaling step
+ * for these the way there is for microfarads. The ladders stop at kV and A
+ * rather than running to GV: the supply's own range is 0–30 V and 0–5 A, so
+ * anything above the next rung up is a value the field would immediately clamp,
+ * and offering it would be offering a dead choice.
+ */
+export const VOLT_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
+  { label: 'μV', mul: 1e-6 },
+  { label: 'mV', mul: 1e-3 },
+  { label: 'V', mul: 1 },
+  { label: 'kV', mul: 1e3 },
+]
+
+export const AMP_UNITS: ReadonlyArray<{ label: string; mul: number }> = [
+  { label: 'μA', mul: 1e-6 },
+  { label: 'mA', mul: 1e-3 },
+  { label: 'A', mul: 1 },
+]
+
+/**
  * Ceiling on a typed resistance, ohms.
  *
  * Not a physical limit — it is the top of the offered ladder (999 GΩ is under
@@ -589,6 +646,146 @@ export function variableResistorOhms(
 ): number {
   const t = Math.min(100, Math.max(0, Number.isFinite(light) ? light : 60)) / 100
   return minOhms * Math.pow(maxOhms / minOhms, 1 - t)
+}
+
+// ─── Sources ──────────────────────────────────────────────────────────────────
+
+/** Cells a holder can take. Tinkercad's `Count` selectbox, verbatim. */
+export const PACK_CELL_COUNTS = [1, 2, 3, 4] as const
+
+/**
+ * Cells in a pack whose document carries no `cells`.
+ *
+ * FOUR, not one, and the reason is checkable rather than a preference: the
+ * lowest forward voltage in LED_COLOURS is 1.96 V, so a one-cell 1.5 V pack
+ * cannot light ANY led in this library, cannot run the 5 V hobby motor and
+ * cannot drive the buzzer. A part that defaults to a configuration where nothing
+ * it is wired to does anything reads as a broken part, and the student has no
+ * way to tell that from a broken simulator. Four cells is 6.0 V, which drives
+ * every one of them. The `Count` selectbox says what it is.
+ */
+export const PACK_DEFAULT_CELLS = 4
+
+/** Ceiling on the bench supply's voltage dial, volts — Tinkercad's own 0–30 V. */
+export const SUPPLY_MAX_VOLTS = 30
+
+/** Ceiling on the bench supply's current dial, amps — Tinkercad's own 0–5 A. */
+export const SUPPLY_MAX_AMPS = 5
+
+/** What the two dials read on a supply the student has not touched. */
+export const SUPPLY_DEFAULT_VOLTS = 5
+export const SUPPLY_DEFAULT_AMPS = 5
+
+/**
+ * What one source part is set to, resolved from its props ONCE.
+ *
+ * Every reader goes through here — compile.ts, which stamps it; analog-state.ts,
+ * which reports it; the canvas, which draws the dial. That is the same rule
+ * potentiometerLegs() and ledColour() follow, and it exists because the
+ * alternative has already shipped in this project: a table of correct values in
+ * parts.ts that compile.ts never read, so every LED solved as red.
+ */
+export interface SourceSetting {
+  /**
+   * EMF actually stamped, volts. ZERO when the source is switched off, which
+   * with `ohms` below is what makes an open switch behave like the open circuit
+   * it is: a pack whose switch is off shows 0 V at its terminals, not the 6 V
+   * still sitting inside it.
+   */
+  volts: number
+  /** Total internal series resistance, ohms: ESR, plus switch contact or open. */
+  ohms: number
+  /**
+   * Constant-current limit, amps — or null for a source that has no second
+   * regulation loop, which is every chemical cell. compile.ts switches on this:
+   * null gets `VoltageSource` + a `Resistor`, a number gets `RegulatedSupply`.
+   */
+  limitAmps: number | null
+  /** What the voltage dial says, whatever the switch is doing. */
+  setVolts: number
+  /** False when a built-in switch or the ON/OFF control is open. */
+  on: boolean
+  /** True when this part has an on/off control at all. */
+  switched: boolean
+  /** The chemistry, for the ratings a fault is judged against. Null for a bench supply. */
+  cell: CellParams | null
+  /** Cells in series. Always 1 outside the pack. */
+  count: number
+}
+
+/** Clamp a prop to a range, treating anything unparseable as the fallback. */
+function propNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * Resolve a source part's props into the numbers the solver needs.
+ *
+ * Throws for a part that is not a source, rather than returning a plausible
+ * zero: a zero-volt source is a legitimate setting a student can dial in, so a
+ * silent one would be indistinguishable from a real answer.
+ */
+export function sourceSetting(
+  def: PartDefinition,
+  props: Record<string, number | string>,
+): SourceSetting {
+  const el = def.electrical
+  if (el.kind !== 'source') {
+    throw new Error(`sourceSetting() called on ${def.type}, which is not a source.`)
+  }
+
+  if (el.supply === 'bench') {
+    const setVolts = propNumber(props.voltage, SUPPLY_DEFAULT_VOLTS, 0, SUPPLY_MAX_VOLTS)
+    const limitAmps = propNumber(props.current, SUPPLY_DEFAULT_AMPS, 0, SUPPLY_MAX_AMPS)
+    const on = propNumber(props.on, 1, 0, 1) >= 0.5
+    return {
+      volts: on ? setVolts : 0,
+      ohms: on ? SUPPLY_OUTPUT_OHMS : OPEN_SWITCH_OHMS,
+      limitAmps,
+      setVolts,
+      on,
+      switched: true,
+      cell: null,
+      count: 1,
+    }
+  }
+
+  if (el.supply === 'cell') {
+    const cell = CELLS[el.cell]
+    return {
+      volts: cell.volts,
+      ohms: cell.ohms,
+      limitAmps: null,
+      setVolts: cell.volts,
+      on: true,
+      switched: false,
+      cell,
+      count: 1,
+    }
+  }
+
+  // A holder: 1–4 cells in series, of one chemistry, with an optional switch.
+  const count = Math.round(propNumber(props.cells, PACK_DEFAULT_CELLS, 1, PACK_DEFAULT_CELLS))
+  const cell = CELLS[props.type === 'aaa' ? 'aaa' : 'aa']
+  const sw = String(props.switch ?? 'on')
+  const switched = sw !== 'none'
+  const on = !switched || sw !== 'off'
+  const setVolts = count * cell.volts
+  return {
+    // Cells in SERIES: the voltages add and so do the internal resistances,
+    // which is why a four-cell pack sags four times as hard as one cell does
+    // for the same current. Both halves matter and both are asserted.
+    volts: on ? setVolts : 0,
+    ohms: on ? count * cell.ohms + (switched ? SWITCH_CONTACT_OHMS : 0) : OPEN_SWITCH_OHMS,
+    limitAmps: null,
+    setVolts,
+    on,
+    switched,
+    cell,
+    count,
+  }
 }
 
 // ─── Breadboard ───────────────────────────────────────────────────────────────
@@ -2161,6 +2358,317 @@ const inductor: PartDefinition = {
   `,
 }
 
+// ─── Power sources ────────────────────────────────────────────────────────────
+//
+// THE HOLE THESE FILL. Until they existed the only `VoltageSource` compile()
+// ever stamped was a board's `5V` pin, so the first circuit in any electronics
+// course — a cell, a resistor and a lamp — could not be built here at all, and
+// the Checks panel told a student who tried to "add an Arduino". Four parts, and
+// between them they cover the supply half of every experiment in the lab: a PP3
+// for a breadboard, a coin cell for the thing that teaches internal resistance
+// hardest, a holder for the 1.5 V cells a kit ships, and the adjustable bench
+// supply experiment 09 asks for by name (12 V, into an L298N).
+//
+// Every one of them is an EMF in series with a REAL internal resistance. See
+// CellParams in devices.ts for where each figure comes from; the short version
+// is that an ideal source with a wire across it delivers thousands of amps, and
+// a simulator that reports that number has told a lie with total confidence.
+//
+// PIN IDS ARE `POS` AND `NEG`, not `1` and `2`, because they appear verbatim in
+// the connectivity messages ("has a lead (pin NEG) wired to nothing") and
+// because polarity is the whole of what a student gets wrong about a battery.
+
+/** Both terminals, at the foot of the part, for every source. */
+function sourcePins(width: number, height: number): PinGeometry[] {
+  return [
+    { id: 'NEG', name: 'Negative (−)', x: width / 2 - 10, y: height, type: 'passive' },
+    { id: 'POS', name: 'Positive (+)', x: width / 2 + 10, y: height, type: 'passive' },
+  ]
+}
+
+/** Two stubby leads down to the pins, drawn the same way for every source. */
+function sourceLeads(width: number, bodyBottom: number, height: number): string {
+  const a = width / 2 - 10
+  const b = width / 2 + 10
+  return (
+    `<line x1="${a}" y1="${bodyBottom}" x2="${a}" y2="${height}" stroke="#6f7276" stroke-width="2"/>` +
+    `<line x1="${b}" y1="${bodyBottom}" x2="${b}" y2="${height}" stroke="#c0392b" stroke-width="2"/>`
+  )
+}
+
+const BATTERY_9V_W = 62
+const BATTERY_9V_H = 54
+
+const battery9v: PartDefinition = {
+  type: 'battery_9v',
+  label: '9 V battery',
+  width: BATTERY_9V_W,
+  height: BATTERY_9V_H,
+  pins: sourcePins(BATTERY_9V_W, BATTERY_9V_H),
+  /**
+   * NO PROPS AT ALL, which matches Tinkercad's own inspector for this part
+   * (`Name` only) and is the honest shape: a PP3 is 9 V and 1.7 Ω, and there is
+   * nothing on it a student could adjust on a bench either.
+   */
+  electrical: { kind: 'source', supply: 'cell', cell: 'pp3_9v', pos: 'POS', neg: 'NEG' },
+  svg: `
+    <rect x="2" y="2" width="${BATTERY_9V_W - 4}" height="40" rx="4" fill="#2b2f36" stroke="#15181c"/>
+    <rect x="2" y="2" width="${BATTERY_9V_W - 4}" height="12" rx="4" fill="#c0392b"/>
+    <text x="${BATTERY_9V_W / 2}" y="11.5" font-size="8" text-anchor="middle" fill="#ffffff"
+          font-family="monospace">9V</text>
+    <text x="${BATTERY_9V_W / 2}" y="30" font-size="9" text-anchor="middle" fill="#e8e8e8"
+          font-family="monospace">ALKALINE</text>
+    <text x="${BATTERY_9V_W / 2 - 10}" y="40" font-size="8" text-anchor="middle" fill="#9aa3ad"
+          font-family="monospace">−</text>
+    <text x="${BATTERY_9V_W / 2 + 10}" y="40" font-size="8" text-anchor="middle" fill="#e88"
+          font-family="monospace">+</text>
+    ${sourceLeads(BATTERY_9V_W, 42, BATTERY_9V_H)}
+  `,
+}
+
+const COIN_W = 58
+const COIN_H = 58
+
+const coinCell: PartDefinition = {
+  type: 'coin_cell_3v',
+  label: 'Coin cell 3 V (CR2032)',
+  width: COIN_W,
+  height: COIN_H,
+  pins: sourcePins(COIN_W, COIN_H),
+  electrical: { kind: 'source', supply: 'cell', cell: 'cr2032', pos: 'POS', neg: 'NEG' },
+  svg: `
+    <rect x="4" y="6" width="${COIN_W - 8}" height="38" rx="3" fill="#2c2f33" stroke="#17191c"/>
+    <circle cx="${COIN_W / 2}" cy="25" r="17" fill="#c8ccd1" stroke="#8d9298"/>
+    <circle cx="${COIN_W / 2}" cy="25" r="13" fill="#dfe3e8" stroke="#adb3ba" stroke-width="0.8"/>
+    <text x="${COIN_W / 2}" y="23" font-size="7" text-anchor="middle" fill="#4a4f55"
+          font-family="monospace">CR2032</text>
+    <text x="${COIN_W / 2}" y="32" font-size="8" text-anchor="middle" fill="#4a4f55"
+          font-family="monospace">+ 3V</text>
+    ${sourceLeads(COIN_W, 44, COIN_H)}
+  `,
+}
+
+/** The four cell bays of the holder, in part-local units. */
+const PACK_BAY = { x: 6, y: 6, w: 26, h: 28, gap: 4 }
+const PACK_W = PACK_BAY.x * 2 + 4 * PACK_BAY.w + 3 * PACK_BAY.gap
+const PACK_H = 60
+
+/**
+ * One bay, with cells 2–4 shown through a CSS custom property so the picture
+ * follows the `Count` selectbox.
+ *
+ * Same mechanism as the LED's dome and the button's pressed cap: the markup is
+ * injected as raw SVG and shared by every instance, and a custom property is the
+ * only thing that INHERITS into it. Without this a two-cell pack would be drawn
+ * as four cells — a picture that contradicts both the inspector and the solved
+ * voltage, which is the LED-colour bug with nicer artwork.
+ */
+function packBay(index: number): string {
+  const x = PACK_BAY.x + index * (PACK_BAY.w + PACK_BAY.gap)
+  const hidden = index === 0 ? '' : ` style="opacity: var(--pack-cell-${index + 1}, 1)"`
+  return (
+    `<g${hidden}>` +
+    `<rect x="${x}" y="${PACK_BAY.y}" width="${PACK_BAY.w}" height="${PACK_BAY.h}" rx="3" ` +
+    `fill="#3f444b" stroke="#23272c"/>` +
+    `<rect x="${x + 2}" y="${PACK_BAY.y + 4}" width="${PACK_BAY.w - 4}" height="${PACK_BAY.h - 8}" ` +
+    `rx="2" fill="#b9c0c8"/>` +
+    `<rect x="${x + 2}" y="${PACK_BAY.y + 4}" width="5" height="${PACK_BAY.h - 8}" fill="#8d9298"/>` +
+    `<text x="${x + PACK_BAY.w / 2 + 2}" y="${PACK_BAY.y + PACK_BAY.h / 2 + 3}" font-size="7" ` +
+    `text-anchor="middle" fill="#3f444b" font-family="monospace">1.5V</text>` +
+    `</g>`
+  )
+}
+
+const batteryPack: PartDefinition = {
+  type: 'battery_pack_1v5',
+  label: '1.5 V battery pack',
+  width: PACK_W,
+  height: PACK_H,
+  pins: sourcePins(PACK_W, PACK_H),
+  electrical: { kind: 'source', supply: 'pack', pos: 'POS', neg: 'NEG' },
+  props: [
+    {
+      key: 'cells',
+      label: 'Count',
+      type: 'select',
+      options: [...PACK_CELL_COUNTS],
+      /**
+       * NO `unit`. The inspector appends one to each <option> with a space of
+       * its own, so `unit: ' cells'` rendered as "1  cells" — a double space and
+       * a plural on the singular. "Count: 1 / 2 / 3 / 4" is Tinkercad's own
+       * control for this part and needs no suffix; the hint says what they are.
+       */
+      hint: 'Cells in SERIES: the voltages add, and so do their internal resistances.',
+      default: PACK_DEFAULT_CELLS,
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      type: 'choice',
+      choices: [
+        { value: 'aa', label: 'AA — 150 mΩ each' },
+        { value: 'aaa', label: 'AAA — 250 mΩ each' },
+      ],
+      hint: 'Both are 1.5 V. An AAA is the same chemistry in a smaller can, so it sags harder.',
+      default: 'aa',
+    },
+    /**
+     * ONE prop with three values rather than "has a switch" plus "switch is on",
+     * and that is a deliberate refusal rather than a shortcut.
+     *
+     * Two props would let the second one be turned while the first says there is
+     * no switch to turn — a control the student operates, the document records,
+     * and the physics never hears about. That is the exact failure
+     * prop-reachability.ts exists to catch, and the guard would not catch this
+     * one, because it varies a single prop at a time with the others at their
+     * defaults.
+     *
+     * THERE IS NO CANVAS CONTROL FOR IT, for a reason worth stating: the canvas
+     * vocabulary is a knob, a linear slider, a press-and-hold button and a
+     * draggable target, and a pack switch is none of those — it LATCHES, so a
+     * momentary is wrong, and it has three states, so a slider on a `range`
+     * cannot express "no switch fitted" at all. The inspector's <select> is a
+     * real control; a drawn switch that only worked in one of the three
+     * configurations would not be.
+     */
+    {
+      key: 'switch',
+      label: 'Built-in switch',
+      type: 'choice',
+      choices: [
+        { value: 'none', label: 'No switch — always connected' },
+        { value: 'on', label: 'Fitted, switched ON' },
+        { value: 'off', label: 'Fitted, switched OFF' },
+      ],
+      default: 'on',
+    },
+  ],
+  svg: `
+    <rect x="0" y="0" width="${PACK_W}" height="46" rx="4" fill="#2c2f33" stroke="#17191c"/>
+    ${[0, 1, 2, 3].map(packBay).join('')}
+    <g style="opacity: var(--pack-switch, 1)">
+      <rect x="${PACK_W - 34}" y="38" width="26" height="12" rx="2" fill="#4a4f55" stroke="#23272c"/>
+      <rect x="${PACK_W - 33}" y="39" width="11" height="10" rx="1.5" fill="#dfe3e8"
+            style="transform: translateX(var(--pack-switch-dx, 12px))"/>
+      <text x="${PACK_W - 40}" y="47" font-size="6" text-anchor="end" fill="#9aa3ad"
+            font-family="monospace">SW</text>
+    </g>
+    ${sourceLeads(PACK_W, 46, PACK_H)}
+  `,
+}
+
+/**
+ * Where the bench supply's two live readouts go, in part-local units.
+ *
+ * Exported for the same reason DC_MOTOR_READOUT and LCD1602_SCREEN are: the
+ * static artwork draws the display WINDOW and the canvas draws the numbers in
+ * it from the solved operating point, and two copies of these coordinates would
+ * drift by a unit and put the volts outside their own bezel.
+ */
+export const SUPPLY_READOUT = {
+  window: { x: 8, y: 8, w: 78, h: 30, rx: 2 },
+  /** Baseline and size of the big volts line, and of the amps line under it. */
+  volts: { x: 47, y: 23, fontSize: 12 },
+  amps: { x: 47, y: 34, fontSize: 9 },
+} as const
+
+const SUPPLY_W = 146
+const SUPPLY_H = 92
+const SUPPLY_KNOB = { cx: 112, cy: 24, r: 17 }
+
+/**
+ * A regulated bench supply: a voltage dial, a current limit, an output switch
+ * and two live readouts — the part experiment 09's bill of materials calls a
+ * "12 V supply".
+ *
+ * ONE KNOB ON THE ARTWORK, NOT TWO. Tinkercad draws a knob for each dial;
+ * `PartDefinition` carries a single `knob`, and rather than draw a second one
+ * that cannot be turned — a dead control, drawn — the current limit is set in
+ * the inspector, where it can also be TYPED, which matters more for a limit than
+ * for a voltage: "0.1 A" is a number you choose deliberately, not one you find
+ * by dragging.
+ */
+const benchSupply: PartDefinition = {
+  type: 'power_supply',
+  label: 'Bench power supply',
+  width: SUPPLY_W,
+  height: SUPPLY_H,
+  pins: sourcePins(SUPPLY_W, SUPPLY_H),
+  electrical: { kind: 'source', supply: 'bench', pos: 'POS', neg: 'NEG' },
+  props: [
+    {
+      key: 'voltage',
+      label: 'Voltage',
+      // A `range` rather than a `number`, because it is the prop the KNOB drives
+      // and propDeclarationProblems() requires that (a knob sweeps a range). The
+      // 0.1 V step is what makes 12.0 V — the figure experiment 09 asks for —
+      // land exactly, by dragging or with an arrow key.
+      type: 'range',
+      min: 0,
+      max: SUPPLY_MAX_VOLTS,
+      step: 0.1,
+      unit: 'V',
+      default: SUPPLY_DEFAULT_VOLTS,
+      hint: 'Or turn the dial on the supply itself.',
+    },
+    {
+      key: 'current',
+      label: 'Current limit',
+      type: 'number',
+      unit: 'A',
+      units: AMP_UNITS,
+      min: 0,
+      max: SUPPLY_MAX_AMPS,
+      options: [0.1, 0.5, 1, 2, 5],
+      hint: 'Past this the supply holds the CURRENT and its voltage falls away.',
+      default: SUPPLY_DEFAULT_AMPS,
+    },
+    {
+      key: 'on',
+      label: 'Output',
+      type: 'range',
+      min: 0,
+      max: 1,
+      step: 1,
+      default: 1,
+      hint: 'Or flip the switch on the front panel.',
+    },
+  ],
+  knob: {
+    key: 'voltage',
+    cx: SUPPLY_KNOB.cx,
+    cy: SUPPLY_KNOB.cy,
+    r: SUPPLY_KNOB.r,
+    // A 270° sweep with the dead band at the bottom, which is how every panel
+    // potentiometer is marked and where the artwork's own scale arc stops.
+    fromDeg: -135,
+    toDeg: 135,
+    angleVar: '--supply-knob',
+  },
+  slider: { key: 'on', x1: 18, y1: 56, x2: 40, y2: 56, r: 4.5 },
+  svg: `
+    <rect x="0" y="0" width="${SUPPLY_W}" height="78" rx="4" fill="#dfe3e8" stroke="#a9b0b8"/>
+    <rect x="0" y="0" width="${SUPPLY_W}" height="6" rx="4" fill="#c3cad2"/>
+    <rect x="${SUPPLY_READOUT.window.x}" y="${SUPPLY_READOUT.window.y}"
+          width="${SUPPLY_READOUT.window.w}" height="${SUPPLY_READOUT.window.h}"
+          rx="${SUPPLY_READOUT.window.rx}" fill="#12251c" stroke="#0a170f"/>
+    <text x="12" y="52" font-size="6.5" fill="#566573" font-family="monospace">OUTPUT</text>
+    <g transform="translate(${SUPPLY_KNOB.cx} ${SUPPLY_KNOB.cy})">
+      <circle r="${SUPPLY_KNOB.r}" fill="#8f959c" stroke="#6b7178"/>
+      <circle r="${SUPPLY_KNOB.r - 4}" fill="#b8bec5"/>
+      <g style="transform: rotate(var(--supply-knob, 0deg))">
+        <rect x="-1.4" y="-${SUPPLY_KNOB.r - 2}" width="2.8" height="8" rx="1.2" fill="#2c2f33"/>
+      </g>
+    </g>
+    <text x="${SUPPLY_KNOB.cx}" y="52" font-size="6.5" text-anchor="middle" fill="#566573"
+          font-family="monospace">VOLTS</text>
+    <text x="8" y="72" font-size="6.5" fill="#566573" font-family="monospace">DC POWER SUPPLY</text>
+    <circle cx="${SUPPLY_W / 2 - 10}" cy="76" r="4.5" fill="#2c2f33" stroke="#17191c"/>
+    <circle cx="${SUPPLY_W / 2 + 10}" cy="76" r="4.5" fill="#c0392b" stroke="#7d2318"/>
+    ${sourceLeads(SUPPLY_W, 78, SUPPLY_H)}
+  `,
+}
+
 // ─── Character LCD ────────────────────────────────────────────────────────────
 
 /**
@@ -2320,6 +2828,10 @@ export const PART_LIBRARY: Record<string, PartDefinition> = {
   lcd1602,
   capacitor,
   inductor,
+  battery_9v: battery9v,
+  coin_cell_3v: coinCell,
+  battery_pack_1v5: batteryPack,
+  power_supply: benchSupply,
 }
 
 /** Palette order. Breadboard and board first — students place those first too. */
@@ -2328,6 +2840,15 @@ export const PALETTE: string[] = [
   'arduino_mega',
   'raspberry_pi_pico',
   'breadboard',
+  // The four sources come straight after the boards and before any load,
+  // because that is the order the work goes in and because for most of the
+  // history of this palette they were the missing row: with no board on the
+  // canvas there was nothing that could push a single electron, and the Checks
+  // panel's advice for a battery-and-lamp circuit was "add an Arduino".
+  'battery_9v',
+  'battery_pack_1v5',
+  'coin_cell_3v',
+  'power_supply',
   'resistor',
   'led',
   'push_button',
@@ -2511,6 +3032,29 @@ export function formatValueUnit(
 // ─── Knob geometry ────────────────────────────────────────────────────────────
 
 /** Degrees clockwise from twelve o'clock for a prop value. */
+/**
+ * How one `select` option reads in the inspector.
+ *
+ * HERE RATHER THAN IN THE REACT CONTROL so it can be asserted without a DOM —
+ * the same reason `splitValueUnit` and `ledBodyFill` live in this file — and
+ * because it had a bug that only a part with no unit could reveal.
+ *
+ * `unit` IS OPTIONAL on PropSpec and the renderer assumed it was not, so an
+ * option list with no unit printed "1 undefined" for every entry. It survived
+ * because every `select` in the library was a resistance or a capacitance until
+ * the battery pack's `Count`, which is a plain number of cells and should not
+ * invent a unit to hang off it. Both of the special cases are now conditional on
+ * there being a unit at all: "none (wire)" is a statement about 0 Ω and means
+ * nothing about 0 cells, and "4 k" with no unit behind it is not a value.
+ */
+export function selectOptionLabel(value: number, unit: string | undefined): string {
+  const u = unit ?? ''
+  if (u === '') return String(value)
+  if (value === 0) return 'none (wire)'
+  if (value >= 1000) return `${value / 1000} k${u}`
+  return `${value} ${u}`
+}
+
 export function knobAngleFor(knob: KnobControl, prop: PropSpec, value: number): number {
   const min = prop.min ?? 0
   const max = prop.max ?? 100

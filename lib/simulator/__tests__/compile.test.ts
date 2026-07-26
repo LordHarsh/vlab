@@ -602,13 +602,41 @@ group('8. destructive and malformed circuits')
   const cl = solveDoc(clash)
   truth('5 V wired to 3.3 V → ok:false', !cl.res.ok, 'ok:false', `ok:${cl.res.ok} "${cl.res.error ?? ''}"`)
 
-  // A circuit with no ground at all is called out before solving.
-  const gnd = compile({
+  /**
+   * A circuit with nothing driving it is called out before solving.
+   *
+   * THIS ASSERTION USED TO READ `/ground/i` and it was checking a message that
+   * has stopped being true. Two resistors on a bench do not need a ground pin
+   * and do not need an Arduino; what they need is something to push a current,
+   * and now that batteries exist "add an Arduino" is advice that would send a
+   * student to break a working circuit. See chooseReferences() in compile.ts:
+   * a reference comes from a `gnd` pin OR from any source's negative terminal,
+   * so an empty `referenceRoots` means exactly "no board and no source".
+   */
+  const unpowered = compile({
     parts: [place('r1', 'resistor', { ohms: 220 }), place('r2', 'resistor', { ohms: 220 })],
     wires: [wire(['r1', '2'], ['r2', '1'])],
   })
-  truth('a circuit with no ground is flagged', gnd.problems.some((p) => /ground/i.test(p)),
-    'a ground problem', JSON.stringify(gnd.problems))
+  truth('a circuit with nothing supplying power is flagged',
+    unpowered.problems.some((p) => /supplying power/i.test(p)),
+    'a no-power problem', JSON.stringify(unpowered.problems))
+  truth('...and it no longer tells the student to add an Arduino',
+    !unpowered.problems.some((p) => /Arduino|GND/i.test(p)),
+    'no board advice', JSON.stringify(unpowered.problems))
+
+  // The same two resistors with a battery across them: powered, referenced, and
+  // silent about grounding.
+  const powered = compile({
+    parts: [
+      place('b', 'battery_9v'),
+      place('r1', 'resistor', { ohms: 220 }),
+      place('r2', 'resistor', { ohms: 220 }),
+    ],
+    wires: [wire(['b', 'POS'], ['r1', '1']), wire(['r1', '2'], ['r2', '1']),
+      wire(['r2', '2'], ['b', 'NEG'])],
+  })
+  truth('a battery is enough — no power problem, no ground problem',
+    powered.problems.length === 0, '[]', JSON.stringify(powered.problems))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1203,6 +1231,7 @@ group('13. the driver ICs report what they are doing')
     const state = analogDeviceStates({
       doc: ulnDoc, netOf: c.netOf, nets: c.nets,
       voltages: c.circuit.solve().voltages, reactive: c.reactive, drivers: c.drivers,
+      sources: c.sources,
       transient: false,
     })
     truth('the reported pattern dashes the five channels nobody wired',
