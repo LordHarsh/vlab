@@ -87,13 +87,25 @@ export const IDLE_FRAME: ShowreelFrame = {
   rawPinStates: {},
 }
 
-/** `m:ss.t`, tenths included so the eye can see it moving. */
+/**
+ * `HH:MM:SS.mmm` — the shape Tinkercad's `Simulator time:` readout uses, since
+ * that is the workbench the panel around this is imitating.
+ *
+ * Milliseconds rather than tenths, and they are the point: the clock is written
+ * straight into its text node on every animation frame, so the last digits blur
+ * exactly the way a running instrument's do. A readout that ticks once a second
+ * is the one that looks like a screenshot.
+ */
 function formatElapsed(ms: number): string {
   const total = Math.max(0, ms)
-  const minutes = Math.floor(total / 60000)
+  const hours = Math.floor(total / 3600000)
+  const minutes = Math.floor((total % 3600000) / 60000)
   const seconds = Math.floor((total % 60000) / 1000)
-  const tenths = Math.floor((total % 1000) / 100)
-  return `${minutes}:${String(seconds).padStart(2, '0')}.${tenths}`
+  const millis = Math.floor(total % 1000)
+  return (
+    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:` +
+    `${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
+  )
 }
 
 function stamp(at: Date): string {

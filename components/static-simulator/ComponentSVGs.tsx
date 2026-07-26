@@ -22,6 +22,24 @@ export const useNodeVoltage = (nodeId: string, engineTickRate = 50) => {
 
   useEffect(() => {
     if (!nodeId) return;
+
+    /**
+     * PORT: the poll does not start unless there is something to poll.
+     *
+     * `window.SimulationEngine` is upstream's execution engine, and the port
+     * deliberately left it behind — see StaticSimulator.tsx. So on every page
+     * this component has ever rendered on, the callback below has resolved
+     * `undefined?.getNodeVoltage(...) ?? 0.0` to 0, decided 'LOW', and been
+     * scheduled again 50 ms later, forever, for a value that cannot change.
+     * That is 20 wake-ups a second per relay and per bulb, and it was about to
+     * be multiplied by every thumbnail of one in the components rail.
+     *
+     * Guarded rather than deleted because the hook is still the right shape if
+     * an engine ever does turn up on `window`. When one has not, the state stays
+     * at its 'LOW' initial value, which is exactly what the interval produced.
+     */
+    if (!(window as any).SimulationEngine) return;
+
     const interval = setInterval(() => {
       // Directly query the engine's source of truth
       const currentVoltage = (window as any).SimulationEngine?.getNodeVoltage(nodeId) ?? 0.0;

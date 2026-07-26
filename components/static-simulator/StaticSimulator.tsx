@@ -1,10 +1,18 @@
 'use client'
 
 import React from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Code2, Terminal } from 'lucide-react'
 import { getStaticExperiment } from './experiment-map'
+import type { Experiment } from './types'
+import { COMPONENT_DEFINITIONS } from './utils/componentDefinitions'
 import { StaticCircuit } from './StaticCircuit'
 import { SyntaxCodeViewer } from './features/SyntaxCodeViewer'
+import {
+  CanvasCornerMark,
+  CanvasStatusStrip,
+  ComponentsRail,
+  WorkspaceToolbar,
+} from './features/WorkspaceChrome'
 import { languageForPlatform } from './utils/highlight'
 import { useShowreel, useStickToBottom, type SerialLine } from './showreel/useShowreel'
 import './static-simulator.css'
@@ -32,8 +40,24 @@ import './static-simulator.css'
  * that is what a section typed `native` renders.
  *
  * ONE CLOCK. `useShowreel` is called here, once, and everything below reads
- * from it. The alternative — the circuit on its own timer, the log on another
- * — is how a panel ends up printing a temperature the artwork is not showing.
+ * from it — the circuit, the parts rail, the readout strip, the serial log and
+ * the elapsed timer. The alternative — the circuit on its own timer, the log on
+ * another — is how a panel ends up printing a temperature the artwork is not
+ * showing.
+ *
+ * IT IS DRESSED AS A WORKBENCH, AND THE WORKBENCH IS ALSO A DRAWING. Around the
+ * circuit sit a toolbar, a components rail, a code panel and a serial monitor,
+ * laid out after Tinkercad Circuits because that is the tool these students
+ * recognise. Not one control in that shell is live: features/WorkspaceChrome
+ * contains no `<button>`, no `<input>` and no handler, and every decorative
+ * cluster is `aria-hidden`. The only interactive element this panel has ever
+ * had is the code viewer's Copy button, and it still is.
+ *
+ * The reason to build the furniture at all is that a lone animated figure in a
+ * bare card reads as a video. The reason none of it works is that a student
+ * cannot edit a reference circuit, and a Delete button that declines to delete
+ * teaches them the app is broken. Present and visibly inert beats live-looking
+ * and dead.
  *
  * NOT WIRED TO ANY BACKEND. Upstream persisted circuits into its own Supabase
  * project behind its own Supabase Auth session. None of that came across —
@@ -79,112 +103,113 @@ export function StaticSimulator({
     )
   }
 
+  const boardLabel = boardNameOf(experiment)
+  const fileName = experiment.platform === 'Arduino' ? 'sketch.ino' : 'main.py'
+
   return (
     // `static-sim` is the scope class every rule in static-simulator.css hangs
     // off. Without it the ported artwork loses its LED glows, motor spin and
     // the whole snitch card/code-block treatment.
     <div className="static-sim w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#dfe3e8] bg-white px-3 py-2.5 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="truncate text-sm font-semibold text-[#34495e]">
-            {title ?? experiment.title}
-          </span>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {showreel.hasTimeline && (
-            <RunState
-              isRunning={showreel.isRunning}
-              clockRef={showreel.clockRef}
-              initialClock={showreel.initialClock}
-            />
-          )}
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
-            {experiment.platform} · reference circuit
-          </span>
-        </div>
+      {/* The document bar, above the toolbar, where the product puts the design
+          name. It carries the two facts a lesson page needs and the toolbar
+          cannot: which experiment this is, and that it is a reference build. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[#dfe3e8] bg-white px-3 py-1.5 sm:px-4">
+        <span className="truncate text-[13px] font-semibold text-[#34495e]">
+          {title ?? experiment.title}
+        </span>
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
+          {experiment.platform} · reference circuit
+        </span>
       </div>
 
-      <div className="space-y-4 p-3 sm:p-4">
-        <section>
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
-            Circuit
-          </h3>
-          <div className="overflow-hidden rounded-[5px] border border-[#dfe3e8]">
+      <WorkspaceToolbar
+        boardLabel={boardLabel}
+        isRunning={showreel.isRunning}
+        hasTimeline={showreel.hasTimeline}
+        clockRef={showreel.clockRef}
+        initialClock={showreel.initialClock}
+      />
+
+      {/* Canvas beside the rail from `lg` up, stacked below it. A 264 px rail
+          against a 390 px viewport would leave the circuit 126 px wide, which
+          is not a circuit; stacked, the canvas keeps the full width and the
+          rail becomes a strip of tiles under it. */}
+      <div className="flex flex-col lg:flex-row">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="relative h-[260px] bg-[#f7f8f9] sm:h-[320px] lg:h-[380px]">
             <StaticCircuit experiment={experiment} frame={showreel.frame} />
+            <CanvasCornerMark />
           </div>
-        </section>
+          <CanvasStatusStrip frame={showreel.frame} />
+        </div>
 
-        {showreel.hasTimeline && (
-          <section>
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
-              Serial monitor
-            </h3>
-            <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
-          </section>
-        )}
+        <ComponentsRail
+          experiment={experiment}
+          frame={showreel.frame}
+          className="max-h-[300px] overflow-y-auto lg:max-h-none lg:w-[264px] lg:overflow-y-auto xl:w-[288px]"
+        />
+      </div>
 
-        <section>
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
+      {/* The code panel and its serial drawer, docked at the foot the way the
+          product docks them. Fixed height with the listing scrolling inside:
+          experiment 11's sketch is 120 lines, and a panel that grows to fit it
+          pushes the circuit off the top of the lesson page. */}
+      <div className="border-t border-[#dfe3e8] bg-white p-3 sm:p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
             Code
           </h3>
+          {/* What the listing is bound to, which is what the product's code
+              panel puts here. The FILE name is not repeated: the viewer draws
+              its own tab a few pixels below this line. */}
+          <span className="truncate font-mono text-[10px] text-[#9aa3ab]">{boardLabel}</span>
+        </div>
+
+        {/* A plain block, not a flex row. `.snitch-code-block` is itself
+            `display: flex`, so as a block-level child it fills this width and
+            `snitch-h-full` gives it the height; as a flex ITEM it sized to its
+            longest line instead and left a ragged gap down the right. */}
+        <div className="h-[300px] sm:h-[340px]">
           <SyntaxCodeViewer
             code={code ?? experiment.defaultCode}
             language={languageForPlatform(experiment.platform)}
-            fileName={experiment.platform === 'Arduino' ? 'sketch.ino' : 'main.py'}
+            fileName={fileName}
           />
-        </section>
+        </div>
+
+        {showreel.hasTimeline && (
+          <div className="mt-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Terminal className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
+                Serial monitor
+              </h3>
+            </div>
+            <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-/* ── The chrome ───────────────────────────────────────────────────────────
- *
- * Both pieces below are display only. There is no start button, no stop
- * button and no speed control, and that is on purpose: a control implies the
- * student can change what happens, and the one thing this panel must never
- * suggest is that the circuit or the code can be touched. It autoplays.
- */
-
 /**
- * The dot and the elapsed timer.
+ * The board this circuit is built around, by its real part name.
  *
- * `React.memo` with props that never change means React commits this subtree
- * once and then leaves it alone, which is what lets the loop write the elapsed
- * time straight into the text node without React putting "0:00.0" back on the
- * next step change. If a future React does re-render it anyway the clock
- * self-heals on the following frame — the loop rewrites whenever the text does
- * not match — so this is an optimisation, not a correctness crutch.
+ * Read off `defaultComponents` rather than off `platform`, because "Arduino"
+ * is not a board — the code panel header claiming to be bound to an "Arduino"
+ * is the kind of near-miss that stops a student trusting the rest of the label.
+ * Normalisation is not needed here: the two circuits it repairs lose a stepper
+ * motor and gain a bulb, never a controller.
  */
-const RunState = React.memo(function RunState({
-  isRunning,
-  clockRef,
-  initialClock,
-}: {
-  isRunning: boolean
-  clockRef: React.RefObject<HTMLSpanElement | null>
-  initialClock: string
-}) {
-  return (
-    <span className="flex items-center gap-1.5 rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] px-2 py-1">
-      <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-          isRunning ? 'showreel-blip bg-[#16a34a]' : 'bg-[#566573]'
-        }`}
-        aria-hidden="true"
-      />
-      <span className="text-[11px] font-semibold leading-none text-[#34495e]">
-        {isRunning ? 'Simulation running' : 'Simulation paused'}
-      </span>
-      <span
-        ref={clockRef}
-        className="font-mono text-[11px] leading-none tabular-nums text-[#566573]"
-      >
-        {initialClock}
-      </span>
-    </span>
+function boardNameOf(experiment: Experiment): string {
+  const board = experiment.defaultComponents.find(
+    (c) => COMPONENT_DEFINITIONS[c.type]?.category === 'controllers',
   )
-})
+  return (board && COMPONENT_DEFINITIONS[board.type]?.name) || experiment.platform
+}
 
 /**
  * The serial log, styled to match components/simulations/shared.tsx — same
@@ -208,7 +233,7 @@ function SerialLog({
   return (
     <div
       ref={scrollRef}
-      className="h-[148px] w-full overflow-y-auto overflow-x-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] p-2.5 font-mono text-[11px] leading-[1.7] text-[#34495e] sm:text-[12px]"
+      className="workspace-scroll h-[148px] w-full overflow-y-auto overflow-x-hidden rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] p-2.5 font-mono text-[11px] leading-[1.7] text-[#34495e] sm:text-[12px]"
       role="log"
       aria-live="off"
       aria-label="Serial monitor output"

@@ -136,7 +136,13 @@
 }
 
 /* Custom scrollbar styles. Scoped — upstream restyled every scrollbar in the
-   document, including the lesson page's. */
+   document, including the lesson page's.
+
+   These are upstream's, and they are for a DARK surface: a near-black track
+   with a white thumb at 10%. That is still right inside the code block, which
+   is dark in both themes, and it is the only place in this port that is —
+   which is why the light-surface override sits immediately below rather than
+   replacing them. */
 .static-sim ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -150,6 +156,25 @@
 }
 .static-sim ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+/* NOT UPSTREAM. The workspace shell around the circuit is white — the parts
+   rail and the serial monitor both scroll — and upstream's dark track drew a
+   black bar down the side of each of them with a thumb that was invisible
+   against it. Opt in per element rather than flipping the rule above, so the
+   dark code block keeps the scrollbar it was designed with. */
+.static-sim .workspace-scroll::-webkit-scrollbar-track {
+  background: #f4f5f6;
+}
+.static-sim .workspace-scroll::-webkit-scrollbar-thumb {
+  background: #c9cfd6;
+}
+.static-sim .workspace-scroll::-webkit-scrollbar-thumb:hover {
+  background: #aab3bc;
+}
+.static-sim .workspace-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #c9cfd6 #f4f5f6;
 }
 
 /* Visual glassmorphism style classes */

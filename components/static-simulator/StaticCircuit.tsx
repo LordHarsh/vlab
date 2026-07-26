@@ -103,8 +103,12 @@ function getPinPosSchematic(comp: ComponentInstance, pinId: string): { x: number
  *
  * Their comments are kept so the intent stays attributable. This runs on a deep
  * copy — `EXPERIMENTS` is a module-level constant shared by every render.
+ *
+ * EXPORTED so the components rail beside this canvas lists exactly the parts
+ * the canvas draws. Reading `experiment.defaultComponents` there instead would
+ * put a stepper motor in experiment 9's rail that is nowhere on its board.
  */
-function normaliseCircuit(experiment: Experiment): {
+export function normaliseCircuit(experiment: Experiment): {
   components: ComponentInstance[]
   wires: WireConnection[]
 } {
@@ -320,8 +324,11 @@ export function StaticCircuit({
     <svg
       viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
       /**
-       * `block h-auto w-full` — scales to the container instead of to a fixed
-       * pixel size, so the same drawing works on a phone and on a lab desktop.
+       * `block h-full w-full` — fills the canvas box the workspace gives it and
+       * letterboxes itself inside (SVG's default `preserveAspectRatio` centres
+       * the viewBox), so the circuit sits in the middle of a canvas the way it
+       * does in a real editor rather than dictating the panel's height. The box
+       * is what is responsive; this just fills it.
        *
        * `pointer-events-none` — the ported artwork still carries the editor's
        * affordances inside it: Wire.tsx puts `cursor: pointer` on every wire
@@ -333,22 +340,38 @@ export function StaticCircuit({
        * guarantee that no ported handler can ever fire. It costs the native
        * `<title>` tooltips on pins, which were an editing aid.
        */
-      className={`pointer-events-none block h-auto w-full ${className}`}
+      className={`pointer-events-none block h-full w-full ${className}`}
       role="img"
       aria-label={`Circuit diagram: ${experiment.title}`}
     >
       <title>{`Circuit diagram: ${experiment.title}`}</title>
 
-      {/* The canvas backdrop, from upstream SimulatorWorkspace.tsx:3128 and
-          :3151. It is load-bearing, not decoration: every component in
-          ComponentSVGs is drawn to read against the dark #1a1a2e canvas, and
-          the grid dots are white at 8% alpha, so putting this artwork on the
-          lesson page's white would wash out both. The rect is positioned from
-          the viewBox rather than upstream's `width="100%" height="100%"`,
-          which assumed an origin at 0,0. */}
+      {/*
+       * THE CANVAS BACKDROP, AND WHY IT IS NO LONGER UPSTREAM'S.
+       *
+       * Upstream painted `#1a1a2e` with white dots at 8% alpha
+       * (SimulatorWorkspace.tsx:3128 and :3151) and every part in ComponentSVGs
+       * was drawn to read against it. This is now a LIGHT canvas — near-white
+       * with dark dots — because the workbench this panel imitates has one, and
+       * a dark rectangle in the middle of a lesson page reads as an embedded
+       * video rather than as a tool.
+       *
+       * The artwork was checked against it part by part rather than assumed to
+       * survive the swap, which is the obvious way to get this wrong. What was
+       * actually at risk: the bodies are dark (a navy Uno, a blue DHT11, a
+       * slate L298N) so their white lettering is unaffected; the breadboard is
+       * near-white and keeps its own grey outline; and the three light-grey
+       * parts — the servo horn, the motor can, the flow sensor — carry
+       * mid-slate strokes rather than white ones. The one thing that genuinely
+       * did break was this pattern: white dots at 8% over a pale canvas are
+       * invisible, so they are dark at 6% instead.
+       *
+       * The rect is positioned from the viewBox rather than upstream's
+       * `width="100%" height="100%"`, which assumed an origin at 0,0.
+       */}
       <defs>
         <pattern id={gridId} width="15" height="15" patternUnits="userSpaceOnUse">
-          <circle cx="1.5" cy="1.5" r="1.0" fill="rgba(255, 255, 255, 0.08)" />
+          <circle cx="1.5" cy="1.5" r="1.0" fill="rgba(15, 23, 42, 0.09)" />
         </pattern>
       </defs>
       <rect
@@ -356,7 +379,7 @@ export function StaticCircuit({
         y={viewBox.y}
         width={viewBox.width}
         height={viewBox.height}
-        fill="#1a1a2e"
+        fill="#f7f8f9"
       />
       <rect
         x={viewBox.x}
