@@ -190,57 +190,15 @@
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-/* SVG grid patterns */
-.static-sim .grid-bg {
-  background-size: 20px 20px;
-  background-image:
-    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-}
-
-/* Animations */
-@keyframes flow-dash {
-  to {
-    stroke-dashoffset: -20;
-  }
-}
-
-.static-sim .wire-animated {
-  stroke-dasharray: 4, 4;
-  animation: flow-dash 1s linear infinite;
-}
-
-@keyframes pulse-soft {
-  0%,
-  100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 0.9;
-  }
-}
-
-.static-sim .pulse-glow {
-  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-@keyframes pulse-snap {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.4;
-  }
-  50% {
-    transform: scale(1.4);
-    opacity: 0.9;
-  }
-  100% {
-    transform: scale(0.8);
-    opacity: 0.4;
-  }
-}
-.static-sim .pin-snap-pulse {
-  animation: pulse-snap 1s infinite ease-in-out;
-}
+/*
+ * UPSTREAM'S CANVAS ANIMATIONS ARE GONE WITH THE ARTWORK THEY ANIMATED.
+ *
+ * `grid-bg`, `wire-animated` / `flow-dash`, `pulse-glow` / `pulse-soft` and
+ * `pin-snap-pulse` / `pulse-snap` all sat here and all styled ComponentSVGs.tsx
+ * and features/Wire.tsx, which this panel no longer renders — the circuit is
+ * drawn by components/simulator/CircuitCanvas now. Nothing in the tree carries
+ * any of those class names.
+ */
 
 /* ═════════════════════════════════════════════════════════════════════════
  * snitch.css, inlined at the position upstream's mid-file @import sat.
@@ -535,146 +493,11 @@
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
- * Remainder of upstream index.css, after its @import './snitch.css'.
- * ═════════════════════════════════════════════════════════════════════════ */
-
-/* LED Glow Styles */
-.static-sim .led-on-white {
-  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.8));
-}
-
-@keyframes buzzerRing {
-  0% {
-    transform: scale(1) translate(0, 0);
-    opacity: 1;
-  }
-  10% {
-    transform: scale(1.05) translate(-1px, -1px);
-    opacity: 0.9;
-  }
-  20% {
-    transform: scale(1) translate(1px, 1px);
-    opacity: 1;
-  }
-  30% {
-    transform: scale(1.05) translate(-1px, 1px);
-    opacity: 0.9;
-  }
-  40% {
-    transform: scale(1) translate(1px, -1px);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.05) translate(-1px, -1px);
-    opacity: 0.9;
-  }
-  60% {
-    transform: scale(1) translate(1px, 1px);
-    opacity: 1;
-  }
-  70% {
-    transform: scale(1.05) translate(-1px, 1px);
-    opacity: 0.9;
-  }
-  80% {
-    transform: scale(1) translate(1px, -1px);
-    opacity: 1;
-  }
-  90% {
-    transform: scale(1.05) translate(-1px, -1px);
-    opacity: 0.9;
-  }
-  100% {
-    transform: scale(1) translate(0, 0);
-    opacity: 1;
-  }
-}
-
-.static-sim .buzzer-ringing {
-  animation: buzzerRing 0.1s infinite linear;
-  filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.6));
-  transform-origin: center center;
-}
-
-.static-sim .led-on-red {
-  filter: drop-shadow(0px 0px 8px rgba(239, 68, 68, 0.75));
-  opacity: 1 !important;
-}
-.static-sim .led-on-yellow {
-  filter: drop-shadow(0px 0px 8px rgba(234, 179, 8, 0.75));
-  opacity: 1 !important;
-}
-.static-sim .led-on-green {
-  filter: drop-shadow(0px 0px 8px rgba(34, 197, 94, 0.75));
-  opacity: 1 !important;
-}
-
-/* DC Motor Spinning Animations */
-@keyframes spin-cw {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes spin-ccw {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(-360deg);
-  }
-}
-
-.static-sim .motor-spin-cw,
-.static-sim .spin-cw {
-  animation: spin-cw 0.5s linear infinite;
-}
-
-.static-sim .motor-spin-ccw,
-.static-sim .spin-ccw {
-  animation: spin-ccw 0.5s linear infinite;
-}
-
-.static-sim .dc-motor-rotor {
-  transform-origin: center center;
-  transform-box: fill-box;
-}
-
-/* Lightbulb Glow Styles */
-.static-sim .bulb-on {
-  fill: #ffd700 !important;
-  filter: drop-shadow(0 0 10px yellow) !important;
-}
-.static-sim .bulb-off {
-  fill: #808080 !important;
-  filter: none !important;
-}
-
-.static-sim .lightbulb.glow-active circle {
-  filter: drop-shadow(0px 0px 20px #ffea00) !important;
-  transition: all 0.1s ease-in-out;
-}
-
-/* ═════════════════════════════════════════════════════════════════════════
  * NOT UPSTREAM — support for the scripted playback in showreel/.
  * ═════════════════════════════════════════════════════════════════════════ */
 
-/* The YF-S201 impeller. `transform-box: fill-box` makes `transform-origin:
-   center` mean the centre of THIS group rather than the centre of the whole
-   SVG viewport, which is what lets the existing spin-cw keyframes turn it on
-   the spot. The rotor's own `animation-duration` is set inline from the flow
-   rate — see the yf_s201 case in ComponentSVGs.tsx. */
-.static-sim .flow-rotor {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-/* The running dot next to "Simulation running". Deliberately not the ported
-   .pulse-glow: that one is tuned for an LED halo inside the dark canvas, and
-   this sits on the white panel chrome. */
+/* The running dot next to "Simulation running". Tuned for the white panel
+   chrome it sits on rather than for anything inside the canvas. */
 @keyframes showreel-blip {
   0%,
   100% {
@@ -695,31 +518,21 @@
  * REDUCED MOTION.
  *
  * useShowreel stops its clock for this query and holds one representative
- * frame, but the ported artwork also animates itself through six sets of
- * keyframes that know nothing about that clock — a frozen circuit with a
- * still-pulsing LED halo and a still-shaking buzzer is not what was asked
- * for. They all stop here, in one place, so the whole panel goes quiet
- * together.
+ * frame, and this list used to have eight more selectors on it because the
+ * ported artwork animated ITSELF through six sets of keyframes that knew
+ * nothing about that clock — a frozen circuit with a still-pulsing LED halo
+ * and a still-shaking buzzer.
  *
- * Nothing is hidden and no state changes: an LED that is lit stays lit, the
- * relay stays closed. Only the movement stops.
+ * Our canvas has no such thing: every moving pixel on it is a React render off
+ * the showreel's index, so stopping the clock stops the drawing outright. The
+ * one CSS animation left in the panel is the running dot in the toolbar, which
+ * is chrome rather than circuit, and it stops here.
+ *
+ * Nothing is hidden and no state changes: an LED that is lit stays lit, a
+ * detection cone stays amber. Only the movement stops.
  */
 @media (prefers-reduced-motion: reduce) {
-  .static-sim .wire-animated,
-  .static-sim .pulse-glow,
-  .static-sim .pin-snap-pulse,
-  .static-sim .buzzer-ringing,
-  .static-sim .motor-spin-cw,
-  .static-sim .spin-cw,
-  .static-sim .motor-spin-ccw,
-  .static-sim .spin-ccw,
   .static-sim .showreel-blip {
     animation: none;
-  }
-
-  .static-sim .buzzer-ringing {
-    /* The class also carries a transform and a glow; keep the glow, drop the
-       shake, so an active buzzer still reads as active. */
-    transform: none;
   }
 }

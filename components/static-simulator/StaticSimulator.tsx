@@ -2,9 +2,11 @@
 
 import React from 'react'
 import { AlertTriangle, Code2, Terminal } from 'lucide-react'
+import { getPart } from '@/lib/simulator/model/parts'
+import type { CircuitDoc } from '@/lib/simulator/model/document'
 import { getStaticExperiment } from './experiment-map'
 import type { Experiment } from './types'
-import { COMPONENT_DEFINITIONS } from './utils/componentDefinitions'
+import { REFERENCE_CIRCUITS } from './circuits'
 import { StaticCircuit } from './StaticCircuit'
 import { SyntaxCodeViewer } from './features/SyntaxCodeViewer'
 import {
@@ -18,13 +20,19 @@ import { useShowreel, useStickToBottom, type SerialLine } from './showreel/useSh
 import './static-simulator.css'
 
 /**
- * The colleague's simulator, ported and mounted for one experiment.
+ * One experiment's reference circuit, mounted as a read-only workbench.
  *
- * READ-ONLY BY CONSTRUCTION, not by configuration. There is no `editable` prop
- * to get flipped, no disabled state to defeat and no event handlers on the
- * circuit at all: the ported editor (drag, wire drawing, the parts palette,
- * Monaco, the run/step controls, the interpreter) was left out of the port
- * rather than switched off. What is here is a drawing and a listing.
+ * DRAWN BY OUR OWN CANVAS. The circuit is a `CircuitDoc` from ./circuits.ts —
+ * our part library, our pin ids — rendered by components/simulator/
+ * CircuitCanvas with `readOnly`, which is the same component and the same
+ * artwork the live editor uses. There is no second renderer here any more: the
+ * ported ComponentSVGs.tsx and features/Wire.tsx are deleted, and with them the
+ * risk of a part looking one way in the lab and another way in the figure.
+ *
+ * READ-ONLY BY CONSTRUCTION, not by configuration. `readOnly` attaches no
+ * handler, exposes no focusable control and puts `pointer-events: none` on the
+ * drawing; the workbench furniture around it contains no `<button>`, `<input>`
+ * or handler at all. There is nothing to defeat and nothing to flip.
  *
  * IT PLAYS, BUT IT DOES NOT SIMULATE. The circuit animates, the sensors count,
  * the serial monitor scrolls and the clock runs — all of it from
@@ -64,13 +72,20 @@ import './static-simulator.css'
  * there is nothing to save, so there is nothing to sign in to, and the
  * enrolment check on the route group above is the only gate this needs.
  *
- * Everything on screen comes from components/static-simulator/utils/
- * experimentData.ts, which ships with the port. That is deliberate for the
- * circuit — it is their drawing of their twelve circuits — and worth flagging
- * for the code: the listing shown here is THEIR `defaultCode`, which is not
- * necessarily byte-identical to the `code` section of the same experiment in
- * our database. If the two ever need to agree, the lesson page already reads
- * ours and can pass it in via `code`.
+ * WHERE EACH PIECE COMES FROM, because it is no longer one place:
+ *
+ *   the CIRCUIT   ./circuits.ts — ours, authored against our part library.
+ *   the ARTWORK   lib/simulator/model/parts.ts, via CircuitCanvas — ours.
+ *   the PLAYBACK  ./showreel/timelines.ts — ours, hand-written.
+ *   the LISTING   utils/experimentData.ts — THEIRS, and the one thing that is.
+ *
+ * That last one is worth flagging: the listing shown here is their
+ * `defaultCode`, which is not necessarily byte-identical to the `code` section
+ * of the same experiment in our database. If the two ever need to agree, the
+ * lesson page already reads ours and can pass it in via `code`. It also decided
+ * several of the circuits: where their published wiring and their published
+ * sketch disagreed, the drawing follows the SKETCH, because the sketch is the
+ * thing sitting on screen next to it. See circuits.ts.
  */
 export function StaticSimulator({
   experimentSlug,
@@ -83,13 +98,22 @@ export function StaticSimulator({
   code?: string | null
 }) {
   const experiment = getStaticExperiment(experimentSlug)
+  /**
+   * The drawing, in OUR document model — components/static-simulator/circuits.ts.
+   *
+   * Looked up by the SAME numeric id the code listing and the playback are, so
+   * the three cannot be resolved to different experiments. An id with no
+   * reference build falls through to the notice below, exactly as an unmapped
+   * slug does: a circuit under the wrong heading is worse than no circuit.
+   */
+  const doc = experiment ? REFERENCE_CIRCUITS[experiment.id] : undefined
 
   // Called unconditionally — the early return below is after it, because a
   // hook cannot sit behind a branch.
   const showreel = useShowreel(experiment?.id)
   const logRef = useStickToBottom(showreel.serialLines.length)
 
-  if (!experiment) {
+  if (!experiment || !doc) {
     return (
       <div className="w-full max-w-full rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6] px-4 py-8 text-center sm:py-10">
         <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#dfe3e8] bg-white">
@@ -103,7 +127,7 @@ export function StaticSimulator({
     )
   }
 
-  const boardLabel = boardNameOf(experiment)
+  const boardLabel = boardNameOf(doc, experiment)
   const fileName = experiment.platform === 'Arduino' ? 'sketch.ino' : 'main.py'
 
   return (
@@ -137,15 +161,23 @@ export function StaticSimulator({
           rail becomes a strip of tiles under it. */}
       <div className="flex flex-col lg:flex-row">
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* `bg-[#f7f8f9]` is the box behind the drawing; the canvas paints its
+              own near-white ground and its own dot grid over the whole of it, so
+              what this actually covers is the frame before hydration. Checked
+              rather than assumed after the swap: our artwork was drawn to read
+              against a light canvas and it does — the dark bodies keep their
+              white lettering, the near-white breadboard keeps its grey outline,
+              and the grid is our editor's own #d3d8dd rather than the ported
+              white-on-navy dots that had to be re-tuned. */}
           <div className="relative h-[260px] bg-[#f7f8f9] sm:h-[320px] lg:h-[380px]">
-            <StaticCircuit experiment={experiment} frame={showreel.frame} />
+            <StaticCircuit doc={doc} title={title ?? experiment.title} frame={showreel.frame} />
             <CanvasCornerMark />
           </div>
           <CanvasStatusStrip frame={showreel.frame} />
         </div>
 
         <ComponentsRail
-          experiment={experiment}
+          doc={doc}
           frame={showreel.frame}
           className="max-h-[300px] overflow-y-auto lg:max-h-none lg:w-[264px] lg:overflow-y-auto xl:w-[288px]"
         />
@@ -198,17 +230,16 @@ export function StaticSimulator({
 /**
  * The board this circuit is built around, by its real part name.
  *
- * Read off `defaultComponents` rather than off `platform`, because "Arduino"
- * is not a board — the code panel header claiming to be bound to an "Arduino"
- * is the kind of near-miss that stops a student trusting the rest of the label.
- * Normalisation is not needed here: the two circuits it repairs lose a stepper
- * motor and gain a bulb, never a controller.
+ * Read off the DRAWN DOCUMENT rather than off `platform`, because "Arduino" is
+ * not a board — a code panel header claiming to be bound to an "Arduino" is the
+ * kind of near-miss that stops a student trusting the rest of the label — and
+ * because reading it off the document is the one source that cannot disagree
+ * with what is on the canvas. `platform` remains the fallback for a circuit
+ * with no MCU in it at all.
  */
-function boardNameOf(experiment: Experiment): string {
-  const board = experiment.defaultComponents.find(
-    (c) => COMPONENT_DEFINITIONS[c.type]?.category === 'controllers',
-  )
-  return (board && COMPONENT_DEFINITIONS[board.type]?.name) || experiment.platform
+function boardNameOf(doc: CircuitDoc, experiment: Experiment): string {
+  const board = doc.parts.find((p) => getPart(p.type).electrical.kind === 'mcu')
+  return board ? getPart(board.type).label : experiment.platform
 }
 
 /**

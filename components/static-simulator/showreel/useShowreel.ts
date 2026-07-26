@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DeviceState } from '@/lib/simulator/behavioural'
 import { SHOWREEL_TIMELINES, type ShowreelSensors, type ShowreelStep } from './timelines'
 
 /**
@@ -29,8 +30,10 @@ import { SHOWREEL_TIMELINES, type ShowreelSensors, type ShowreelStep } from './t
  * `prefers-reduced-motion: reduce` stops the loop and holds the timeline's
  * `stillStep`, chosen per experiment to be the frame worth seeing. The serial
  * log is filled once, up to that step, so the panel still reads as a run that
- * happened rather than an empty box. The CSS keyframes in the ported artwork
- * are switched off for the same query in static-simulator.css.
+ * happened rather than an empty box. Stopping this loop now stops the DRAWING
+ * outright — the canvas has no self-running CSS animation of its own, unlike
+ * the ported artwork it replaced — so the only rule left under that query in
+ * static-simulator.css is the toolbar's running dot.
  */
 
 /** How many serial lines are kept. Matches components/simulations/shared.tsx. */
@@ -60,31 +63,37 @@ export interface SerialLine {
 }
 
 /**
- * What the artwork is shown. `componentId` is separate from `pinId` because
- * ComponentSVGs asks about its own pins by their bare id ('anode', 'out1'),
- * with no idea which instance it is drawing.
+ * One instant of the playback, in the shape the CANVAS wants.
+ *
+ * The first two fields are `CircuitCanvas`'s own `ledBrightness` and
+ * `deviceStates` props, unchanged and un-adapted — the same seam the live
+ * editor feeds from a running simulation (see CircuitEditor.tsx, which builds
+ * exactly this pair out of an engine snapshot). That is the whole reason no new
+ * rendering code was needed to move this panel onto our artwork.
+ *
+ * `props` is the third: overrides layered onto the DOCUMENT before it is drawn,
+ * for the things a simulation does not report because they are properties of
+ * the circuit — where a sensor's target is standing, whether a button's cap is
+ * held down.
  */
 export interface ShowreelFrame {
-  isPinHigh: (componentId: string, pinId: string) => boolean
-  pinVoltage: (componentId: string, pinId: string) => number
+  /** partId → 0..1. Straight into `CircuitCanvas`'s `ledBrightness`. */
+  leds: Map<string, number>
+  /** partId → reported state. Straight into `CircuitCanvas`'s `deviceStates`. */
+  devices: Record<string, DeviceState>
+  /** partId → document property overrides for this instant. */
+  props: Record<string, Record<string, number | string>>
   sensors: ShowreelSensors
-  propertiesFor: (componentId: string) => Record<string, unknown> | undefined
-  /**
-   * Bare pin ids at 5 V, in the shape the ported relay and lamp expect. Those
-   * two are the only parts that read the raw bag rather than their own pins.
-   */
-  rawPinStates: Record<string, number>
 }
 
 const NO_STEP: ShowreelStep = { ms: 0 }
 
-/** An inert frame — every pin low, every readout absent. */
+/** An inert frame — every lamp dark, every readout absent, the document as authored. */
 export const IDLE_FRAME: ShowreelFrame = {
-  isPinHigh: () => false,
-  pinVoltage: () => 0,
+  leds: new Map(),
+  devices: {},
+  props: {},
   sensors: {},
-  propertiesFor: () => undefined,
-  rawPinStates: {},
 }
 
 /**
@@ -262,28 +271,23 @@ export function useShowreel(experimentId: number | undefined) {
 
   const step = timeline?.steps[stepIndex] ?? NO_STEP
 
+  /**
+   * The step, restated as canvas props.
+   *
+   * Nothing is derived here and nothing is defaulted except "absent means off":
+   * a step names the lamps that are lit, the modules that are reporting and the
+   * properties that differ from the authored document, and everything it does
+   * not name is in its resting state. Keeping the transformation this thin is
+   * deliberate — the moment this function starts INFERRING what the artwork
+   * should show, timelines.ts stops being readable as stage direction.
+   */
   const frame = useMemo<ShowreelFrame>(() => {
     if (!timeline) return IDLE_FRAME
-
-    const high = new Set(step.high ?? [])
-
-    // The relay and the lamp were ported reading a flat bag of board pins
-    // rather than their own terminals, so hand them one built from the same
-    // set. 'rpi_1/GP15' becomes GP15.
-    const rawPinStates: Record<string, number> = {}
-    for (const key of high) {
-      const slash = key.indexOf('/')
-      if (slash >= 0) rawPinStates[key.slice(slash + 1)] = 1
-    }
-
-    const isPinHigh = (componentId: string, pinId: string) => high.has(`${componentId}/${pinId}`)
-
     return {
-      isPinHigh,
-      pinVoltage: (componentId, pinId) => (isPinHigh(componentId, pinId) ? 5 : 0),
+      leds: new Map(Object.entries(step.leds ?? {})),
+      devices: step.devices ?? {},
+      props: step.props ?? {},
       sensors: step.sensors ?? {},
-      propertiesFor: (componentId: string) => step.props?.[componentId],
-      rawPinStates,
     }
   }, [timeline, step])
 

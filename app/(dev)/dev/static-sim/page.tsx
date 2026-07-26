@@ -3,8 +3,9 @@ import { StaticSimulator } from '@/components/static-simulator/StaticSimulator'
 import { SLUG_TO_STATIC_EXPERIMENT_ID } from '@/components/static-simulator/experiment-map'
 
 /**
- * Harness for the ported read-only simulator. Development only, gated the same
- * way as /dev/editor and /dev/sims — see proxy.ts and the NODE_ENV check below.
+ * Harness for the read-only reference circuits. Development only, gated the
+ * same way as /dev/editor and /dev/sims — see proxy.ts and the NODE_ENV check
+ * below.
  *
  * It renders all twelve experiments through the SAME component the lesson page
  * mounts, which is the only way to actually look at the twelve circuits: the
@@ -26,8 +27,12 @@ export default function DevStaticSimPage() {
     <div className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-xl font-bold text-[#222222]">Static simulator harness</h1>
       <p className="mt-1 text-sm text-[#6a6a6a]">
-        The ported read-only circuit and code view, for each of the twelve experiment slugs. Nothing
-        here is editable — that is the point of the port. Each panel plays a scripted sequence from{' '}
+        The read-only reference circuit and code view, for each of the twelve experiment slugs. Every
+        drawing is one of our own <code className="font-mono text-[13px]">CircuitDoc</code>s from{' '}
+        <code className="font-mono text-[13px]">circuits.ts</code>, rendered by the lab editor&rsquo;s
+        own <code className="font-mono text-[13px]">CircuitCanvas</code> in{' '}
+        <code className="font-mono text-[13px]">readOnly</code> — same parts, same wires, nothing
+        editable. Each panel plays a scripted sequence from{' '}
         <code className="font-mono text-[13px]">showreel/timelines.ts</code>: hand-written stage
         direction, not a simulation. No interpreter, no solver, no computed voltages.
       </p>

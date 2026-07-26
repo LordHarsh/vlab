@@ -18,24 +18,29 @@ export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | 'static' | (st
  *   • components/simulator      — ours. avr8js + an MNA solver, 30 parts, a
  *     real compile/run loop, autosave into sim_attempts, 3,309 passing
  *     assertions. Interactive. Rendered for sections of type `native`.
- *   • components/static-simulator — the port of a colleague's simulator. A
- *     read-only drawing of the circuit plus a read-only code listing, for all
- *     twelve experiments. Rendered for sections of type `static`.
+ *   • components/static-simulator — a read-only reference figure: one of the
+ *     twelve fully-wired circuits from its own circuits.ts, drawn by OUR
+ *     CircuitCanvas over our part library, beside a read-only code listing.
+ *     Rendered for sections of type `static`.
  *
  * They are not substitutes: one is a workbench, the other is a figure in a
- * textbook. `false` means ALONGSIDE — the ported view appears only where a
+ * textbook. They now DRAW with the same code — the static view mounts
+ * CircuitCanvas with `readOnly` — so the two agree about what a part looks
+ * like; what differs is that one of them runs.
+ *
+ * `false` means ALONGSIDE — the reference figure appears only where a
  * simulations row is explicitly typed `static`. `true` means REPLACE: every
- * `native` section renders the read-only port INSTEAD of our editor,
+ * `native` section renders the read-only figure INSTEAD of our editor,
  * everywhere at once, with no migration needed.
  *
  * BACK TO `false`. It was briefly `true`, and the consequence was immediate
  * and correct: a static figure does not simulate. No running MCU, no solved
- * voltages, no LED that lights, because the read-only port deliberately ships
- * without an execution engine. Students get the working simulator again —
- * emulated CPU, real compilation, solved circuit.
+ * voltages, no LED lit by a current, because it deliberately ships without an
+ * execution engine — what moves on it is scripted playback. Students get the
+ * working simulator again: emulated CPU, real compilation, solved circuit.
  *
- * The read-only port stays available for sections explicitly typed `static`,
- * where a labelled reference figure is the thing actually wanted.
+ * The reference figure stays available for sections explicitly typed `static`,
+ * where a labelled build is the thing actually wanted.
  *
  * It stays a single boolean rather than a guess spread through the file
  * because it is a content decision, and content decisions change.

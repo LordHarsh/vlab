@@ -72,12 +72,37 @@ import {
   trackCursor,
   type WireDraft,
 } from '@/lib/simulator/model/wire-draft'
+import { inertPartArt } from './inert-art'
 
 const ACCENT = '#1477d1'
 
 interface Props {
   doc: CircuitDoc
   dispatch: (a: DocAction) => void
+  /**
+   * Draw the document and nothing else — no drag, no selection, no wire
+   * drawing, no pan, no zoom, and no focusable control anywhere in the tree.
+   *
+   * DEFAULTS TO FALSE, so every existing caller is the editor it always was.
+   * It exists for the read-only workspace in components/static-simulator,
+   * which needs OUR artwork and OUR wire rendering on a reference figure a
+   * student cannot edit — and needs it without a second renderer to keep in
+   * step with this one.
+   *
+   * A wrapper could not have done this job. `pointer-events: none` on a parent
+   * hides the affordances but leaves the pan/zoom state live and, more to the
+   * point, leaves the canvas's four `role="slider"` controls (knob, slider,
+   * sensor target) and its `role="button"` momentary in the tab order and in
+   * the accessibility tree — four keyboard-operable controls on a picture that
+   * cannot change. This flag removes them from the tree instead, so the
+   * interactive-element count of a page carrying twelve of these is unchanged.
+   *
+   * What it does NOT remove is anything a reader looks at: the sensor target's
+   * cone, sight line, reticle and readout are all still drawn, because they
+   * ARE the artwork for a PIR and an ultrasonic module. Only the handlers, the
+   * focus ring and the `role` come off.
+   */
+  readOnly?: boolean
   /** partId → 0..1 LED brightness, from the running simulation. */
   ledBrightness?: Map<string, number>
   /**
@@ -514,6 +539,7 @@ function fitView(doc: CircuitDoc, width: number, height: number): { x: number; y
 export function CircuitCanvas({
   doc,
   dispatch,
+  readOnly = false,
   ledBrightness,
   deviceStates,
   netOf,
@@ -1333,28 +1359,26 @@ export function CircuitCanvas({
 
   // ─── Rendering ──────────────────────────────────────────────────────────────
 
-  return (
-    <div className="relative w-full h-full bg-[#f4f5f6] overflow-hidden">
-      {/* Zoom readout. The parts palette now lives in the right rail — floating
-          it over the artwork hid the very circuit it was there to build. */}
-      <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#566573] font-mono">
-        {Math.round(v.z * 100)}% · scroll to zoom · drag background to pan
-      </div>
-
-      <svg
-        ref={svgRef}
-        className="w-full h-full touch-none"
-        data-testid="canvas"
-        onPointerMove={onPointerMove}
-        onPointerUp={() => endGesture()}
-        onPointerLeave={() => {
+  /**
+   * Every handler the editing surface has, as one bundle — or an empty one.
+   *
+   * Gathered here rather than spread through the JSX so that "read-only means
+   * no handlers" is a single, checkable statement instead of eight separate
+   * conditions that a later edit could add a ninth to and miss.
+   */
+  const surface: React.SVGProps<SVGSVGElement> = readOnly
+    ? {}
+    : {
+        onPointerMove,
+        onPointerUp: () => endGesture(),
+        onPointerLeave: () => {
           setHoverWire(null)
           endGesture()
-        }}
-        onWheel={onWheel}
-        onPointerDownCapture={onCanvasPointerDownCapture}
-        onDoubleClick={onCanvasDoubleClick}
-        onPointerDown={(e) => {
+        },
+        onWheel,
+        onPointerDownCapture: onCanvasPointerDownCapture,
+        onDoubleClick: onCanvasDoubleClick,
+        onPointerDown: (e: React.PointerEvent) => {
           /**
            * While a wire is being ROUTED, every press that got this far — one
            * that no pin claimed — lays down a turn.
@@ -1374,7 +1398,29 @@ export function CircuitCanvas({
           }
           onSelect(null)
           setPanning({ x: e.clientX, y: e.clientY })
-        }}
+        },
+      }
+
+  return (
+    <div className="relative w-full h-full bg-[#f4f5f6] overflow-hidden">
+      {/* Zoom readout. The parts palette now lives in the right rail — floating
+          it over the artwork hid the very circuit it was there to build.
+          Suppressed in read-only: "scroll to zoom · drag background to pan" is
+          an instruction, and neither gesture does anything there. */}
+      {!readOnly && (
+        <div className="absolute bottom-3 left-3 z-10 text-[10px] text-[#566573] font-mono">
+          {Math.round(v.z * 100)}% · scroll to zoom · drag background to pan
+        </div>
+      )}
+
+      <svg
+        ref={svgRef}
+        /* `pointer-events-none` in read-only, on the root, as the belt to the
+           braces of `surface` being empty: whatever a future edit hangs off a
+           child of this tree, it cannot fire here. */
+        className={`w-full h-full ${readOnly ? 'pointer-events-none' : 'touch-none'}`}
+        data-testid="canvas"
+        {...surface}
       >
         <defs>
           <pattern id="grid" width={PITCH} height={PITCH} patternUnits="userSpaceOnUse">
@@ -1474,9 +1520,9 @@ export function CircuitCanvas({
 
                 <g
                   style={vars as React.CSSProperties}
-                  onPointerDown={(e) => startPartDrag(e, part)}
-                  className="cursor-move"
-                  dangerouslySetInnerHTML={{ __html: def.svg }}
+                  {...(readOnly ? {} : { onPointerDown: (e: React.PointerEvent) => startPartDrag(e, part) })}
+                  className={readOnly ? undefined : 'cursor-move'}
+                  dangerouslySetInnerHTML={{ __html: readOnly ? inertPartArt(def) : def.svg }}
                 />
 
                 {/* The glass, painted over the artwork's own dark window. It is
@@ -1518,7 +1564,13 @@ export function CircuitCanvas({
                     />
                   )}
 
-                {def.knob && knobProp && (
+                {/* The three PANEL-LESS controls — knob, slider, momentary —
+                    draw nothing at all until they are grabbed or focused (the
+                    artwork is already a knob, a track, a button cap), so in
+                    read-only they are omitted outright rather than disabled.
+                    That is what keeps a page of reference figures at exactly
+                    the interactive-element count it had before. */}
+                {!readOnly && def.knob && knobProp && (
                   <Knob
                     part={part}
                     def={def}
@@ -1533,7 +1585,7 @@ export function CircuitCanvas({
                   />
                 )}
 
-                {def.slider && sliderProp && (
+                {!readOnly && def.slider && sliderProp && (
                   <Slider
                     part={part}
                     def={def}
@@ -1548,7 +1600,7 @@ export function CircuitCanvas({
                   />
                 )}
 
-                {def.momentary && momentaryProp && (
+                {!readOnly && def.momentary && momentaryProp && (
                   <Momentary
                     part={part}
                     def={def}
@@ -1588,6 +1640,7 @@ export function CircuitCanvas({
                 wire={w}
                 a={a}
                 b={b}
+                readOnly={readOnly}
                 lit={hoverNet != null && netOf?.get(`${w.from.partId} ${w.from.pinId}`) === hoverNet}
                 shaping={shaping === w.id}
                 hovered={hoverWire === w.id}
@@ -1617,6 +1670,7 @@ export function CircuitCanvas({
                       pin={pin}
                       hitR={hitRadius(def)}
                       partId={part.id}
+                      readOnly={readOnly}
                       netOf={netOf}
                       hoverNet={hoverNet}
                       wiring={wire != null}
@@ -1661,6 +1715,7 @@ export function CircuitCanvas({
                   prop={prop}
                   bearingProp={bearingProp}
                   state={deviceStates?.[part.id]}
+                  readOnly={readOnly}
                   dragging={targetDrag?.partId === part.id}
                   onGrab={(e) => startTargetDrag(e, part, def, t, prop, bearingProp)}
                   onSet={(key, value) => dispatch({ type: 'setProp', id: part.id, key, value })}
@@ -2169,6 +2224,7 @@ function SensorTarget({
   prop,
   bearingProp,
   state,
+  readOnly,
   dragging,
   onGrab,
   onSet,
@@ -2180,6 +2236,16 @@ function SensorTarget({
   prop: PropSpec
   bearingProp?: PropSpec
   state: DeviceState | undefined
+  /**
+   * Draw the field, the beam, the reticle and the reading — but be no control.
+   *
+   * The only member of this family that still RENDERS when the canvas is
+   * read-only, and it has to: the cone IS the PIR's artwork and the reticle IS
+   * how an ultrasonic module says what it is looking at. What comes off is the
+   * `role`, the `tabIndex`, the handlers, the grab cursor and the "drag it"
+   * tooltip — everything that promises an interaction there is not.
+   */
+  readOnly: boolean
   dragging: boolean
   onGrab: (e: React.PointerEvent) => void
   onSet: (key: string, value: number) => void
@@ -2234,25 +2300,28 @@ function SensorTarget({
     onSet(key, key === target.key ? Math.min(max, Math.max(min, next)) : next)
   }
 
+  const control: React.SVGProps<SVGGElement> = readOnly
+    ? {}
+    : {
+        role: 'slider',
+        tabIndex: 0,
+        'aria-label': label,
+        'aria-valuemin': min,
+        'aria-valuemax': max,
+        'aria-valuenow': distance,
+        'aria-valuetext': reading,
+        onPointerDown: onGrab,
+        onKeyDown,
+        onFocus: () => {
+          setFocused(true)
+          onFocus()
+        },
+        onBlur: () => setFocused(false),
+        className: dragging ? 'cursor-grabbing outline-none' : 'cursor-grab outline-none',
+      }
+
   return (
-    <g
-      role="slider"
-      tabIndex={0}
-      aria-label={label}
-      aria-valuemin={min}
-      aria-valuemax={max}
-      aria-valuenow={distance}
-      aria-valuetext={reading}
-      data-testid={`target-${part.id}`}
-      onPointerDown={onGrab}
-      onKeyDown={onKeyDown}
-      onFocus={() => {
-        setFocused(true)
-        onFocus()
-      }}
-      onBlur={() => setFocused(false)}
-      className={dragging ? 'cursor-grabbing outline-none' : 'cursor-grab outline-none'}
-    >
+    <g data-testid={`target-${part.id}`} {...control}>
       {target.cone && (
         <path
           d={conePath(target, target.cone, bearing)}
@@ -2331,8 +2400,10 @@ function SensorTarget({
           {reading}
         </text>
       </g>
+      {/* The reading, as a name. In read-only it stops offering the gesture,
+          because there isn't one — it just says what the sensor is seeing. */}
       <title>
-        {`${label}: ${reading} — drag it, or use the arrow keys`}
+        {readOnly ? `${label}: ${reading}` : `${label}: ${reading} — drag it, or use the arrow keys`}
       </title>
     </g>
   )
@@ -2767,6 +2838,7 @@ function Wire({
   wire,
   a,
   b,
+  readOnly,
   lit,
   shaping,
   hovered,
@@ -2775,6 +2847,15 @@ function Wire({
   wire: DocWire
   a: Point
   b: Point
+  /**
+   * Casing, core and nothing else.
+   *
+   * The two-tone stroke and the filleted route are the wire; the grab band
+   * under it, its pointer cursor, its "drag to bend" tooltip and its per-bend
+   * handles are the editor, and on a reference figure they are four separate
+   * offers of an edit that cannot happen.
+   */
+  readOnly: boolean
   lit: boolean
   /** A gesture is shaping this wire, so its handles stay out. */
   shaping: boolean
@@ -2850,20 +2931,23 @@ function Wire({
           on the STROKE rather than the fill matters because a bent wire
           encloses the area between its bends and filling it would put a
           transparent sheet over the board underneath. */}
-      <path
-        d={d}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={WIRE_HIT}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        pointerEvents="stroke"
-        className="cursor-pointer"
-      >
-        <title>Click to select · drag to bend · double-click to add a bend</title>
-      </path>
+      {!readOnly && (
+        <path
+          d={d}
+          fill="none"
+          stroke="transparent"
+          strokeWidth={WIRE_HIT}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          pointerEvents="stroke"
+          className="cursor-pointer"
+        >
+          <title>Click to select · drag to bend · double-click to add a bend</title>
+        </path>
+      )}
 
-      {show &&
+      {!readOnly &&
+        show &&
         points.map((p, i) => (
           <circle
             key={i}
@@ -2917,6 +3001,7 @@ function Pin({
   pin,
   hitR,
   partId,
+  readOnly,
   netOf,
   hoverNet,
   wiring,
@@ -2929,6 +3014,16 @@ function Pin({
   /** Radius of the invisible pointer target, in world units. */
   hitR: number
   partId: string
+  /**
+   * The coloured pad stays; the hit target, the hover halo, the crosshair
+   * cursor and the net tooltip go.
+   *
+   * The pad is not an affordance — it is how this canvas draws a pin, and a
+   * breadboard's tie points ARE its texture. What a reference figure must not
+   * do is put a crosshair under the pointer over a board no wire can be drawn
+   * on.
+   */
+  readOnly: boolean
   netOf?: Map<string, number>
   hoverNet: number | null
   wiring: boolean
@@ -2942,6 +3037,18 @@ function Pin({
   const lit = hoverNet != null && net === hoverNet
   const color =
     pin.type === 'gnd' ? '#111827' : pin.type === 'power' ? '#e04a4a' : '#f0b429'
+
+  if (readOnly) {
+    return (
+      <circle
+        cx={pin.x}
+        cy={pin.y}
+        r={pin.subtle ? 1.8 : 2.8}
+        fill={color}
+        opacity={pin.subtle ? 0.25 : 1}
+      />
+    )
+  }
 
   return (
     <g

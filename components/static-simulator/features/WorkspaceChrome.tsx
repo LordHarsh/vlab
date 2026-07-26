@@ -17,10 +17,14 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react'
-import type { ComponentInstance, Experiment } from '../types'
-import { COMPONENT_DEFINITIONS } from '../utils/componentDefinitions'
-import { ComponentSVGs } from '../ComponentSVGs'
-import { normaliseCircuit } from '../StaticCircuit'
+import {
+  getPart,
+  ledBodyFill,
+  ledColour,
+  type PartDefinition,
+} from '@/lib/simulator/model/parts'
+import type { CircuitDoc, PlacedPart } from '@/lib/simulator/model/document'
+import { inertPartArt } from '@/components/simulator/inert-art'
 import type { ShowreelFrame } from '../showreel/useShowreel'
 import type { ShowreelSensors } from '../showreel/timelines'
 
@@ -267,24 +271,43 @@ export function CanvasCornerMark() {
 
 /* ── The components rail ──────────────────────────────────────────────── */
 
-/** Rail ordering — boards first, then the board they sit on, then the rest. */
-const CATEGORY_RANK: Record<string, number> = {
-  controllers: 0,
-  prototyping: 1,
-  outputs: 2,
-  sensors: 3,
-  passive: 4,
-  other: 5,
+/**
+ * Rail ordering — board first, then the board it sits on, then what is plugged
+ * into it, then the sensors, then the discretes and the supplies.
+ *
+ * Keyed on `electrical.kind` from OUR part library, because that is the only
+ * classification our parts carry; the ported catalogue's `category` field went
+ * with the rest of it. Anything unlisted sorts last, so a part added to
+ * PART_LIBRARY tomorrow appears at the end rather than disappearing.
+ */
+const KIND_RANK: Record<string, number> = {
+  mcu: 0,
+  breadboard: 1,
+  led: 2,
+  character_lcd: 2,
+  buzzer: 2,
+  motor: 2,
+  stepper: 2,
+  h_bridge: 3,
+  darlington_array: 3,
+  relay_module: 3,
+  sensor: 4,
+  potentiometer: 5,
+  variable_resistor: 5,
+  button: 5,
+  resistor: 6,
+  diode: 6,
+  reactive: 6,
+  source: 7,
 }
 
 interface RailTile {
   type: string
   name: string
   count: number
-  /** A real instance from the circuit, so the tile draws that LED's colour. */
-  instance: ComponentInstance
-  width: number
-  height: number
+  /** A real part from the circuit, so the tile draws THAT LED's colour. */
+  instance: PlacedPart
+  def: PartDefinition
 }
 
 /**
@@ -300,51 +323,44 @@ interface RailTile {
  * that lifts under the pointer and then refuses to land is worse than one that
  * never moves.
  *
- * The thumbnails are the CIRCUIT'S OWN ARTWORK — the same ComponentSVGs the
- * canvas draws, handed the same `frame` — rather than a second set of icons.
- * Two consequences, both wanted: nothing can be drawn in the rail that is not
- * on the board, and a tile cannot contradict the board, because a DHT11 tile
- * showing a hard-coded 24 °C beside a canvas reading 30 °C is precisely the
- * drift this panel is not allowed to have.
+ * The thumbnails are the CIRCUIT'S OWN ARTWORK — literally `def.svg` out of
+ * lib/simulator/model/parts.ts, the same markup the canvas injects — rather
+ * than a second set of icons. Two consequences, both wanted: nothing can be
+ * drawn in the rail that is not on the board, and a tile cannot contradict the
+ * board, because a red LED tile beside a canvas showing a yellow one is
+ * precisely the drift this panel is not allowed to have.
+ *
+ * The tile is built straight from the DOCUMENT, so it lists exactly the parts
+ * the canvas draws — there is no separate bill of materials to fall out of date.
  */
 export function ComponentsRail({
-  experiment,
+  doc,
   frame,
   className = '',
 }: {
-  experiment: Experiment
+  doc: CircuitDoc
   frame: ShowreelFrame
   className?: string
 }) {
   const tiles = useMemo<RailTile[]>(() => {
-    const { components } = normaliseCircuit(experiment)
     const byType = new Map<string, RailTile>()
 
-    for (const comp of components) {
-      const meta = COMPONENT_DEFINITIONS[comp.type]
-      if (!meta) continue
-      const seen = byType.get(comp.type)
+    for (const part of doc.parts) {
+      const seen = byType.get(part.type)
       if (seen) {
         seen.count += 1
         continue
       }
-      byType.set(comp.type, {
-        type: comp.type,
-        name: meta.name,
-        count: 1,
-        instance: comp,
-        width: meta.width,
-        height: meta.height,
-      })
+      const def = getPart(part.type)
+      byType.set(part.type, { type: part.type, name: def.label, count: 1, instance: part, def })
     }
 
     return [...byType.values()].sort((a, b) => {
       const rank =
-        (CATEGORY_RANK[COMPONENT_DEFINITIONS[a.type]?.category ?? 'other'] ?? 5) -
-        (CATEGORY_RANK[COMPONENT_DEFINITIONS[b.type]?.category ?? 'other'] ?? 5)
+        (KIND_RANK[a.def.electrical.kind] ?? 9) - (KIND_RANK[b.def.electrical.kind] ?? 9)
       return rank !== 0 ? rank : a.name.localeCompare(b.name)
     })
-  }, [experiment])
+  }, [doc])
 
   return (
     <aside
@@ -394,18 +410,20 @@ export function ComponentsRail({
             <svg
               width={56}
               height={44}
-              viewBox={`0 0 ${tile.width} ${tile.height}`}
+              viewBox={`0 0 ${tile.def.width} ${tile.def.height}`}
               preserveAspectRatio="xMidYMid meet"
               aria-hidden="true"
               className="pointer-events-none overflow-visible"
             >
-              <ComponentSVGs
-                instance={tile.instance}
-                viewMode="breadboard"
-                isPinActive={(pinId) => frame.isPinHigh(tile.instance.id, pinId)}
-                getPinVoltage={(pinId) => frame.pinVoltage(tile.instance.id, pinId)}
-                sensorValues={frame.sensors}
-                rawPinStates={frame.rawPinStates}
+              {/* The part's own markup, injected exactly as the canvas injects
+                  it, with the one custom property a thumbnail is big enough to
+                  show: an LED's dome fill, driven by the same `frame.leds` the
+                  board's LED is drawn from — so a lamp cannot be lit here and
+                  dark there. The halo is NOT drawn; at 56 x 44 it would bleed
+                  over the tile's own border and read as a rendering fault. */}
+              <g
+                style={ledVars(tile, frame)}
+                dangerouslySetInnerHTML={{ __html: inertPartArt(tile.def) }}
               />
             </svg>
             {/* Clamped, as the product clamps ("Potentiomet…"). "DHT11
@@ -432,6 +450,23 @@ export function ComponentsRail({
       </p>
     </aside>
   )
+}
+
+/**
+ * The one per-instance custom property a rail thumbnail carries.
+ *
+ * Same mechanism as the canvas's: the harvested LED art is shared by every
+ * instance and injected as raw markup, so its dome fill reads
+ * `var(--led-body, …)` and setting that property on an ancestor is the only way
+ * to reach it. Everything else the canvas parameterises — a knob's angle, a
+ * button's cap, a battery pack's cell count — is left at its default here,
+ * because none of it is legible in a 56 x 44 tile.
+ */
+function ledVars(tile: RailTile, frame: ShowreelFrame): React.CSSProperties {
+  if (tile.def.electrical.kind !== 'led') return {}
+  const colour = ledColour(tile.instance.props.color)
+  const brightness = frame.leds.get(tile.instance.id) ?? 0
+  return { '--led-body': ledBodyFill(colour, brightness) } as React.CSSProperties
 }
 
 /* ── The status strip under the canvas ────────────────────────────────── */
