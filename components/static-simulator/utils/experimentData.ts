@@ -1,4 +1,5 @@
 import type { Experiment } from '../types';
+import { HEALTH_MONITORING_RPI_SCRIPT } from '@/lib/simulator/pico/experiments';
 
 export const EXPERIMENTS: Experiment[] = [
   {
@@ -744,58 +745,75 @@ asyncio.run(run_automation())`,
     category: 'arduino',
     platform: 'Arduino',
     difficulty: 'Advanced',
-    keyComponents: ['Arduino Uno', 'Red/Green LEDs', '2x 220Ω Resistors', 'HC-SR04 Sensor'],
-    description: 'Build an adaptive traffic light system. Uses an HC-SR04 ultrasonic sensor to detect vehicle presence and dynamically switch between Red (stop) and Green (go) lights.',
+    // The lab sheet's own bill of materials (iot_virtual_lab.html), not the
+    // single-lane Uno + HC-SR04 circuit this used to describe: an Arduino
+    // Mega, twelve LEDs as three RGYG sets, four density potentiometers, a
+    // 16x2 LCD, and four IR sensors the sheet itself marks optional and the
+    // sketch below never reads (density comes from the pots instead).
+    keyComponents: ['Arduino Mega', '12x LEDs (3 sets RGYG)', '4x Potentiometers', 'LCD 16x2'],
+    description: 'Build a four-lane adaptive traffic controller. Each lane\'s density potentiometer sets how long its green phase runs, so the busiest lane gets the most time before the sequence moves on.',
     tips: [
-      'The HC-SR04 acts as a vehicle presence detector via the Distance slider.',
-      'Adjust the distance slider in the controls panel. If distance < 100cm (vehicle detected), the green light activates.',
-      'If no vehicle is detected (distance >= 100cm), the system defaults to the red light.'
+      'Each density slider stands in for a lane\'s traffic sensor; turning one up lengthens that lane\'s green phase the next time the sequence reaches it.',
+      'The controller serves one lane at a time: green for a density-scaled duration, then a fixed 2 s yellow, then on to the next lane.',
+      'Twelve LEDs need twelve digital pins plus four analog pins for the pots — sixteen signals, which is why this experiment needs a Mega rather than an Uno.'
     ],
     buildSteps: [
-      'Place Arduino Uno R3, Breadboard, HC-SR04 Ultrasonic Sensor, Red LED, Green LED, and two 220Ω Resistors.',
-      'Connect Arduino GND to Breadboard bottom black rail (-) with a Black wire.',
-      'Connect HC-SR04 VCC to Arduino 5V, GND to Arduino GND.',
-      'Connect HC-SR04 TRIG to Arduino pin D6, ECHO to pin D7.',
-      'Connect Arduino D4 -> Resistor 1 (p1) -> Resistor 1 (p2) -> Red LED Anode. Red LED Cathode -> GND rail.',
-      'Connect Arduino D3 -> Resistor 2 (p1) -> Resistor 2 (p2) -> Green LED Anode. Green LED Cathode -> GND rail.'
+      'Place the Arduino Mega and wire lane 1\'s red/yellow/green LEDs (through 220Ω resistors) to pins 22/23/24, lane 2 to 25/26/27, lane 3 to 28/29/30 and lane 4 to 31/32/33.',
+      'Wire all twelve LED cathodes to a shared ground return.',
+      'Connect the four density potentiometers\' wipers to A0-A3, with their outer legs across the 5V/GND rails.',
+      'Wire the 16x2 LCD in 4-bit mode (RS, E, D4-D7) to six free digital pins, VSS/RW/V0 to ground, VDD and the backlight anode to 5V.',
+      'Upload the code and open the Serial Monitor to see each lane\'s computed green time.'
     ],
     defaultCode: `// Experiment 11: Smart Traffic Light Controller
-// HC-SR04 detects vehicle presence to control Red/Green LEDs
+// Four lanes, each with its own density potentiometer.
+// Busier lanes (higher density reading) get a longer green phase.
 
-int trigPin = 6;   // HC-SR04 TRIG on Digital Pin 6
-int echoPin = 7;   // HC-SR04 ECHO on Digital Pin 7
-int redPin = 4;    // Red LED on Digital Pin 4
-int greenPin = 3;  // Green LED on Digital Pin 3
+int redPins[]    = {22, 25, 28, 31};
+int yelPins[]    = {23, 26, 29, 32};
+int grnPins[]    = {24, 27, 30, 33};
+int densityPin[] = {A0, A1, A2, A3};
+
+void allRed() {
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(redPins[i], HIGH);
+    digitalWrite(yelPins[i], LOW);
+    digitalWrite(grnPins[i], LOW);
+  }
+}
+
+void setGreen(int lane) {
+  allRed();
+  digitalWrite(redPins[lane], LOW);
+  digitalWrite(grnPins[lane], HIGH);
+}
 
 void setup() {
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  pinMode(redPin, OUTPUT);
-  pinMode(greenPin, OUTPUT);
+  for (int i = 0; i < 4; i++) {
+    pinMode(redPins[i], OUTPUT);
+    pinMode(yelPins[i], OUTPUT);
+    pinMode(grnPins[i], OUTPUT);
+  }
+  allRed();
   Serial.begin(9600);
   Serial.println("Smart Traffic Controller Active");
 }
 
 void loop() {
-  int carDist = distance; // reads simulated vehicle range from slider
+  for (int i = 0; i < 4; i++) {
+    int density = analogRead(densityPin[i]);
+    int greenTime = 3000 + (long)density * 7;
 
-  Serial.print("Vehicle Distance: ");
-  Serial.print(carDist);
-  Serial.println(" cm");
+    Serial.print("Lane "); Serial.print(i + 1);
+    Serial.print(" Green: "); Serial.print(greenTime); Serial.println("ms");
 
-  if (carDist > 0 && carDist < 100) {
-    // Vehicle detected within 100cm: Turn Green
-    Serial.println("Vehicle Detected! GREEN Light ON");
-    digitalWrite(redPin, LOW);
-    digitalWrite(greenPin, HIGH);
-  } else {
-    // No vehicle: Default to Red
-    Serial.println("No Vehicle: RED Light ON");
-    digitalWrite(greenPin, LOW);
-    digitalWrite(redPin, HIGH);
+    setGreen(i);
+    delay(greenTime);
+
+    // Yellow transition
+    digitalWrite(grnPins[i], LOW);
+    digitalWrite(yelPins[i], HIGH);
+    delay(2000);
   }
-
-  delay(2000);
 }`,
     defaultComponents: [
       { id: 'uno_1', type: 'arduino', name: 'Arduino Uno R3', x: 40, y: 40, rotation: 0, properties: {} },
@@ -843,46 +861,28 @@ void loop() {
   {
     id: 12,
     title: 'Smart Health Monitoring System',
-    category: 'arduino',
-    platform: 'Arduino',
+    category: 'raspberry-pi',
+    platform: 'Raspberry Pi',
     difficulty: 'Advanced',
-    keyComponents: ['Arduino Uno', 'Pulse Sensor', 'LM35 Temperature Sensor'],
-    description: 'Aggregate pulse beats (BPM) and body temperature, pushing readings to a visual ThingSpeak Cloud Widget.',
+    // The lab sheet's own bill of materials, not the LM35-on-an-Uno circuit
+    // this used to describe: a Raspberry Pi (this app emulates the Pico), a
+    // DS18B20, a pulse sensor read through an MCP3008 SPI ADC because a
+    // Raspberry Pi has no analog input pins of its own, and an optional OLED
+    // the code below does not use — every reading it takes goes to `print()`.
+    keyComponents: ['Raspberry Pi Pico', 'DS18B20 Sensor', 'Pulse Sensor', 'MCP3008 ADC'],
+    description: 'Read body temperature from a DS18B20 and heart rate from a pulse sensor wired through an external ADC — the converter a Raspberry Pi needs because it has no analog pins of its own — and flag readings outside the normal range.',
     tips: [
-      'The pulse sensor reads micro-changes in light refraction to determine heartbeat (BPM).',
-      'The LM35 outputs analog millivolts proportional to body temperature (10mV/°C).',
-      'When running, the ThingSpeak Cloud dashboard panel will plot virtual telemetry charts.'
+      'The DS18B20 is a real digital thermometer, not a stand-in: it reports body temperature straight off its 1-Wire bus.',
+      'The pulse sensor is analog, so it goes into the MCP3008\'s channel 0 rather than a GPIO pin directly.',
+      'Watch the printed status flip to ALERT when temperature drifts outside 36.1-37.2C or BPM outside 60-100.'
     ],
     buildSteps: [
-      'Place Arduino Uno R3, Pulse Heart Sensor, and LM35 Temperature Sensor.',
-      'Connect Pulse Sensor VCC to Arduino 5V, GND to GND, and SIG to Arduino Analog A0.',
-      'Connect LM35 VCC to Arduino 5V, GND to GND, and OUT to Arduino Analog A1.'
+      'Place the Raspberry Pi Pico and breadboard, and wire the DS18B20\'s DATA line to GP4 with a 4.7kOhm pull-up to 3.3V.',
+      'Place the MCP3008 and wire CLK/MOSI/MISO/CS to GP11/GP10/GP9/GP8, and VDD/VREF to the 3.3V rail.',
+      'Wire the pulse sensor\'s output into the MCP3008\'s channel 0, and its VCC/GND to the rails.',
+      'Run the script and watch the DS18B20 temperature and the peak-detected BPM print every loop.'
     ],
-    defaultCode: `// Experiment 12: Smart Patient telemetry
-int pulsePin = A0;
-int tempPin = A1;
-
-void setup() {
-  Serial.begin(9600);
-  Serial.println("ThingSpeak Patient Telemetry online...");
-}
-
-void loop() {
-  // Read simulated analog values from connected inputs
-  int bpm = analogRead(pulsePin);
-  int temp = analogRead(tempPin);
-
-  Serial.print("BPM: ");
-  Serial.print(bpm);
-  Serial.print(" | Body Temp: ");
-  Serial.print(temp);
-  Serial.println(" C");
-
-  // Mock pushing to ThingSpeak IoT
-  Serial.println("ThingSpeak API: Pushing Field1=BPM, Field2=Temp... Success!");
-
-  delay(3000);
-}`,
+    defaultCode: HEALTH_MONITORING_RPI_SCRIPT,
     defaultComponents: [
       { id: 'uno_1', type: 'arduino', name: 'Arduino Uno R3', x: 50, y: 50, rotation: 0, properties: {} },
       { id: 'pulse_1', type: 'pulse_sensor', name: 'Pulse Sensor', x: 380, y: 60, rotation: 0, properties: { bpm: 72 } },

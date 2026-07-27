@@ -141,8 +141,8 @@ const LIT = 1
 
 /* ── Per-experiment stage helpers ─────────────────────────────────────────
  *
- * Experiments 2, 6 and 11 restate the same reading in three places on every
- * step (the target's position, the module's report, the status strip), so each
+ * Experiments 2 and 6 restate the same reading in three places on every step
+ * (the target's position, the module's report, the status strip), so each
  * gets one function that writes all three from one number. That is not
  * shorthand for its own sake: it makes it impossible for the cone, the reticle
  * readout and the strip to disagree, which is the one failure this panel is not
@@ -170,13 +170,19 @@ function watch(distanceCm: number, motion: boolean): Pick<ShowreelStep, 'props' 
   }
 }
 
-/** Experiment 11: the lane scanner. */
-function lane(distanceCm: number): Pick<ShowreelStep, 'props' | 'devices' | 'sensors'> {
-  return {
-    props: { hcsr04: { distance: distanceCm } },
-    devices: { hcsr04: { distanceCm, inRange: true } },
-    sensors: { distance: distanceCm },
+/**
+ * Experiment 11: the four-lane grid. `allRed()` in the sketch runs at the top
+ * of every `setGreen()` call, so at every instant three lanes are showing red
+ * and the fourth — `active` — is showing whichever of green or yellow its own
+ * phase is in. One function for the same reason `scan()`/`watch()` are one:
+ * it is not possible to light a lane's green and forget its neighbours' red.
+ */
+function grid11(active: number, phase: 'green' | 'yellow'): NonNullable<ShowreelStep['leds']> {
+  const leds: Record<string, number> = {}
+  for (let lane = 0; lane < 4; lane++) {
+    leds[lane === active ? `led_l${lane + 1}_${phase}` : `led_l${lane + 1}_red`] = LIT
   }
+  return leds
 }
 
 /* ── The twelve ───────────────────────────────────────────────────────────
@@ -500,132 +506,110 @@ export const SHOWREEL_TIMELINES: Readonly<Record<number, ShowreelTimeline>> = {
     ],
   },
 
-  /* 11 — Smart traffic. Same 200 ms sample / rest-of-the-delay split as
-     experiment 2. A car arrives, the lane scanner sees it inside the sketch's
-     100 cm line and the light goes green until it has gone. */
+  /* 11 — Smart traffic, four lanes. One pass of the timeline is one call to
+     `loop()`: the sketch's own `for (i=0;i<4;i++)` visits every lane once,
+     each for `3000 + density*7` ms of green and a fixed 2 s of yellow, before
+     `loop()` returns and the runtime calls it again — which is why "Smart
+     Traffic Controller Active" (the `setup()` line) sits on step 0, exactly
+     as every other experiment's setup message does.
+
+     The four densities — 100, 300, 500, 200 — are the raw `analogRead()`
+     counts the pots in circuits.ts are posed to give: `POT_POSITIONS_11`
+     there (10/29/49/20 %) is chosen so a real `position/100 * 1023` lands on
+     these same four numbers, so the knob a viewer sees and the count the
+     serial log prints agree. */
   11: {
-    stillStep: 5,
+    stillStep: 1,
     steps: [
+      // Lane 1 — density 100 -> green for 3000 + 100*7 = 3700 ms.
       {
         ms: 200,
-        ...lane(260),
-        leds: { led_red: LIT },
-        serial: ['Smart Traffic Controller Active', 'Vehicle Distance: 260 cm', 'No Vehicle: RED Light ON'],
+        leds: grid11(0, 'green'),
+        serial: ['Smart Traffic Controller Active', 'Lane 1 Green: 3700ms'],
       },
-      { ms: 1800, ...lane(260), leds: { led_red: LIT } },
+      { ms: 3500, leds: grid11(0, 'green') },
+      { ms: 2000, leds: grid11(0, 'yellow') },
 
-      {
-        ms: 200,
-        ...lane(180),
-        leds: { led_red: LIT },
-        serial: ['Vehicle Distance: 180 cm', 'No Vehicle: RED Light ON'],
-      },
-      { ms: 1800, ...lane(180), leds: { led_red: LIT } },
+      // Lane 2 — density 300 -> green for 3000 + 300*7 = 5100 ms.
+      { ms: 200, leds: grid11(1, 'green'), serial: ['Lane 2 Green: 5100ms'] },
+      { ms: 4900, leds: grid11(1, 'green') },
+      { ms: 2000, leds: grid11(1, 'yellow') },
 
-      {
-        ms: 200,
-        ...lane(70),
-        leds: { led_green: LIT },
-        serial: ['Vehicle Distance: 70 cm', 'Vehicle Detected! GREEN Light ON'],
-      },
-      { ms: 1800, ...lane(70), leds: { led_green: LIT } },
+      // Lane 3 — density 500 -> green for 3000 + 500*7 = 6500 ms, the busiest
+      // lane and the longest phase, matching the highest knob setting.
+      { ms: 200, leds: grid11(2, 'green'), serial: ['Lane 3 Green: 6500ms'] },
+      { ms: 6300, leds: grid11(2, 'green') },
+      { ms: 2000, leds: grid11(2, 'yellow') },
 
-      {
-        ms: 200,
-        ...lane(40),
-        leds: { led_green: LIT },
-        serial: ['Vehicle Distance: 40 cm', 'Vehicle Detected! GREEN Light ON'],
-      },
-      { ms: 1800, ...lane(40), leds: { led_green: LIT } },
-
-      {
-        ms: 200,
-        ...lane(120),
-        leds: { led_red: LIT },
-        serial: ['Vehicle Distance: 120 cm', 'No Vehicle: RED Light ON'],
-      },
-      { ms: 1800, ...lane(120), leds: { led_red: LIT } },
-
-      {
-        ms: 200,
-        ...lane(220),
-        leds: { led_red: LIT },
-        serial: ['Vehicle Distance: 220 cm', 'No Vehicle: RED Light ON'],
-      },
-      { ms: 1800, ...lane(220), leds: { led_red: LIT } },
+      // Lane 4 — density 200 -> green for 3000 + 200*7 = 4400 ms.
+      { ms: 200, leds: grid11(3, 'green'), serial: ['Lane 4 Green: 4400ms'] },
+      { ms: 4200, leds: grid11(3, 'green') },
+      { ms: 2000, leds: grid11(3, 'yellow') },
     ],
   },
 
-  /* 12 — Health monitoring. The sketch prints every 3 s; the sensors update
-     faster than that, which is why each 3 s reading is three steps of wobbling
-     BPM under one printed line.
-     The printed numbers are `analogRead` counts, 0–1023, because that is what
-     this sketch prints. The body-temperature count is the one an LM35 at the
-     °C shown would give: 36.5 °C → 365 mV → 365/4.88 ≈ 75. The pulse counts are
-     samples off a waveform that swings around mid-rail. */
+  /* 12 — Health monitoring, on the Pico. `HEALTH_MONITORING_RPI_SCRIPT`
+     (lib/simulator/pico/experiments.ts) is what runs now, and its loop is a
+     real measurement rather than an instant analogRead: `measure_bpm(4000)`
+     polls the MCP3008 for a full 4 s window, then `read_temp()` spends the
+     DS18B20's own 750 ms conversion time — 4750 ms of work before the one
+     line it prints. One step per reading, held for that long, is what makes
+     the serial log's pace match a sketch a student could actually be running
+     rather than a print happening every tick.
+
+     Five readings, normal → alert → normal, exactly the shape experiment 1's
+     temperature excursion takes: the middle one clears BOTH the 36.1–37.2 °C
+     and the 60–100 BPM bands the sketch checks, at once, so the ALERT line
+     shows what a compound fault looks like rather than only ever one flag at
+     a time. */
   12: {
     stillStep: 0,
     steps: [
       {
-        ms: 1000,
-        props: { pulse: { bpm: 72 } },
-        sensors: { bpm: 72, temperature: 36.5 },
+        ms: 200,
+        props: { ds: { temperature: 36.5 }, pulse: { bpm: 72 } },
+        sensors: { tempProbe: 36.5, bpm: 72 },
         serial: [
-          'ThingSpeak Patient Telemetry online...',
-          'BPM: 512 | Body Temp: 75 C',
-          'ThingSpeak API: Pushing Field1=BPM, Field2=Temp... Success!',
+          'Smart Health Monitor - DS18B20 on GP4, pulse sensor on MCP3008 CH0.',
+          'Found 1 1-Wire device(s).',
+          'Temp: 36.5C  BPM: 72  Status: NORMAL -> ThingSpeak updated',
         ],
       },
-      { ms: 1000, props: { pulse: { bpm: 74 } }, sensors: { bpm: 74, temperature: 36.5 } },
-      { ms: 1000, props: { pulse: { bpm: 73 } }, sensors: { bpm: 73, temperature: 36.5 } },
+      { ms: 4550, props: { ds: { temperature: 36.5 }, pulse: { bpm: 72 } }, sensors: { tempProbe: 36.5, bpm: 72 } },
 
       {
-        ms: 1000,
-        props: { pulse: { bpm: 76 } },
-        sensors: { bpm: 76, temperature: 36.7 },
-        serial: [
-          'BPM: 604 | Body Temp: 75 C',
-          'ThingSpeak API: Pushing Field1=BPM, Field2=Temp... Success!',
-        ],
+        ms: 200,
+        props: { ds: { temperature: 36.8 }, pulse: { bpm: 78 } },
+        sensors: { tempProbe: 36.8, bpm: 78 },
+        serial: ['Temp: 36.8C  BPM: 78  Status: NORMAL -> ThingSpeak updated'],
       },
-      { ms: 1000, props: { pulse: { bpm: 78 } }, sensors: { bpm: 78, temperature: 36.7 } },
-      { ms: 1000, props: { pulse: { bpm: 77 } }, sensors: { bpm: 77, temperature: 36.7 } },
+      { ms: 4550, props: { ds: { temperature: 36.8 }, pulse: { bpm: 78 } }, sensors: { tempProbe: 36.8, bpm: 78 } },
+
+      // Both bands cleared at once: temperature over 37.2 °C and BPM over
+      // 100 — a fever with a racing pulse, the compound ALERT case.
+      {
+        ms: 200,
+        props: { ds: { temperature: 37.6 }, pulse: { bpm: 112 } },
+        sensors: { tempProbe: 37.6, bpm: 112 },
+        serial: ['Temp: 37.6C  BPM: 112  Status: ALERT Temp HIGH BPM HIGH (Tachycardia) -> ThingSpeak updated'],
+      },
+      { ms: 4550, props: { ds: { temperature: 37.6 }, pulse: { bpm: 112 } }, sensors: { tempProbe: 37.6, bpm: 112 } },
 
       {
-        ms: 1000,
-        props: { pulse: { bpm: 82 } },
-        sensors: { bpm: 82, temperature: 37 },
-        serial: [
-          'BPM: 671 | Body Temp: 76 C',
-          'ThingSpeak API: Pushing Field1=BPM, Field2=Temp... Success!',
-        ],
+        ms: 200,
+        props: { ds: { temperature: 37.0 }, pulse: { bpm: 95 } },
+        sensors: { tempProbe: 37.0, bpm: 95 },
+        serial: ['Temp: 37.0C  BPM: 95  Status: NORMAL -> ThingSpeak updated'],
       },
-      { ms: 1000, props: { pulse: { bpm: 85 } }, sensors: { bpm: 85, temperature: 37 } },
-      { ms: 1000, props: { pulse: { bpm: 83 } }, sensors: { bpm: 83, temperature: 37 } },
+      { ms: 4550, props: { ds: { temperature: 37.0 }, pulse: { bpm: 95 } }, sensors: { tempProbe: 37.0, bpm: 95 } },
 
       {
-        ms: 1000,
-        props: { pulse: { bpm: 79 } },
-        sensors: { bpm: 79, temperature: 36.9 },
-        serial: [
-          'BPM: 588 | Body Temp: 76 C',
-          'ThingSpeak API: Pushing Field1=BPM, Field2=Temp... Success!',
-        ],
+        ms: 200,
+        props: { ds: { temperature: 36.4 }, pulse: { bpm: 70 } },
+        sensors: { tempProbe: 36.4, bpm: 70 },
+        serial: ['Temp: 36.4C  BPM: 70  Status: NORMAL -> ThingSpeak updated'],
       },
-      { ms: 1000, props: { pulse: { bpm: 77 } }, sensors: { bpm: 77, temperature: 36.9 } },
-      { ms: 1000, props: { pulse: { bpm: 78 } }, sensors: { bpm: 78, temperature: 36.9 } },
-
-      {
-        ms: 1000,
-        props: { pulse: { bpm: 74 } },
-        sensors: { bpm: 74, temperature: 36.6 },
-        serial: [
-          'BPM: 497 | Body Temp: 75 C',
-          'ThingSpeak API: Pushing Field1=BPM, Field2=Temp... Success!',
-        ],
-      },
-      { ms: 1000, props: { pulse: { bpm: 72 } }, sensors: { bpm: 72, temperature: 36.6 } },
-      { ms: 1000, props: { pulse: { bpm: 73 } }, sensors: { bpm: 73, temperature: 36.6 } },
+      { ms: 4550, props: { ds: { temperature: 36.4 }, pulse: { bpm: 70 } }, sensors: { tempProbe: 36.4, bpm: 70 } },
     ],
   },
 }

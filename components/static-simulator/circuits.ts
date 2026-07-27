@@ -277,6 +277,22 @@ function off(part: PlacedPart, pinId: string, y: number): Point {
   return { x: p.x, y }
 }
 
+/**
+ * The turn a wire makes leaving a SIDE-mounted header: straight off the pin
+ * HORIZONTALLY, to `x`, keeping the pin's own y.
+ *
+ * `off()` above assumes a header on the board's top or bottom edge — true for
+ * the Uno and the Pico, both of which this file wired first. The Mega's
+ * D22-D53 header runs down its RIGHT edge instead (see makeMega()), so a wire
+ * leaving THAT header clears the board moving sideways, not vertically; this
+ * is the same idea as `off()`, rotated a quarter turn for the edge it is on.
+ */
+function offX(part: PlacedPart, pinId: string, x: number): Point {
+  const p = pinPosition(part, pinId)
+  if (!p) throw new Error(`${part.type} has no pin ${pinId}`)
+  return { x, y: p.y }
+}
+
 const UNO = uno()
 const UNO_HIGH = unoHigh()
 const PICO = pico()
@@ -815,129 +831,412 @@ export const CIRCUIT_HOME_AUTOMATION_PICO: CircuitDoc = {
   ],
 }
 
-/* ── 11 · Smart traffic controller (Arduino Uno) ───────────────────────────
+/* ── 11 · Smart traffic controller (Arduino Mega) ──────────────────────────
  *
- * Sketch: HC-SR04 TRIG on D6 and ECHO on D7, red lamp on D4, green on D3, and a
- * 100 cm line that decides between them.
+ * THE LAB SHEET GOVERNS, NOT THE PORTED SKETCH — an explicit reversal of the
+ * choice this file used to make. `iot_virtual_lab.html`'s own bill of
+ * materials is unambiguous: Arduino Mega, 12 LEDs (three sets of red/yellow/
+ * green — the sheet writes "RGYG"), four potentiometers, four OPTIONAL IR
+ * sensors, a 16×2 LCD. Its Circuit section wires lane 1's R/Y/G to pins
+ * 22/23/24, lane 2 to 25/26/27, lane 3 to 28/29/30, lane 4 to 31/32/33, and
+ * the four density pots to A0-A3 — and its own published sketch (reproduced
+ * verbatim in utils/experimentData.ts now) drives exactly that: a
+ * `redPins[]`/`yelPins[]`/`grnPins[]` array of four, `analogRead` on four
+ * density pins, no ultrasonic sensor anywhere in it. The single-lane,
+ * one-scanner Uno circuit this file drew before came from the colleague's
+ * ported SKETCH data, which told a smaller story than the lab sheet did; the
+ * owner has ruled that where the two disagree, the lab sheet wins. See
+ * lib/simulator/model/examples.ts's `STARTER_SMART_TRAFFIC` for the fuller
+ * accounting of the same bill of materials against this part library — this
+ * drawing matches its board and its five part types (Mega, breadboard, LED,
+ * resistor, potentiometer), plus the LCD that starter could not ship because
+ * this library had no display part yet.
  *
- * AN UNO, NOT A MEGA, and that is a deliberate split from the lab's own starter
- * for this slug. The starter builds the printed four-lane controller — twelve
- * LEDs and four density pots, sixteen signals, which is why it needs a Mega.
- * The sketch shown beside THIS drawing is the ported one: one lane, one
- * scanner, two lamps, six pins. The drawing has to be the circuit the listing
- * next to it runs on.
+ * THE PARTS ARE FREE-STANDING, NOT PLUGGED INTO BREADBOARD COLUMNS, and that
+ * departs from every other figure's discipline in this file on purpose. A
+ * single R/Y/G trio already spans a whole bank's 26 usable columns (see
+ * experiment 3), and four trios do not fit sixteen columns wide on any
+ * breadboard this library has. The starter reaches the same conclusion for
+ * the same reason: its own twelve LEDs and twelve resistors sit in a
+ * component tray below the bench, wired straight to the Mega, with the
+ * breadboard present only for the rails. This drawing does the same, and then
+ * finishes the wiring the starter leaves to the student.
  *
- * The scanner stands BELOW the breadboard rather than on it, for two reasons
- * that point the same way. Its beam is drawn out to 260 cm — 94 units — above
- * the module, so it has to sit low enough that the board's own top edge holds
- * the frame open above it; and its pins are along its underside, so every lead
- * has to arrive from below or be drawn across its face. So the two signals go
- * up out of the digital header, over the board, down its right-hand side and
- * back along lanes underneath, and the return comes off the near end of the
- * ground rail the same way round.
+ * ONE BREADBOARD, matching the starter's own bill of materials, carries the
+ * shared ground return for all twelve lamps and the LCD's supply pins. The
+ * four pots and the twelve lane drives tap the Mega directly — its GND and
+ * 5 V pads sit right beside where each of those lands, and running every one
+ * of sixteen signals via the rail would be four extra jumpers for no wire
+ * saved.
+ *
+ * THE MEGA'S DIGITAL HEADER IS SIDE-MOUNTED, unlike the Uno's or the Pico's.
+ * D22-D53 run down the board's RIGHT edge (see makeMega()), so the twelve
+ * lane wires leave the board moving sideways — `offX()`, not `off()` — clear
+ * the edge, then drop below the header before turning toward whichever lamp
+ * they drive, which is what keeps a dozen wires bound for a 2×6 grid from
+ * being drawn across the board or across each other's lamps. D0-D21 are the
+ * Uno-style top-edge header the Mega ALSO carries, and the six LCD control
+ * lines use six of those pins — free ones, because the published circuit
+ * never assigns the LCD a pin at all (see below).
+ *
+ * TWELVE LAMPS IN A 2×6 GRID, two lanes to a row, each lane's red/yellow/
+ * green kept as three consecutive cells so the trio still reads as one unit.
+ * A 4-column × 3-row layout would say "lane" more plainly but costs 70-odd
+ * units of PANEL HEIGHT this figure cannot spend: the read-only canvas floors
+ * its zoom-out at 0.45× (CircuitCanvas's `FIT_MIN_Z`), so a figure any taller
+ * than roughly 450 units starts giving up real margin on the narrowest phones
+ * this page supports. Two rows of six is the shape that keeps a 30-part Mega
+ * board inside the same panel the other eleven three-to-eight-part circuits
+ * already fit — see the fit measurements taken in the commit that added this.
+ *
+ * THE LCD IS WIRED, NOT DECORATIVE, even though the published sketch never
+ * touches it — every status line it prints goes to `Serial.print`, which the
+ * code panel already shows, exactly as the starter's own comment on the same
+ * point observes. It is on the bill of materials without the "(optional)" the
+ * IR sensors carry, so it is built as real, working hardware: VSS/GND, VDD/
+ * 5 V, R/W tied low (the library never reads), V0 tied straight to ground for
+ * maximum contrast (no fifth potentiometer is in the bill of materials to
+ * spare for a trimmer), RS/E/D4-D7 on a 4-bit interface to six free Mega
+ * pins, and the backlight straight across the rail — the exact "Hello World"
+ * LCD wiring lib/simulator/__tests__/lcd.test.ts exercises, just on a Mega
+ * instead of an Uno. D0-D3 and R/W stay off the Checks panel by the same
+ * `character_lcd` exemption that test file documents: a 4-bit interface
+ * leaves them unconnected by design, not by mistake.
+ *
+ * THE IR SENSORS ARE OMITTED. The bill of materials marks all four
+ * "(optional)", and the published sketch never reads them — density comes
+ * from `analogRead(densityPin[i])` on the four pots, exactly as the starter's
+ * own comment on this experiment argues: "a part that the program cannot
+ * observe would be furniture." Four more modules would also be four more
+ * shapes fighting the panel-height budget above for room a working part
+ * already has a claim on.
  */
-const HC_11 = board('hcsr04', 'hc_sr04', { x: 520, y: 210 }, { distance: 260 })
+
+/**
+ * Where the Mega, the LCD, the breadboard and the pots stand.
+ *
+ * THE LCD SITS BESIDE THE MEGA, ON ITS TOP EDGE'S OWN LEVEL, not below the
+ * breadboard the way an earlier draft of this file placed it. Every one of
+ * the LCD's sixteen pins is a single row along ITS top edge (see
+ * `makeLCD1602()`), and the six free Mega pins driving it — D6-D11 — are on
+ * the Mega's TOP edge too (the Uno-style header the Mega also carries,
+ * unlike D22-D53's side-mounted one the lane wires use). Put the two boards
+ * side by side at the same height and those six control wires are nearly
+ * horizontal instead of the long trip around the panel an earlier layout
+ * needed; it is also what keeps this figure's overall width inside the
+ * panel-height budget's OWN twin, the panel-WIDTH one — this document's own
+ * fit measurement is the one this shape was chosen to pass.
+ *
+ * THE BREADBOARD AND THE POTS SIT BELOW THE MEGA, side by side, so neither
+ * adds its own row: the pot tray shares the Mega's own footprint width, and
+ * the breadboard — used here only for the twelve lamps' shared ground
+ * return — costs only the fifty extra units of width its own body needs
+ * beside the pots, not a whole board's width stacked on top of everything
+ * else.
+ */
+const MEGA_AT: Point = { x: 0, y: 20 }
+const MEGA_11 = board('mega', 'arduino_mega', MEGA_AT)
+const LCD_11_AT: Point = { x: 424, y: 20 }
+const LCD_11 = board('lcd', 'lcd1602', LCD_11_AT)
+const BB_11_AT: Point = { x: 0, y: 240 }
+
+/** Where potentiometer `i` (0-3) stands, beside the breadboard. */
+function potAt(i: number): Point {
+  return { x: 335 + i * 88.74, y: 240 }
+}
+
+/**
+ * Each knob's resting position, chosen to MATCH the density showreel/
+ * timelines.ts plays back — `analogRead()` returns roughly `position/100 *
+ * 1023`, so lane 1's 10% knob is the ~100-count reading the timeline's first
+ * "Lane 1 Green" line is computed from, and so on for the other three. The
+ * knobs do not turn during playback; only the lamps and the serial log do.
+ */
+const POT_POSITIONS_11 = [10, 29, 49, 20]
+const POTS_11 = [0, 1, 2, 3].map((i) =>
+  board(`pot${i + 1}`, 'potentiometer', potAt(i), { position: POT_POSITIONS_11[i] }),
+)
+
+/**
+ * The twelve lamps, laid out two lanes per row so the grid stays inside the
+ * panel-height budget explained above.
+ *
+ * `pin` is the published assignment, verbatim: redPins/yelPins/grnPins in
+ * `iot_virtual_lab.html`'s own sketch, `{22,25,28,31}`/`{23,26,29,32}`/
+ * `{24,27,30,33}` — lane `i`'s red/yellow/green on `22+i`/`23+i`/`24+i`.
+ */
+const LANE_PINS = [0, 1, 2, 3].map((lane) => ({
+  red: `D${22 + lane}`,
+  yellow: `D${23 + lane}`,
+  green: `D${24 + lane}`,
+}))
+
+const GRID_11_AT: Point = { x: 0, y: 422 }
+const CELL_PITCH_X = 106
+/** Row pitch is barely more than an LED's own 52-unit height — this panel's
+ * height budget is as tight as its width one, see the doc comment above. */
+const ROW_PITCH_Y = 55
+/** How far the LED sits from its cell's own left edge — right against the
+ * resistor's far lead, which is what keeps a cell only as wide as the two
+ * parts actually need. */
+const LED_OFFSET_X = 62
+
+interface Lamp11 {
+  id: string
+  color: 'red' | 'yellow' | 'green'
+  pin: string
+  cellX: number
+  cellY: number
+}
+
+const LAMPS_11: Lamp11[] = LANE_PINS.flatMap((pins, lane) =>
+  (['red', 'yellow', 'green'] as const).map((color, colorIdx) => {
+    const cellIndex = lane * 3 + colorIdx
+    const row = Math.floor(cellIndex / 6)
+    const col = cellIndex % 6
+    return {
+      id: `l${lane + 1}_${color}`,
+      color,
+      pin: pins[color],
+      cellX: GRID_11_AT.x + col * CELL_PITCH_X,
+      cellY: GRID_11_AT.y + row * ROW_PITCH_Y,
+    }
+  }),
+)
+
+/** The 220 Ω series resistor and the lamp it feeds, for one lamp cell. */
+function lampParts(lamp: Lamp11): PlacedPart[] {
+  return [
+    board(`r_${lamp.id}`, 'resistor', { x: lamp.cellX, y: lamp.cellY + 20 }, { ohms: 220 }),
+    board(`led_${lamp.id}`, 'led', { x: lamp.cellX + LED_OFFSET_X, y: lamp.cellY }, { color: lamp.color }),
+  ]
+}
+
+const LAMP_HUE: Record<Lamp11['color'], string> = { red: ORANGE, yellow: YELLOW, green: GREEN }
+
+/**
+ * A vertical channel clear of every part above the grid — the Mega, the LCD,
+ * the breadboard and the pot tray all end at or before this x — so the
+ * twelve lane-drive wires can drop from the Mega's side header straight down
+ * to the grid without crossing any of their bodies.
+ */
+const LANE_CHANNEL_X = 692
+
+/**
+ * The drive wire for one lamp: off the Mega's SIDE header, right into the
+ * clear channel, down past everything else on the panel, then left into the
+ * lamp's own column.
+ *
+ * All twelve share the channel's `x` and the same landing `y` (412, ten units
+ * clear of the grid's own top edge at 422), so the fan bends in the open gap
+ * below the pots rather than over any part's body.
+ */
+function lampDrive(lamp: Lamp11): DocWire {
+  return w(`drv_${lamp.id}`, `mega:${lamp.pin}`, `r_${lamp.id}:1`, LAMP_HUE[lamp.color], [
+    offX(MEGA_11, lamp.pin, LANE_CHANNEL_X),
+    { x: LANE_CHANNEL_X, y: 412 },
+    { x: lamp.cellX, y: 412 },
+  ])
+}
+
+const GRID_ROWS_11: Lamp11[][] = [LAMPS_11.slice(0, 6), LAMPS_11.slice(6, 12)]
+
+/**
+ * One row's ground return: the six cathodes chained lamp-to-lamp, then ONE
+ * wire from the FIRST of them back to the shared rail — the same
+ * daisy-chain-then-one-return shape experiment 2 uses for two sensors, scaled
+ * to six, tapped at whichever end is closer.
+ *
+ * That end is column 0's, not column 5's, because the breadboard sits
+ * directly above the grid's LEFT edge (`BB_11_AT`): a return from the first
+ * lamp is a short near-vertical hop into the rail, where a return from the
+ * last would cross the other five lamps' bodies to get there.
+ */
+function rowGround(row: Lamp11[], railCol: number): DocWire[] {
+  const links: DocWire[] = []
+  for (let i = 0; i < row.length - 1; i++) {
+    links.push(w(`gndlink_${row[i].id}`, `led_${row[i].id}:C`, `led_${row[i + 1].id}:C`, BLACK))
+  }
+  const first = row[0]
+  const cathodeX = first.cellX + LED_OFFSET_X + 15.63
+  links.push(
+    w(`gndret_${first.id}`, `led_${first.id}:C`, `bb:bn${railCol}`, BLACK, [{ x: cathodeX, y: 415 }]),
+  )
+  return links
+}
 
 export const CIRCUIT_SMART_TRAFFIC: CircuitDoc = {
   parts: [
-    uno(),
-    bench(BENCH_AT),
-    uplug('led_red', 'led', 'A', 'e3', { color: 'red' }),
-    uplug('r_red', 'resistor', '1', 'd2', { ohms: 220 }),
-    uplug('led_green', 'led', 'A', 'e12', { color: 'green' }),
-    uplug('r_green', 'resistor', '1', 'd11', { ohms: 220 }),
-    HC_11,
+    MEGA_11,
+    bench(BB_11_AT),
+    LCD_11,
+    ...POTS_11,
+    ...LAMPS_11.flatMap(lampParts),
   ],
   wires: [
-    ...unoSupply('bp2', 'bn5'),
-    // Red lamp, column 3; green, column 12.
-    w('drv_r', 'uno:D4', 'bb:b3', ORANGE, [off(UNO, 'D4', 140)]),
-    leg('la_r', 'led_red:A', 'bb:e3', ORANGE),
-    leg('lc_r', 'led_red:C', 'bb:e2', ORANGE),
-    leg('r1_r', 'r_red:1', 'bb:d2', ORANGE),
-    leg('r2_r', 'r_red:2', 'bb:d8', ORANGE),
-    w('gnd_r', 'bb:a8', 'bb:bn8', BLACK),
-    w('drv_g', 'uno:D3', 'bb:a12', GREEN, [off(UNO, 'D3', 150)]),
-    leg('la_g', 'led_green:A', 'bb:e12', GREEN),
-    leg('lc_g', 'led_green:C', 'bb:e11', GREEN),
-    leg('r1_g', 'r_green:1', 'bb:d11', GREEN),
-    leg('r2_g', 'r_green:2', 'bb:d17', GREEN),
-    w('gnd_g', 'bb:a17', 'bb:bn17', BLACK),
-    // The scanner, every lead arriving from underneath. Its return comes off
-    // the far end of the ground rail and round the outside; its supply shares
-    // the 5 V pad with the rail feed, which is what a second lead off one pad
-    // looks like.
-    w('hc_g', 'bb:bn30', 'hcsr04:GND', BLACK, [
-      { x: 732, y: 180 },
-      { x: 732, y: 342 },
-      off(HC_11, 'GND', 342),
+    // Mega -> breadboard: the ONE thing the board carries now that the LCD
+    // and the pots tap the Mega directly (see the doc comment above) is the
+    // twelve lamps' shared ground, so this is the only wire it needs. GND.4
+    // exits the Mega's side header, drops below it and the pot tray — clear
+    // of both — before landing on the near rail.
+    w('bb_gnd', 'mega:GND.4', 'bb:bn1', BLACK, [
+      offX(MEGA_11, 'GND.4', 415),
+      { x: 415, y: 230 },
+      { x: 300, y: 230 },
     ]),
-    w('hc_e', 'uno:D7', 'hcsr04:ECHO', YELLOW, [
-      off(UNO, 'D7', 4),
-      { x: 740, y: 4 },
-      { x: 740, y: 354 },
-      off(HC_11, 'ECHO', 354),
-    ]),
-    w('hc_t', 'uno:D6', 'hcsr04:TRIG', ORANGE, [
-      off(UNO, 'D6', 12),
-      { x: 748, y: 12 },
-      { x: 748, y: 366 },
-      off(HC_11, 'TRIG', 366),
-    ]),
-    w('hc_v', 'uno:5V', 'hcsr04:VCC', RED, [off(UNO, '5V', 402), off(HC_11, 'VCC', 402)]),
+
+    // The LCD's supply and control. VSS/RW/V0/K are jumpered together right
+    // on the module and grounded once, the same for VDD/A on the 5 V side —
+    // the same "Hello World" LCD wiring lib/simulator/__tests__/lcd.test.ts
+    // exercises (R/W tied low, V0 tied straight to ground for maximum
+    // contrast, backlight straight across the rail), just gathered at the
+    // module instead of run to a rail twice each.
+    w('lcd_vss', 'mega:GND.1', 'lcd:VSS', BLACK, [off(MEGA_11, 'GND.1', 12), { x: 439, y: 12 }]),
+    w('lcd_rw', 'lcd:RW', 'lcd:VSS', BLACK),
+    w('lcd_v0', 'lcd:V0', 'lcd:VSS', BLACK),
+    w('lcd_k', 'lcd:K', 'lcd:VSS', BLACK),
+    w('lcd_vdd', 'mega:5V.1', 'lcd:VDD', RED, [offX(MEGA_11, '5V.1', 415)]),
+    w('lcd_a', 'lcd:A', 'lcd:VDD', RED),
+    // RS/E/D4-D7 on six free top-header pins — free because the published
+    // circuit never assigns the LCD one. Six parallel lanes at y=13..18,
+    // clearing the Mega's top edge before crossing to the display, which
+    // sits at the SAME height beside it (see the doc comment above). Kept as
+    // close to the edge as the lanes can be packed — this panel's HEIGHT
+    // budget is exactly as tight as its width one.
+    w('lcd_rs', 'mega:D6', 'lcd:RS', BLUE, [off(MEGA_11, 'D6', 13), { x: 469, y: 13 }]),
+    w('lcd_e', 'mega:D7', 'lcd:E', BLUE, [off(MEGA_11, 'D7', 14), { x: 489, y: 14 }]),
+    w('lcd_d4', 'mega:D8', 'lcd:D4', BLUE, [off(MEGA_11, 'D8', 15), { x: 539, y: 15 }]),
+    w('lcd_d5', 'mega:D9', 'lcd:D5', BLUE, [off(MEGA_11, 'D9', 16), { x: 549, y: 16 }]),
+    w('lcd_d6', 'mega:D10', 'lcd:D6', BLUE, [off(MEGA_11, 'D10', 17), { x: 559, y: 17 }]),
+    w('lcd_d7', 'mega:D11', 'lcd:D7', BLUE, [off(MEGA_11, 'D11', 18), { x: 569, y: 18 }]),
+
+    // The four density pots: wiper to its own analog pin, ground and 5 V
+    // chained pot-to-pot and tapped once each off the Mega's bottom header —
+    // A0-A3 and GND/5V share that header, so every one of these is a short
+    // reach straight down.
+    ...[0, 1, 2, 3].flatMap((i) => {
+      const wires: DocWire[] = [
+        w(`pot${i}_sig`, `mega:A${i}`, `pot${i + 1}:2`, ORANGE, [off(MEGA_11, `A${i}`, 228)]),
+      ]
+      if (i > 0) {
+        wires.push(
+          w(`pot${i}_gchain`, `pot${i}:1`, `pot${i + 1}:1`, BLACK),
+          w(`pot${i}_vchain`, `pot${i}:3`, `pot${i + 1}:3`, RED),
+        )
+      }
+      return wires
+    }),
+    w('pot_gnd', 'mega:GND.2', 'pot1:1', BLACK, [off(MEGA_11, 'GND.2', 228)]),
+    w('pot_v', 'mega:5V', 'pot1:3', RED, [off(MEGA_11, '5V', 228)]),
+
+    // The twelve lamps: drive from the Mega, resistor into the anode, cathode
+    // onto its row's ground chain.
+    ...LAMPS_11.map(lampDrive),
+    ...LAMPS_11.map((lamp) => w(`br_${lamp.id}`, `r_${lamp.id}:2`, `led_${lamp.id}:A`, LAMP_HUE[lamp.color])),
+    ...rowGround(GRID_ROWS_11[0], 5),
+    ...rowGround(GRID_ROWS_11[1], 8),
   ],
 }
 
-/* ── 12 · Health monitoring (Arduino Uno) ──────────────────────────────────
+/* ── 12 · Health monitoring (Raspberry Pi Pico) ────────────────────────────
  *
- * Sketch: `analogRead(A0)` for the pulse sensor and `analogRead(A1)` for body
- * temperature, printed as raw 0–1023 counts every three seconds.
+ * THE LAB SHEET GOVERNS, NOT THE PORTED SKETCH — the same reversal as
+ * experiment 11's, for the same reason. `iot_virtual_lab.html`'s bill of
+ * materials names a Raspberry Pi 3/4, a DS18B20, a pulse sensor (SEN-11574),
+ * an MCP3008 ADC, a 4.7 kΩ resistor and an optional OLED — no LM35, no analog
+ * pins read directly, and its own Theory section says outright why the ADC is
+ * there: "since Pi lacks analog pins". A potentiometer standing in for an
+ * analog temperature reading was never this circuit; it was a stand-in for a
+ * part this library used to be missing, recorded as exactly that in this
+ * comment's previous revision. The library now has `ds18b20`, so the
+ * substitution is retired rather than carried forward.
  *
- * THE POTENTIOMETER IS STANDING IN FOR AN LM35 AND IT IS NOT A THERMOMETER.
- * There is no LM35 in this part library. What A1 needs is an analog source
- * across the rails, which is what a pot wired 1→GND, 3→5 V, wiper→A1 is; it is
- * a circuit a student can build, and the sketch cannot tell the difference
- * because all it does is read a count. It is recorded here rather than dressed
- * up, because a drawing that quietly labelled a pot as a temperature sensor
- * would be the kind of near-miss that stops a student trusting the rest.
+ * A PICO, not the Uno the ported sketch ran on — a Raspberry Pi board is what
+ * the bill of materials names, and `raspberry_pi_pico` is the only Raspberry
+ * Pi this library emulates (see lib/simulator/model/parts.ts). This is also
+ * now the fifth Pico circuit in this file to reuse `pico()`/`bench()`, so it
+ * follows the same furniture every other one does.
  *
- * An Uno rather than the Pico + MCP3008 the lab's own starter for this slug
- * builds, for the reason experiment 11 is an Uno: the listing beside this
- * drawing is the ported Arduino sketch, and it reads analog pins directly.
+ * THE WIRING IS lib/simulator/pico/experiments.ts's `HEALTH_MONITORING_RPI`,
+ * redrawn in this file's own document model rather than re-derived: DS18B20
+ * DATA on GP4 with its 4.7 kΩ pull-up (the same value experiment 8 uses, for
+ * the same 1-Wire-timing reason), MCP3008 CLK/MOSI/MISO/CS on GP11/10/9/8 —
+ * the published SPI0 pins, unmoved — and the pulse sensor's analog output into
+ * the converter's CH0. Every published pin number survives the port, same as
+ * that file's own comment observes.
  *
- * A0 and A1 are on the UNDERSIDE header beside the supply pads, so the two
- * analog leads take the same route the supply does — down, along beneath the
- * board, and up in the gap — on their own pair of lanes below it.
+ * WHY THE MCP3008 IS STILL HERE on a board with three native ADCs
+ * (GP26/27/28): the printed circuit puts an external SPI converter in front
+ * of the sensor because a real Raspberry Pi has no analog input pins at all,
+ * and that fact — not a Pico-specific limitation — is what the experiment is
+ * teaching. Building the SPI transaction the published Python performs
+ * (`spidev.xfer2([1, (8+ch)<<4, 0])`, ported to a bit-banged `SoftSPI` in
+ * pico/experiments.ts) is worth meeting even though GP26 would read the same
+ * sensor directly.
+ *
+ * DS18B20 AND RESISTOR ARE ON THE BREADBOARD, in the same columns and the
+ * same discipline experiment 8 already established (a datasheet 4.7 kΩ
+ * pull-up sharing the data column). THE MCP3008 AND THE PULSE SENSOR ARE
+ * FREE-STANDING, wired straight to the Pico's left header and to each other,
+ * the same choice experiment 9 makes for the L298N: a 16-pin ADC does not
+ * gain anything from tie-point columns it would only occupy two of (its own
+ * pins are on a 10-unit pitch already, but along the chip's own edges, not
+ * the breadboard's row grid), and a reference figure gets a shorter, plainer
+ * set of wires by placing it where it is going to sit.
+ *
+ * THE OLED IS OMITTED. The bill of materials marks it optional, there is no
+ * display part in this library, and — as with experiment 11's LCD note, the
+ * mirror image of this one — the published Python never writes to one either;
+ * every reading it produces goes to `print()`, which the code panel already
+ * shows.
  */
+const MCP3008_AT: Point = { x: 100, y: 220 }
+const MCP3008_12 = board('adc', 'mcp3008', MCP3008_AT)
+const PULSE_12 = board('pulse', 'pulse_sensor', { x: 30, y: 260 }, { bpm: 72, amplitude: 8 })
+
 export const CIRCUIT_HEALTH_MONITOR: CircuitDoc = {
   parts: [
-    uno(),
-    bench(BENCH_AT),
-    uplug('pulse', 'pulse_sensor', 'SIG', 'e5', { bpm: 72, amplitude: 8 }),
-    uplug('pot', 'potentiometer', '2', 'e16', { position: 50, totalOhms: 10000 }),
+    pico(),
+    bench(PICO_BENCH_AT),
+    pplug('ds', 'ds18b20', 'DQ', 'e20', { temperature: 36.5, resolution: 12 }),
+    pplug('r4k7', 'resistor', '1', 'c20', { ohms: 4700 }),
+    MCP3008_12,
+    PULSE_12,
   ],
   wires: [
-    ...unoSupply('bp2', 'bn3'),
-    leg('pl_v', 'pulse:VCC', 'bb:e4', RED),
-    leg('pl_s', 'pulse:SIG', 'bb:e5', BLUE),
-    leg('pl_g', 'pulse:GND', 'bb:e6', BLACK),
-    w('pl_pwr', 'bb:b4', 'bb:bp4', RED),
-    w('pl_ret', 'bb:b6', 'bb:bn6', BLACK),
-    w('sig_a0', 'uno:A0', 'bb:a5', BLUE, [
-      off(UNO, 'A0', 402),
-      { x: 354, y: 402 },
-      { x: 354, y: 150 },
-    ]),
-    leg('pot_g', 'pot:1', 'bb:e15', BLACK),
-    leg('pot_w', 'pot:2', 'bb:e16', ORANGE),
-    leg('pot_v', 'pot:3', 'bb:e17', RED),
-    w('pot_ret', 'bb:b15', 'bb:bn15', BLACK),
-    w('pot_pwr', 'bb:b17', 'bb:bp17', RED),
-    w('sig_a1', 'uno:A1', 'bb:a16', ORANGE, [
-      off(UNO, 'A1', 414),
-      { x: 370, y: 414 },
-      { x: 370, y: 162 },
-    ]),
+    ...picoSupply('bn28'),
+    // DS18B20, exactly as experiment 8 wires one.
+    leg('ds_g', 'ds:GND', 'bb:e19', BLACK),
+    leg('ds_q', 'ds:DQ', 'bb:e20', GREEN),
+    leg('ds_v', 'ds:VDD', 'bb:e21', RED),
+    w('ds_ret', 'bb:a19', 'bb:bn19', BLACK),
+    w('ds_pwr', 'bb:a21', 'bb:bp21', RED),
+    leg('pu_d', 'r4k7:1', 'bb:c20', YELLOW),
+    leg('pu_r', 'r4k7:2', 'bb:c26', YELLOW),
+    w('pu_v', 'bb:a26', 'bb:bp26', RED),
+    w('sig', 'pico:GP4', 'bb:b20', GREEN, [{ x: 485, y: 185 }, { x: 360, y: 140 }]),
+
+    // The MCP3008's supply and reference, off the same rail. VREF tied to the
+    // 3.3 V rail the sensor runs from is what makes the conversion
+    // ratiometric — see the doc comment on the equivalent wire in
+    // pico/experiments.ts.
+    w('adc_vdd', 'bb:bp5', 'adc:VDD', RED),
+    w('adc_vref', 'bb:bp6', 'adc:VREF', RED),
+    w('adc_agnd', 'bb:bn24', 'adc:AGND', BLACK),
+    w('adc_dgnd', 'bb:bn25', 'adc:DGND', BLACK),
+    // SPI: the Pico's left header exits leftward, clears the board, then
+    // crosses to the converter's right-hand pins — CLK/DIN/DOUT/CS is
+    // GP11/10/9/8, the published SPI0 pins, unmoved.
+    w('adc_clk', 'pico:GP11', 'adc:CLK', BLUE, [{ x: 480, y: 275 }]),
+    w('adc_din', 'pico:GP10', 'adc:DIN', BLUE, [{ x: 483, y: 265 }]),
+    w('adc_dout', 'pico:GP9', 'adc:DOUT', BLUE, [{ x: 486, y: 245 }]),
+    w('adc_cs', 'pico:GP8', 'adc:CS', BLUE, [{ x: 489, y: 235 }]),
+
+    // The pulse sensor: supply off the rail, signal into the converter's
+    // channel 0 — the one analog half of an otherwise-digital bus.
+    w('pulse_vcc', 'bb:bp7', 'pulse:VCC', RED),
+    w('pulse_gnd', 'bb:bn26', 'pulse:GND', BLACK),
+    w('pulse_sig', 'pulse:SIG', 'adc:CH0', YELLOW),
   ],
 }
 
