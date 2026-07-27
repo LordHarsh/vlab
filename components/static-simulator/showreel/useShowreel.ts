@@ -136,6 +136,21 @@ export function useShowreel(experimentId: number | undefined) {
 
   const clockRef = useRef<HTMLSpanElement>(null)
 
+  /**
+   * The Start/Stop button's own intent, separate from `isRunning` (which is
+   * the EFFECT of that intent after `prefers-reduced-motion` has also had a
+   * say). Read inside the effect below through `pausedRef` rather than being
+   * a dependency of it — depending on it would tear the whole loop down and
+   * rebuild it on every click, which is also where `elapsed`/`serialLines`
+   * live, and a rebuild for a pause would show as a jump back to t = 0.
+   */
+  const [manualPause, setManualPause] = useState(false)
+  const pausedRef = useRef(manualPause)
+  pausedRef.current = manualPause
+  /** Holds the main effect's current `apply`, so the click handler below can
+   *  ask it to re-decide play-vs-freeze without being one of its deps. */
+  const applyRef = useRef<(() => void) | null>(null)
+
   /** Cumulative end offset of each step, and the length of one pass. */
   const { ends, cycleMs } = useMemo(() => {
     const acc: number[] = []
@@ -235,15 +250,27 @@ export function useShowreel(experimentId: number | undefined) {
       rafId = requestAnimationFrame(tick)
     }
 
-    /** Hold one frame, and show the log as far as that frame. */
-    const freeze = () => {
+    /**
+     * Hold one frame, and show the log as far as that frame.
+     *
+     * `target` defaults to `stillStep` — the reduced-motion case, which can
+     * fire before `play()` has ever run and has no "current position" to
+     * hold. A manual pause passes the step actually on screen, so pressing
+     * Stop reads as a pause rather than a jump to a canonical frame.
+     *
+     * `heldClock` is the elapsed time to leave written on the clock, for the
+     * same reason: a Stop that snaps the readout back to `00:00:00.000`
+     * reads as a reset, not a pause, on a control whose whole job right now
+     * is to look like an instrument someone paused mid-run.
+     */
+    const freeze = (target: number = stillStep, heldClock = 0) => {
       stop()
       setIsRunning(false)
-      setStepIndex(stillStep)
-      writeClock(0)
+      setStepIndex(target)
+      writeClock(heldClock)
       const at = new Date()
       const upTo: SerialLine[] = []
-      for (let i = 0; i <= stillStep && i < steps.length; i += 1) {
+      for (let i = 0; i <= target && i < steps.length; i += 1) {
         for (const msg of steps[i].serial ?? []) upTo.push({ id: seq++, ts: stamp(at), msg })
       }
       linesRef.current = upTo.slice(-MAX_SERIAL_LINES)
@@ -255,10 +282,19 @@ export function useShowreel(experimentId: number | undefined) {
         ? window.matchMedia('(prefers-reduced-motion: reduce)')
         : null
 
+    /**
+     * Re-decide play vs. freeze. Called on mount, on every OS-level
+     * `prefers-reduced-motion` change, and — via `applyRef` below — every time
+     * the Start/Stop button flips `manualPause`. Reduced motion always wins:
+     * an explicit click on a button this session added should not override an
+     * accessibility setting the student turned on for a reason.
+     */
     const apply = () => {
       if (media?.matches) freeze()
+      else if (pausedRef.current) freeze(lastIndex >= 0 ? lastIndex : stillStep, elapsed)
       else play()
     }
+    applyRef.current = apply
 
     apply()
     media?.addEventListener('change', apply)
@@ -266,8 +302,20 @@ export function useShowreel(experimentId: number | undefined) {
     return () => {
       stop()
       media?.removeEventListener('change', apply)
+      applyRef.current = null
     }
   }, [timeline, ends, cycleMs, stillStep])
+
+  /**
+   * Re-run the SAME `apply()` the effect above already uses, on every
+   * Start/Stop click — without tearing the effect down and losing `elapsed`
+   * and the serial buffer, which depending on `manualPause` there would do.
+   */
+  useEffect(() => {
+    applyRef.current?.()
+  }, [manualPause])
+
+  const toggleRunning = useCallback(() => setManualPause((paused) => !paused), [])
 
   const step = timeline?.steps[stepIndex] ?? NO_STEP
 
@@ -304,6 +352,9 @@ export function useShowreel(experimentId: number | undefined) {
     initialClock,
     /** One pass of the timeline, in ms. Exposed for the harness. */
     cycleMs,
+    /** The Start/Stop button's own state and the handler it calls. */
+    manualPause,
+    toggleRunning,
   }
 }
 

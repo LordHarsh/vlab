@@ -10,10 +10,12 @@ import {
   FlipHorizontal,
   LayoutGrid,
   MessageSquare,
+  Play,
   Redo2,
   Scan,
   Search,
   Spline,
+  Square,
   Trash2,
   Undo2,
 } from 'lucide-react'
@@ -32,20 +34,23 @@ import type { ShowreelSensors } from '../showreel/timelines'
  * THE WORKBENCH FURNITURE AROUND THE READ-ONLY CIRCUIT.
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
- * │ EVERY CONTROL IN THIS FILE IS A PICTURE OF A CONTROL.                   │
+ * │ ALMOST EVERY CONTROL IN THIS FILE IS A PICTURE OF A CONTROL.            │
  * │                                                                         │
- * │ There is not one `<button>`, `<input>`, `<select>` or `onClick` below.  │
- * │ The toolbar icons, the wire-colour swatch, the Components dropdown and  │
- * │ the search field are `<span>`s and `<div>`s with borders on them. They  │
- * │ cannot be focused, cannot be tabbed to, carry no pointer cursor, and    │
- * │ every decorative cluster is `aria-hidden` so a screen reader is never   │
- * │ walked through a toolbar that does nothing.                             │
+ * │ Two are real, on the owner's explicit instruction: the Code toggle and  │
+ * │ the RunState Start/Stop button, both below. Both are safe by what they  │
+ * │ DO, not by being disabled — showing or hiding a panel, and playing or   │
+ * │ pausing a canned loop, touch neither the circuit's topology nor its     │
+ * │ code. Everything else — the edit-tool icons, the wire-colour swatch,    │
+ * │ the Components dropdown, the search field — is still a `<span>`/`<div>` │
+ * │ with a border on it: not focusable, not tabbable, no pointer cursor,    │
+ * │ `aria-hidden` so a screen reader is never walked through a control that │
+ * │ does nothing.                                                          │
  * │                                                                         │
- * │ That is not laziness about wiring them up — it is the whole point. The  │
- * │ panel is a reference circuit on a lesson page. A student cannot add a   │
- * │ part, cannot draw a wire and cannot stop the playback, so offering them │
- * │ a live-looking Delete or Undo would be a lie told in pixels. The app's  │
- * │ real, editable workbench is components/simulator/ over lib/simulator/.  │
+ * │ That is not laziness about wiring the REST of it up — it is the whole   │
+ * │ point. A student cannot add a part, cannot draw a wire, cannot rewire   │
+ * │ this circuit's topology, so offering them a live-looking Delete or Undo │
+ * │ would be a lie told in pixels. The app's real, editable workbench is    │
+ * │ components/simulator/ over lib/simulator/.                             │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
  * WHY IT LOOKS LIKE TINKERCAD CIRCUITS
@@ -56,13 +61,17 @@ import type { ShowreelSensors } from '../showreel/timelines'
  * observed product — see TINKERCAD_DEVICE_PARITY.md, which catalogues that
  * editor's toolbar, rail and inspector from the live app.
  *
- * WHY EVERYTHING IS GREYED, AND WHY THAT IS ALSO ACCURATE
+ * WHY THE EDIT TOOLS STAY GREYED EVEN WHEN THE STUDENT PRESSES STOP
  *
- * Tinkercad greys its edit controls WHILE A SIMULATION IS RUNNING — copy,
- * paste, delete, undo and redo all go flat and parts stop being draggable
- * (parity doc, "Editing during simulation"). This panel is permanently
- * running, so it is permanently in that state. The muted toolbar is not a
- * broken toolbar; it is the correct rendering of a workbench mid-run.
+ * Tinkercad greys its own edit controls only WHILE A SIMULATION IS RUNNING —
+ * copy, paste, delete, undo and redo all go flat and parts stop being
+ * draggable while it plays, then come back the moment it stops (parity doc,
+ * "Editing during simulation"). Stopping THIS panel's playback does not do
+ * that: there is no topology here to edit, playing or not, so these stay
+ * greyed regardless of `isRunning`. Copying the product's greyed LOOK without
+ * copying the reason it greys would imply an edit mode that opens on Stop and
+ * then does not; staying muted in both states is what keeps the toolbar
+ * honest about what it can never do.
  *
  * ONE CLOCK. Nothing here holds a timer. The parts rail is handed the same
  * `frame` the canvas is drawing, so a thumbnail LED lights on the same step
@@ -105,12 +114,19 @@ export function WorkspaceToolbar({
   hasTimeline,
   clockRef,
   initialClock,
+  onToggleRun,
+  codeOpen,
+  onToggleCode,
 }: {
   boardLabel: string
   isRunning: boolean
   hasTimeline: boolean
   clockRef: React.RefObject<HTMLSpanElement | null>
   initialClock: string
+  /** Absent (undefined) rather than a no-op — see RunState's own comment. */
+  onToggleRun?: () => void
+  codeOpen: boolean
+  onToggleCode: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-[#dfe3e8] bg-white px-2 py-1.5 sm:px-3">
@@ -167,19 +183,32 @@ export function WorkspaceToolbar({
       </div>
 
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-        {/* The code marker. Shown in its ON state because the code panel below
-            really is open — it reports the layout rather than offering to
-            change it. */}
-        <span
-          aria-hidden="true"
-          className="flex h-8 shrink-0 cursor-default select-none items-center gap-1.5 rounded-[3px] border border-[#c7dcf0] bg-[#1477d1]/[0.08] px-2.5 text-[11px] font-medium text-[#1477d1]"
+        {/* The Code marker is now a real toggle — see the file header for why
+            this and RunState are the two controls in this bar that stopped
+            being pictures of controls. `aria-pressed` carries the state a
+            screen reader would otherwise only get from the colour swap. */}
+        <button
+          type="button"
+          onClick={onToggleCode}
+          aria-pressed={codeOpen}
+          title={codeOpen ? 'Hide the code panel' : 'Show the code panel'}
+          className={`flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border px-2.5 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+            codeOpen
+              ? 'border-[#c7dcf0] bg-[#1477d1]/[0.08] text-[#1477d1] hover:bg-[#1477d1]/[0.14]'
+              : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1] hover:text-[#1477d1]'
+          }`}
         >
-          <Code2 className="h-3.5 w-3.5" />
+          <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
           Code
-        </span>
+        </button>
 
         {hasTimeline && (
-          <RunState isRunning={isRunning} clockRef={clockRef} initialClock={initialClock} />
+          <RunState
+            isRunning={isRunning}
+            clockRef={clockRef}
+            initialClock={initialClock}
+            onToggle={onToggleRun}
+          />
         )}
 
         <span className="hidden shrink-0 select-none font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573] lg:inline">
@@ -196,13 +225,29 @@ export function WorkspaceToolbar({
 
 /**
  * The run state and the simulator clock — the visual anchor of the bar, where
- * Tinkercad puts `Start Simulation`.
+ * Tinkercad puts `Start Simulation` / `Stop Simulation`.
  *
- * IT IS NOT A BUTTON, and it does not say "Start". A green Start button on a
- * panel that is already playing invites exactly one click and then teaches the
- * student that this thing is broken. What sits here instead is the state that
- * button would be reporting: running, with the elapsed simulator time beside
- * it in the product's own `HH:MM:SS.mmm`.
+ * NOW A REAL TOGGLE, on the owner's explicit instruction after reviewing the
+ * live product: Tinkercad's own control swaps between an outlined "▶ Start
+ * Simulation" and a filled green "■ Stop Simulation", with the elapsed
+ * `Simulator time: HH:MM:SS.mmm` appearing only while running. This keeps our
+ * existing running-dot pill (it already reads well and was already checked
+ * against the product) but makes it clickable and swaps the icon the same way.
+ *
+ * `onToggle` calls `useShowreel`'s `toggleRunning`, which flips a manual-pause
+ * flag the showreel's own effect re-reads — see that file's comment on why a
+ * click does not tear the timer down and restart it from a dependency change.
+ * Pressing Stop then Start restarts the sequence from t = 0 rather than
+ * resuming, which sounds like a regression until you remember what it is
+ * imitating: real Tinkercad's Stop actually halts the emulated MCU, and Start
+ * reboots the sketch from `setup()`. Restarting is the FAITHFUL behaviour here,
+ * not a shortcut.
+ *
+ * `onToggle` stays optional and the fallback below stays non-interactive
+ * (no button, no cursor, `aria-hidden`) for any caller that has a timeline to
+ * show but nothing to drive play/pause from — the harness once needed exactly
+ * this shape before it was wired up, and a control that occasionally has
+ * nothing behind it is worse than one that degrades to a plain readout.
  *
  * `React.memo` with props that never change means React commits this subtree
  * once and then leaves it alone, which is what lets the showreel loop write the
@@ -210,30 +255,40 @@ export function WorkspaceToolbar({
  * back on the next step change. If a future React does re-render it anyway the
  * clock self-heals on the following frame — the loop rewrites whenever the text
  * does not match — so this is an optimisation, not a correctness crutch.
+ * `onToggle` is passed through unchanged from `useShowreel` (a `useCallback`
+ * with no deps), so it never breaks that memoisation.
  */
 const RunState = React.memo(function RunState({
   isRunning,
   clockRef,
   initialClock,
+  onToggle,
 }: {
   isRunning: boolean
   clockRef: React.RefObject<HTMLSpanElement | null>
   initialClock: string
+  onToggle?: () => void
 }) {
-  return (
-    <span
-      className={`flex h-8 shrink-0 select-none items-center gap-2 rounded-[3px] border px-2.5 sm:px-3 ${
-        isRunning
-          ? 'border-[#bbe5c6] bg-[#e9f7ee] text-[#15803d]'
-          : 'border-[#dfe3e8] bg-[#f4f5f6] text-[#566573]'
-      }`}
-    >
-      <span
-        className={`h-2 w-2 shrink-0 rounded-full ${
-          isRunning ? 'showreel-blip bg-[#16a34a]' : 'bg-[#566573]'
-        }`}
-        aria-hidden="true"
-      />
+  const toneClass = isRunning
+    ? 'border-[#bbe5c6] bg-[#e9f7ee] text-[#15803d]'
+    : 'border-[#dfe3e8] bg-[#f4f5f6] text-[#566573]'
+
+  const inner = (
+    <>
+      {onToggle ? (
+        isRunning ? (
+          <Square className="h-3 w-3 shrink-0 fill-current" aria-hidden="true" />
+        ) : (
+          <Play className="h-3 w-3 shrink-0 fill-current" aria-hidden="true" />
+        )
+      ) : (
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${
+            isRunning ? 'showreel-blip bg-[#16a34a]' : 'bg-[#566573]'
+          }`}
+          aria-hidden="true"
+        />
+      )}
       <span className="text-[11px] font-semibold leading-none sm:text-[12px]">
         {isRunning ? 'Simulation running' : 'Simulation paused'}
       </span>
@@ -243,7 +298,33 @@ const RunState = React.memo(function RunState({
       >
         {initialClock}
       </span>
-    </span>
+    </>
+  )
+
+  if (!onToggle) {
+    return (
+      <span
+        className={`flex h-8 shrink-0 select-none items-center gap-2 rounded-[3px] border px-2.5 sm:px-3 ${toneClass}`}
+      >
+        {inner}
+      </span>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={isRunning}
+      title={isRunning ? 'Stop simulation' : 'Start simulation'}
+      className={`flex h-8 shrink-0 select-none items-center gap-2 rounded-[3px] border px-2.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 sm:px-3 ${toneClass} ${
+        isRunning
+          ? 'hover:bg-[#dcf3e3] focus-visible:ring-[#15803d]'
+          : 'hover:border-[#1477d1] hover:text-[#1477d1] focus-visible:ring-[#1477d1]'
+      }`}
+    >
+      {inner}
+    </button>
   )
 })
 

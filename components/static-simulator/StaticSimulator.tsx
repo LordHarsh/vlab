@@ -57,20 +57,28 @@ import './static-simulator.css'
  * IT IS DRESSED AS A WORKBENCH, AND THE WORKBENCH IS ALSO A DRAWING. Around the
  * circuit sit a toolbar, a components rail, a code panel and a serial monitor,
  * laid out after Tinkercad Circuits because that is the tool these students
- * recognise. Not one control in that shell is live: features/WorkspaceChrome
- * contains no `<button>`, no `<input>` and no handler, and every decorative
- * cluster is `aria-hidden`. Two controls in this panel are genuinely real: the
- * code viewer's Copy button, and the fullscreen toggle in the document bar
- * (useFullscreenToggle.ts). Both are safe by what they DO rather than by
- * being disabled — copying text and resizing the viewport touch neither the
- * circuit, the code, nor the playback, so neither can be mistaken for the
- * editing affordances the rest of this file is built to avoid looking like.
+ * recognise. MOST of that shell is still a picture of a control — the edit
+ * tools, the wire-colour swatch, the Components dropdown and the search field
+ * in features/WorkspaceChrome carry no `<button>`, `<input>` or handler, and
+ * every one of those clusters is `aria-hidden`.
+ *
+ * Four controls in this panel are genuinely real, and all four are safe by
+ * what they DO rather than by being disabled:
+ *   - the code viewer's Copy button
+ *   - the fullscreen toggle in the document bar (useFullscreenToggle.ts)
+ *   - the Code button in the toolbar, which shows or hides the panel below
+ *   - the RunState Start/Stop button, which plays or pauses the SCRIPTED
+ *     sequence (useShowreel's `toggleRunning`) — it does not start or stop
+ *     anything real, because nothing here is real to start
+ * None of the four touches the circuit's topology, its code, or which
+ * experiment this is, so none of them can be mistaken for the editing
+ * affordances the rest of this file is built to avoid looking like.
  *
  * The reason to build the furniture at all is that a lone animated figure in a
- * bare card reads as a video. The reason none of it works is that a student
- * cannot edit a reference circuit, and a Delete button that declines to delete
- * teaches them the app is broken. Present and visibly inert beats live-looking
- * and dead.
+ * bare card reads as a video. The reason MOST of it still does not click is
+ * that a student cannot edit a reference circuit, and a Delete button that
+ * declines to delete teaches them the app is broken. Present and visibly
+ * inert beats live-looking and dead — for the controls that stayed that way.
  *
  * NOT WIRED TO ANY BACKEND. Upstream persisted circuits into its own Supabase
  * project behind its own Supabase Auth session. None of that came across —
@@ -118,6 +126,12 @@ export function StaticSimulator({
   const showreel = useShowreel(experiment?.id)
   const logRef = useStickToBottom(showreel.serialLines.length)
   const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
+  /**
+   * Defaults OPEN, matching what every lesson page has shown since this
+   * panel shipped — closing it is a new option, not a new default a student
+   * would have to discover before seeing the code at all.
+   */
+  const [codeOpen, setCodeOpen] = React.useState(true)
 
   if (!experiment || !doc) {
     return (
@@ -197,6 +211,9 @@ export function StaticSimulator({
         hasTimeline={showreel.hasTimeline}
         clockRef={showreel.clockRef}
         initialClock={showreel.initialClock}
+        onToggleRun={showreel.toggleRunning}
+        codeOpen={codeOpen}
+        onToggleCode={() => setCodeOpen((open) => !open)}
       />
 
       {/* Canvas beside the rail from `lg` up, stacked below it. A 264 px rail
@@ -230,43 +247,53 @@ export function StaticSimulator({
       {/* The code panel and its serial drawer, docked at the foot the way the
           product docks them. Fixed height with the listing scrolling inside:
           experiment 11's sketch is 120 lines, and a panel that grows to fit it
-          pushes the circuit off the top of the lesson page. */}
-      <div className="static-sim-code border-t border-[#dfe3e8] bg-white p-3 sm:p-4">
-        <div className="mb-2 flex items-center gap-2">
-          <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
-            Code
-          </h3>
-          {/* What the listing is bound to, which is what the product's code
-              panel puts here. The FILE name is not repeated: the viewer draws
-              its own tab a few pixels below this line. */}
-          <span className="truncate font-mono text-[10px] text-[#9aa3ab]">{boardLabel}</span>
-        </div>
+          pushes the circuit off the top of the lesson page.
 
-        {/* A plain block, not a flex row. `.snitch-code-block` is itself
-            `display: flex`, so as a block-level child it fills this width and
-            `snitch-h-full` gives it the height; as a flex ITEM it sized to its
-            longest line instead and left a ragged gap down the right. */}
-        <div className="h-[300px] sm:h-[340px]">
-          <SyntaxCodeViewer
-            code={code ?? experiment.defaultCode}
-            language={languageForPlatform(experiment.platform)}
-            fileName={fileName}
-          />
-        </div>
-
-        {showreel.hasTimeline && (
-          <div className="mt-3">
-            <div className="mb-2 flex items-center gap-2">
-              <Terminal className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
-              <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
-                Serial monitor
-              </h3>
-            </div>
-            <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
+          Gated on `codeOpen`, which the toolbar's Code button now toggles —
+          see WorkspaceChrome.tsx for why that button is one of the two real
+          controls in this whole panel. Unmounted rather than hidden when
+          closed: the code and the serial log are both derived straight from
+          props/state that do not reset, so there is nothing to lose by tearing
+          the DOM down, and it is one less always-present, always-offscreen
+          copy of a 120-line sketch for a phone to hold in memory. */}
+      {codeOpen && (
+        <div className="static-sim-code border-t border-[#dfe3e8] bg-white p-3 sm:p-4">
+          <div className="mb-2 flex items-center gap-2">
+            <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
+              Code
+            </h3>
+            {/* What the listing is bound to, which is what the product's code
+                panel puts here. The FILE name is not repeated: the viewer draws
+                its own tab a few pixels below this line. */}
+            <span className="truncate font-mono text-[10px] text-[#9aa3ab]">{boardLabel}</span>
           </div>
-        )}
-      </div>
+
+          {/* A plain block, not a flex row. `.snitch-code-block` is itself
+              `display: flex`, so as a block-level child it fills this width and
+              `snitch-h-full` gives it the height; as a flex ITEM it sized to its
+              longest line instead and left a ragged gap down the right. */}
+          <div className="h-[300px] sm:h-[340px]">
+            <SyntaxCodeViewer
+              code={code ?? experiment.defaultCode}
+              language={languageForPlatform(experiment.platform)}
+              fileName={fileName}
+            />
+          </div>
+
+          {showreel.hasTimeline && (
+            <div className="mt-3">
+              <div className="mb-2 flex items-center gap-2">
+                <Terminal className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
+                  Serial monitor
+                </h3>
+              </div>
+              <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
