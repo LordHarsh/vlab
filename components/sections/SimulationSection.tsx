@@ -33,20 +33,31 @@ export type SimulationKind = 'tinkercad' | 'builtin' | 'native' | 'static' | (st
  * `native` section renders the read-only figure INSTEAD of our editor,
  * everywhere at once, with no migration needed.
  *
- * BACK TO `false`. It was briefly `true`, and the consequence was immediate
- * and correct: a static figure does not simulate. No running MCU, no solved
- * voltages, no LED lit by a current, because it deliberately ships without an
- * execution engine — what moves on it is scripted playback. Students get the
- * working simulator again: emulated CPU, real compilation, solved circuit.
+ * SET TO `true` ON THE OWNER'S INSTRUCTION, after the two circuits that
+ * disagreed with the lab sheet (11 and 12 — wrong board, incomplete BOM) were
+ * fixed and re-verified against the canonical HTML board-for-board, part-for-
+ * part, with zero compile problems on all twelve. All twelve reference
+ * circuits now use this app's own part library and wire rendering, animate
+ * from one scripted clock, and were checked live at `/dev/static-sim` before
+ * this flip — not assumed from the code.
  *
- * The reference figure stays available for sections explicitly typed `static`,
- * where a labelled build is the thing actually wanted.
+ * It was `true` once before this, on a version of the port that used the
+ * colleague's ported artwork and had no scripted animation — that attempt was
+ * reverted because a static figure that does not move is a worse experience
+ * than the working simulator it replaced. This is not that: the figure now
+ * visibly runs (clock, serial log, lit LEDs, spinning motors) even though
+ * nothing underneath is actually solving a circuit.
+ *
+ * Our own interactive editor (components/simulator) is not deleted and not
+ * broken — it is simply not what a student sees on a `native` section while
+ * this is `true`. Flipping it back to `false` is the whole of the way to
+ * return it. Its own development continues on the `dynamic-simulator` branch.
  *
  * It stays a single boolean rather than a guess spread through the file
  * because it is a content decision, and content decisions change.
  * ────────────────────────────────────────────────────────────────────────────
  */
-const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = false
+const NATIVE_SECTIONS_RENDER_STATIC_SIMULATOR = true
 
 /**
  * The native circuit editor is lazy-loaded with `ssr: false` so the heavy
