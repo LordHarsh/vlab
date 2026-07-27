@@ -29,6 +29,8 @@ import type { CircuitDoc, PlacedPart } from '@/lib/simulator/model/document'
 import { inertPartArt } from '@/components/simulator/inert-art'
 import type { ShowreelFrame } from '../showreel/useShowreel'
 import type { ShowreelSensors } from '../showreel/timelines'
+import { isSensorWarn, type SensorControlSpec } from '../showreel/sensorOverrides'
+import { SensorControls } from './SensorControls'
 
 /**
  * THE WORKBENCH FURNITURE AROUND THE READ-ONLY CIRCUIT.
@@ -552,28 +554,39 @@ function ledVars(tile: RailTile, frame: ShowreelFrame): React.CSSProperties {
 
 /* ── The status strip under the canvas ────────────────────────────────── */
 
-/** One row per sensor the current step is showing, in the artwork's own units. */
-function readouts(sensors: ShowreelSensors): { label: string; value: string }[] {
+/**
+ * One row per sensor the current step is showing, in the artwork's own units
+ * — except a field named in `skip`, which SensorControls renders instead (its
+ * slider or toggle already carries the label and the live value, so a plain
+ * text row beside it would be the same number said twice).
+ */
+function readouts(
+  sensors: ShowreelSensors,
+  skip: ReadonlySet<SensorControlSpec['field']>,
+): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = []
-  if (typeof sensors.temperature === 'number')
+  if (!skip.has('temperature') && typeof sensors.temperature === 'number')
     rows.push({ label: 'Temp', value: `${sensors.temperature} °C` })
-  if (typeof sensors.humidity === 'number')
+  if (!skip.has('humidity') && typeof sensors.humidity === 'number')
     rows.push({ label: 'Humidity', value: `${sensors.humidity} %RH` })
-  if (typeof sensors.tempProbe === 'number')
+  if (!skip.has('tempProbe') && typeof sensors.tempProbe === 'number')
     rows.push({ label: 'Probe', value: `${sensors.tempProbe} °C` })
-  if (typeof sensors.distance === 'number')
+  if (!skip.has('distance') && typeof sensors.distance === 'number')
     rows.push({ label: 'Distance', value: `${sensors.distance} cm` })
-  if (typeof sensors.flowRate === 'number')
+  if (!skip.has('flowRate') && typeof sensors.flowRate === 'number')
     rows.push({ label: 'Flow', value: `${sensors.flowRate} L/min` })
-  if (typeof sensors.bpm === 'number') rows.push({ label: 'Pulse', value: `${sensors.bpm} bpm` })
-  if (typeof sensors.motion === 'boolean')
+  if (!skip.has('bpm') && typeof sensors.bpm === 'number')
+    rows.push({ label: 'Pulse', value: `${sensors.bpm} bpm` })
+  if (!skip.has('motion') && typeof sensors.motion === 'boolean')
     rows.push({ label: 'Motion', value: sensors.motion ? 'detected' : 'clear' })
   return rows
 }
 
+const NO_CONTROLS: readonly SensorControlSpec[] = []
+
 /**
- * The bench's status line: a verdict on the left, the live readouts on the
- * right.
+ * The bench's status line: a verdict on the left, the sliders/toggles (if
+ * this experiment has any) in the middle, the live readouts on the right.
  *
  * WHAT THE VERDICT MEANS HERE. Our own editor earns "No problems detected" by
  * compiling a netlist and solving it. This panel solves nothing, so it claims
@@ -583,24 +596,53 @@ function readouts(sensors: ShowreelSensors): { label: string; value: string }[] 
  * The readouts are the same numbers the artwork is displaying this instant,
  * read off the same `frame`. They are labelled as the sensors' readings, never
  * as measurements, because nothing measured them: they are stage direction from
- * showreel/timelines.ts.
+ * showreel/timelines.ts, OR — while a control below is being dragged — the
+ * student's own override, applied by showreel/sensorOverrides.ts on top of
+ * whichever frame the drag paused. Same `frame`, same field, so the two can
+ * never disagree.
+ *
+ * `warn` recolours a reading red the instant it crosses the line the sketch
+ * beside it draws (`showreel/sensorOverrides.ts`'s `isSensorWarn`) — true
+ * whether that reading came from the script or from a slider, because the
+ * comparison does not know which.
  */
-export function CanvasStatusStrip({ frame }: { frame: ShowreelFrame }) {
-  const rows = readouts(frame.sensors)
+export function CanvasStatusStrip({
+  frame,
+  experimentId,
+  controls = NO_CONTROLS,
+  onSensorChange,
+}: {
+  frame: ShowreelFrame
+  /** For the one threshold check `isSensorWarn` runs. */
+  experimentId?: number
+  /** This experiment's sliders/toggles, if any — see showreel/sensorOverrides.ts. */
+  controls?: readonly SensorControlSpec[]
+  /** Applies a dragged/toggled value. Omitted renders the plain read-only strip. */
+  onSensorChange?: (field: SensorControlSpec['field'], value: number | boolean) => void
+}) {
+  const skip = useMemo(() => new Set(controls.map((c) => c.field)), [controls])
+  const rows = readouts(frame.sensors, skip)
+  const warn = isSensorWarn(experimentId, frame.sensors)
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[#dfe3e8] bg-white px-3 py-1.5">
-      <span className="flex items-center gap-1.5 text-[11px] text-[#15803d]">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[#dfe3e8] bg-white px-3 py-1.5">
+      <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-[#15803d]">
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#16a34a]" aria-hidden="true" />
         Reference build — wiring matches the lab sheet
       </span>
+
+      {controls.length > 0 && onSensorChange && (
+        <SensorControls controls={controls} sensors={frame.sensors} warn={warn} onChange={onSensorChange} />
+      )}
 
       {rows.length > 0 && (
         <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1">
           {rows.map((row) => (
             <span key={row.label} className="text-[11px] text-[#566573]">
               {row.label}{' '}
-              <span className="font-mono tabular-nums text-[#34495e]">{row.value}</span>
+              <span className={`font-mono tabular-nums ${warn ? 'text-[#c0392b]' : 'text-[#34495e]'}`}>
+                {row.value}
+              </span>
             </span>
           ))}
         </div>

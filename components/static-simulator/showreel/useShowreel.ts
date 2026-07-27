@@ -316,6 +316,15 @@ export function useShowreel(experimentId: number | undefined) {
   }, [manualPause])
 
   const toggleRunning = useCallback(() => setManualPause((paused) => !paused), [])
+  /**
+   * Idempotent pause/resume, for a caller that must not accidentally UNpause
+   * something already paused — the sensor sliders in features/SensorControls.tsx,
+   * which pause on every pointer move and would fight `toggleRunning`'s flip if
+   * they used it instead. Same `manualPause` state, same effect above; this is
+   * a second way to set it, not a second clock.
+   */
+  const pause = useCallback(() => setManualPause(true), [])
+  const resume = useCallback(() => setManualPause(false), [])
 
   const step = timeline?.steps[stepIndex] ?? NO_STEP
 
@@ -355,6 +364,9 @@ export function useShowreel(experimentId: number | undefined) {
     /** The Start/Stop button's own state and the handler it calls. */
     manualPause,
     toggleRunning,
+    /** Idempotent pause/resume for the sensor sliders — see the comment above. */
+    pause,
+    resume,
   }
 }
 

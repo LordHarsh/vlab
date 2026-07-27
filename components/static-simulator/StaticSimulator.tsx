@@ -16,8 +16,10 @@ import {
   ComponentsRail,
   WorkspaceToolbar,
 } from './features/WorkspaceChrome'
+import { ColourPickerOverlay } from './features/ColourPickerOverlay'
 import { languageForPlatform } from './utils/highlight'
 import { useShowreel, useStickToBottom, type SerialLine } from './showreel/useShowreel'
+import { useSensorOverride } from './showreel/useSensorOverride'
 import './static-simulator.css'
 
 /**
@@ -124,6 +126,12 @@ export function StaticSimulator({
   // Called unconditionally — the early return below is after it, because a
   // hook cannot sit behind a branch.
   const showreel = useShowreel(experiment?.id)
+  /**
+   * Part 1's sliders/toggles: pauses `showreel` (its own `pause`, not a new
+   * timer) and layers the dragged value onto whichever frame that pause
+   * lands on. See showreel/useSensorOverride.ts and ./showreel/sensorOverrides.ts.
+   */
+  const sensorOverride = useSensorOverride(experiment?.id, showreel.frame, showreel.isRunning, showreel.pause)
   const logRef = useStickToBottom(showreel.serialLines.length)
   const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
   /**
@@ -132,6 +140,29 @@ export function StaticSimulator({
    * would have to discover before seeing the code at all.
    */
   const [codeOpen, setCodeOpen] = React.useState(true)
+
+  /**
+   * Part 2's colour pickers: which placed part / wire has been given a new
+   * colour, in local state only — nothing here ever writes into `doc`, which
+   * stays the exact object `circuits.ts` exports. `coloredDoc` below is the
+   * one clone, built fresh only when there is something to override.
+   */
+  const [partColors, setPartColors] = React.useState<Record<string, string>>({})
+  const [wireColors, setWireColors] = React.useState<Record<string, string>>({})
+  const coloredDoc = React.useMemo(() => {
+    if (!doc) return doc
+    if (Object.keys(partColors).length === 0 && Object.keys(wireColors).length === 0) return doc
+    return {
+      parts: doc.parts.map((p) => (partColors[p.id] ? { ...p, props: { ...p.props, color: partColors[p.id] } } : p)),
+      wires: doc.wires.map((w) => (wireColors[w.id] ? { ...w, color: wireColors[w.id] } : w)),
+    }
+  }, [doc, partColors, wireColors])
+  const handlePartColor = React.useCallback((partId: string, color: string) => {
+    setPartColors((prev) => ({ ...prev, [partId]: color }))
+  }, [])
+  const handleWireColor = React.useCallback((wireId: string, color: string) => {
+    setWireColors((prev) => ({ ...prev, [wireId]: color }))
+  }, [])
 
   if (!experiment || !doc) {
     return (
@@ -231,15 +262,32 @@ export function StaticSimulator({
               and the grid is our editor's own #d3d8dd rather than the ported
               white-on-navy dots that had to be re-tuned. */}
           <div className="static-sim-canvas relative h-[260px] bg-[#f7f8f9] sm:h-[320px] lg:h-[380px]">
-            <StaticCircuit doc={doc} title={title ?? experiment.title} frame={showreel.frame} />
+            <StaticCircuit doc={coloredDoc ?? doc} title={title ?? experiment.title} frame={sensorOverride.frame} />
+            {/* Part 2's click layer — see ColourPickerOverlay.tsx's own header
+                for why it is a sibling here rather than anything added inside
+                StaticCircuit/CircuitCanvas. Geometry comes from the
+                UNCOLOURED `doc`: a part's position never changes, so the hit
+                boxes stay correct however many colours are picked. */}
+            <ColourPickerOverlay
+              doc={doc}
+              partColors={partColors}
+              wireColors={wireColors}
+              onPickPart={handlePartColor}
+              onPickWire={handleWireColor}
+            />
             <CanvasCornerMark />
           </div>
-          <CanvasStatusStrip frame={showreel.frame} />
+          <CanvasStatusStrip
+            frame={sensorOverride.frame}
+            experimentId={experiment.id}
+            controls={sensorOverride.controls}
+            onSensorChange={sensorOverride.setValue}
+          />
         </div>
 
         <ComponentsRail
-          doc={doc}
-          frame={showreel.frame}
+          doc={coloredDoc ?? doc}
+          frame={sensorOverride.frame}
           className="max-h-[300px] overflow-y-auto lg:max-h-none lg:w-[264px] lg:overflow-y-auto xl:w-[288px]"
         />
       </div>
