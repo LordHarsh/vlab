@@ -536,3 +536,47 @@
     animation: none;
   }
 }
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ * FULLSCREEN — "view bigger", not a second layout
+ *
+ * useFullscreenToggle sets `data-fullscreen="on"` on the SAME element in both
+ * of its two modes (real `:fullscreen` and the CSS fallback for browsers with
+ * no `requestFullscreen` on a plain element), so these rules key on the data
+ * attribute rather than duplicating themselves per mode.
+ *
+ * Only the fallback needs positioning here: native fullscreen already makes
+ * the element fill the screen via the UA stylesheet. The attribute selector
+ * without `:fullscreen` is exactly the fallback case — `:fullscreen` is never
+ * true at the same time the browser lacks the API that sets it.
+ */
+.static-sim[data-fullscreen='on']:not(:fullscreen) {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  border-radius: 0;
+}
+
+/* Both modes: the panel becomes a column that fills the available height
+   rather than the sum of its parts' fixed pixel heights, and anything past
+   the viewport scrolls inside the panel instead of running off it. */
+.static-sim[data-fullscreen='on'] {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+/* The canvas is what fullscreen is FOR — it grows to use the extra room.
+   Specificity beats the component's own `h-[380px]` etc. Tailwind classes
+   without `!important`: a two-class compound selector outranks one class. */
+.static-sim[data-fullscreen='on'] .static-sim-canvas {
+  height: min(60vh, 900px);
+}
+
+/* The code panel keeps a sane cap rather than growing to match — a 900px-tall
+   syntax block is harder to read, not easier, and the circuit is the point. */
+.static-sim[data-fullscreen='on'] .static-sim-code {
+  flex-shrink: 0;
+}

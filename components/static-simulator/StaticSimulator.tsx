@@ -1,7 +1,8 @@
 'use client'
 
 import React from 'react'
-import { AlertTriangle, Code2, Terminal } from 'lucide-react'
+import { AlertTriangle, Code2, Maximize2, Minimize2, Terminal } from 'lucide-react'
+import { useFullscreenToggle } from './useFullscreenToggle'
 import { getPart } from '@/lib/simulator/model/parts'
 import type { CircuitDoc } from '@/lib/simulator/model/document'
 import { getStaticExperiment } from './experiment-map'
@@ -58,8 +59,12 @@ import './static-simulator.css'
  * laid out after Tinkercad Circuits because that is the tool these students
  * recognise. Not one control in that shell is live: features/WorkspaceChrome
  * contains no `<button>`, no `<input>` and no handler, and every decorative
- * cluster is `aria-hidden`. The only interactive element this panel has ever
- * had is the code viewer's Copy button, and it still is.
+ * cluster is `aria-hidden`. Two controls in this panel are genuinely real: the
+ * code viewer's Copy button, and the fullscreen toggle in the document bar
+ * (useFullscreenToggle.ts). Both are safe by what they DO rather than by
+ * being disabled — copying text and resizing the viewport touch neither the
+ * circuit, the code, nor the playback, so neither can be mistaken for the
+ * editing affordances the rest of this file is built to avoid looking like.
  *
  * The reason to build the furniture at all is that a lone animated figure in a
  * bare card reads as a video. The reason none of it works is that a student
@@ -112,6 +117,7 @@ export function StaticSimulator({
   // hook cannot sit behind a branch.
   const showreel = useShowreel(experiment?.id)
   const logRef = useStickToBottom(showreel.serialLines.length)
+  const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
 
   if (!experiment || !doc) {
     return (
@@ -134,7 +140,19 @@ export function StaticSimulator({
     // `static-sim` is the scope class every rule in static-simulator.css hangs
     // off. Without it the ported artwork loses its LED glows, motor spin and
     // the whole snitch card/code-block treatment.
-    <div className="static-sim w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-white">
+    //
+    // `fullscreen.ref` sits on THIS element rather than on some inner canvas
+    // wrapper: the whole workbench — toolbar, rail, code, serial log — is what
+    // "view bigger" means here, the same as it does in the product this panel
+    // borrows its shape from. The fallback path (`data-fullscreen="fallback"`)
+    // is styled in static-simulator.css rather than inline, because it also
+    // has to win a specificity fight against the fixed canvas/rail heights set
+    // below.
+    <div
+      ref={fullscreenRef}
+      data-fullscreen={fullscreen.active ? 'on' : 'off'}
+      className="static-sim w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-white"
+    >
       {/* The document bar, above the toolbar, where the product puts the design
           name. It carries the two facts a lesson page needs and the toolbar
           cannot: which experiment this is, and that it is a reference build. */}
@@ -142,9 +160,35 @@ export function StaticSimulator({
         <span className="truncate text-[13px] font-semibold text-[#34495e]">
           {title ?? experiment.title}
         </span>
-        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
-          {experiment.platform} · reference circuit
-        </span>
+        <div className="flex shrink-0 items-center gap-2.5">
+          <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573]">
+            {experiment.platform} · reference circuit
+          </span>
+          {/*
+           * THE ONE REAL BUTTON IN THIS FILE, AND DELIBERATELY SO.
+           *
+           * Every other control in this panel is a picture of a control —
+           * see WorkspaceChrome's file header for why. This one is different
+           * in kind, not degree: it does not touch the circuit, the code or
+           * the playback, it only changes how much of the screen shows them.
+           * "View fullscreen" cannot be mistaken for an editing affordance
+           * the way a live-looking Delete button could, so it does not carry
+           * the dishonesty the rest of the panel is built to avoid.
+           */}
+          <button
+            type="button"
+            onClick={fullscreen.toggle}
+            aria-label={fullscreen.active ? 'Exit fullscreen' : 'View fullscreen'}
+            title={fullscreen.active ? 'Exit fullscreen' : 'View fullscreen'}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+          >
+            {fullscreen.active ? (
+              <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </div>
 
       <WorkspaceToolbar
@@ -169,7 +213,7 @@ export function StaticSimulator({
               white lettering, the near-white breadboard keeps its grey outline,
               and the grid is our editor's own #d3d8dd rather than the ported
               white-on-navy dots that had to be re-tuned. */}
-          <div className="relative h-[260px] bg-[#f7f8f9] sm:h-[320px] lg:h-[380px]">
+          <div className="static-sim-canvas relative h-[260px] bg-[#f7f8f9] sm:h-[320px] lg:h-[380px]">
             <StaticCircuit doc={doc} title={title ?? experiment.title} frame={showreel.frame} />
             <CanvasCornerMark />
           </div>
@@ -187,7 +231,7 @@ export function StaticSimulator({
           product docks them. Fixed height with the listing scrolling inside:
           experiment 11's sketch is 120 lines, and a panel that grows to fit it
           pushes the circuit off the top of the lesson page. */}
-      <div className="border-t border-[#dfe3e8] bg-white p-3 sm:p-4">
+      <div className="static-sim-code border-t border-[#dfe3e8] bg-white p-3 sm:p-4">
         <div className="mb-2 flex items-center gap-2">
           <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
           <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
