@@ -738,27 +738,38 @@ const L298N_9 = board('l298n', 'l298n', { x: 470, y: 175 })
 export const CIRCUIT_MOTOR_CONTROL_PICO: CircuitDoc = {
   parts: [PICO_9, L298N_9, board('motor', 'dc_motor', { x: 460, y: 65 }, { load: 0 })],
   wires: [
-    w('vs', 'pico:5V', 'l298n:VS', RED, [{ x: 110, y: 155 }]),
+    // The two supply runs go across, then down, then in — not corner to corner.
+    // They used to carry a single waypoint each, which left a 370x60 diagonal
+    // sloping across the open middle of the figure: the one thing a bench
+    // build never looks like, and the first thing the eye reads as "drawing"
+    // rather than "wiring". Separate drop columns (430 for VS, 405 for GND) so
+    // the two verticals do not sit on top of each other.
+    w('vs', 'pico:5V', 'l298n:VS', RED, [{ x: 430, y: 155 }, { x: 430, y: 215 }]),
     // VSS is jumped off the VS screw rather than run a second time from the
     // Pico's pad — one lead between two terminals, the way the bench does it.
-    w('vss', 'l298n:VS', 'l298n:VSS', RED, [{ x: 452, y: 215 }, { x: 452, y: 255 }]),
-    w('gnd', 'pico:GND.7', 'l298n:GND', BLACK, [{ x: 110, y: 175 }]),
+    // The bulge clears the screw block by 12 px rather than the 28 px it used
+    // to, which read as a loop of slack hanging off the board's edge. It meets
+    // the VS feed at the terminal, which is correct: same net, same colour.
+    w('vss', 'l298n:VS', 'l298n:VSS', RED, [{ x: 458, y: 215 }, { x: 458, y: 255 }]),
+    w('gnd', 'pico:GND.7', 'l298n:GND', BLACK, [{ x: 405, y: 175 }, { x: 405, y: 235 }]),
     // The three control lines: out of the left header, under both boards, up
-    // into the driver's underside.
+    // into the driver's underside. They have to pass below the Pico (its body
+    // ends at y = 360) and below the driver (y = 285), so the bottom channel
+    // sits just under the taller of the two rather than 50 px below it.
     w('ena', 'pico:GP13', 'l298n:ENA', ORANGE, [
-      { x: -15, y: 315 },
-      { x: -15, y: 386 },
-      { x: 510, y: 386 },
+      { x: -12, y: 315 },
+      { x: -12, y: 372 },
+      { x: 510, y: 372 },
     ]),
     w('in1', 'pico:GP14', 'l298n:IN1', GREEN, [
-      { x: -28, y: 335 },
-      { x: -28, y: 398 },
-      { x: 520, y: 398 },
+      { x: -24, y: 335 },
+      { x: -24, y: 384 },
+      { x: 520, y: 384 },
     ]),
     w('in2', 'pico:GP15', 'l298n:IN2', YELLOW, [
-      { x: -41, y: 345 },
-      { x: -41, y: 410 },
-      { x: 530, y: 410 },
+      { x: -36, y: 345 },
+      { x: -36, y: 396 },
+      { x: 530, y: 396 },
     ]),
     w('m1', 'l298n:OUT1', 'motor:1', BLUE),
     w('m2', 'l298n:OUT2', 'motor:2', BLUE),
