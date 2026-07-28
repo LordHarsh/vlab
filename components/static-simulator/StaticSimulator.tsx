@@ -295,7 +295,7 @@ export function StaticSimulator({
           not resolve by which one React wrote last, they resolve by which one
           Tailwind emitted last in the stylesheet, and that is `flex-col`. */}
       <div
-        className={`flex ${layout.wide ? 'flex-row' : 'flex-col'} ${
+        className={`static-sim-body flex ${layout.wide ? 'flex-row' : 'flex-col'} ${
           layout.wide && codeOpen ? 'items-start' : ''
         }`}
       >
@@ -366,7 +366,7 @@ export function StaticSimulator({
                 `display: flex`, so as a block-level child it fills this width and
                 `snitch-h-full` gives it the height; as a flex ITEM it sized to its
                 longest line instead and left a ragged gap down the right. */}
-            <div className="h-[300px] sm:h-[340px]">
+            <div className="static-sim-codeblock h-[300px] sm:h-[340px]">
               <SyntaxCodeViewer
                 code={code ?? experiment.defaultCode}
                 language={languageForPlatform(experiment.platform)}

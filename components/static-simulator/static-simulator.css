@@ -568,20 +568,58 @@
   overflow-y: auto;
 }
 
-/* The canvas is what fullscreen is FOR — it grows to use the extra room.
-   `!important` is load-bearing now and was not always: the canvas box used to
-   be sized by Tailwind classes, which a two-class compound selector outranked
-   on specificity alone. StaticSimulator.tsx now sets that height as an INLINE
-   style (derived from the circuit's own aspect ratio — see its `panelLayout`),
-   and inline styles beat any selector. This is the one place that override has
-   to be overridden back, because fullscreen's whole purpose is to ignore the
-   height the drawing would otherwise ask for and use the screen instead. */
-.static-sim[data-fullscreen='on'] .static-sim-canvas {
-  height: min(60vh, 900px) !important;
+/* Fullscreen FILLS THE SCREEN, rather than laying the normal panel out inside
+   a taller box and leaving the remainder white.
+ *
+ * That is what it used to do: the canvas took a fixed `min(60vh, 900px)`, the
+ * code column sized to its own content, and on a 1512x795 display everything
+ * stopped around two thirds of the way down with a dead band underneath. The
+ * row is now the flex child that absorbs the leftover height, and the two
+ * columns stretch into it.
+ *
+ * `min-height: 0` on both is the usual flexbox requirement, not decoration:
+ * without it a flex item refuses to shrink below its content's intrinsic
+ * height and the inner scrollers never engage. */
+.static-sim[data-fullscreen='on'] .static-sim-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Beats the `items-start` the normal layout uses to stop a tall code column
+     stretching the canvas column beside it — in fullscreen that stretch is
+     exactly what is wanted. */
+  align-items: stretch;
 }
 
-/* The code panel keeps a sane cap rather than growing to match — a 900px-tall
-   syntax block is harder to read, not easier, and the circuit is the point. */
+/* The canvas is what fullscreen is FOR — it takes whatever the row has left.
+ *
+ * `!important` is load-bearing and was not always: this box used to be sized
+ * by Tailwind classes, which a two-class compound selector outranked on
+ * specificity alone. StaticSimulator.tsx now sets its height as an INLINE
+ * style (derived from the circuit's own aspect ratio — see its `panelLayout`),
+ * and inline styles beat any selector. Fullscreen is the one place that has to
+ * be overridden back, because here the screen decides the height, not the
+ * drawing. */
+.static-sim[data-fullscreen='on'] .static-sim-canvas {
+  height: auto !important;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The code column stretches with the row and scrolls inside itself, so a long
+   sketch cannot push the layout past the viewport. Wider than the in-page
+   380 px because there is room for it here and a syntax block that does not
+   wrap every other line is the whole benefit of opening fullscreen on the
+   code side. `!important` for the same inline-style reason as above. */
 .static-sim[data-fullscreen='on'] .static-sim-code {
   flex-shrink: 0;
+  width: 440px !important;
+  overflow-y: auto;
+}
+
+/* Inside that column, the listing takes the slack and the serial log keeps its
+   own fixed height — growing the log instead would just add blank rows under
+   three lines of output. */
+.static-sim[data-fullscreen='on'] .static-sim-codeblock {
+  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 0;
 }
