@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>IoT Virtual Laboratory</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700;800&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#0a0e1a;
+  --bg2:#0f1526;
+  --bg3:#141d33;
+  --card:#111827;
+  --border:#1e3a5f;
+  --accent:#00d4ff;
+  --accent2:#00ff88;
+  --accent3:#ff6b35;
+  --accent4:#a855f7;
+  --text:#e0eaff;
+  --muted:#6b8cae;
+  --font-head:'Exo 2',sans-serif;
+  --font-mono:'Share Tech Mono',monospace;
+  --font-body:'Rajdhani',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);min-height:100vh;overflow-x:hidden}
+
+/* ── Grid background ── */
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(0,212,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,.03) 1px,transparent 1px);
+  background-size:40px 40px;
+  pointer-events:none;z-index:0;
+}
+
+/* ── NAV ── */
+nav{
+  position:sticky;top:0;z-index:100;
+  background:rgba(10,14,26,.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+  padding:0 2rem;
+  display:flex;align-items:center;gap:1rem;height:58px;
+}
+.nav-logo{
+  font-family:var(--font-head);font-weight:800;font-size:1.1rem;
+  color:var(--accent);letter-spacing:2px;white-space:nowrap;
+  text-decoration:none;
+}
+.nav-logo span{color:var(--accent2)}
+.nav-links{display:flex;gap:.25rem;margin-left:auto;flex-wrap:wrap}
+.nav-links a{
+  font-family:var(--font-mono);font-size:.7rem;letter-spacing:1px;
+  color:var(--muted);text-decoration:none;padding:.35rem .65rem;
+  border:1px solid transparent;border-radius:4px;transition:.2s;
+}
+.nav-links a:hover,.nav-links a.active{color:var(--accent);border-color:var(--accent);background:rgba(0,212,255,.07)}
+
+/* ── VIEWS ── */
+.view{display:none;animation:fadeIn .35s ease}
+.view.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── HERO ── */
+.hero{
+  position:relative;padding:5rem 2rem 3rem;text-align:center;overflow:hidden;
+}
+.hero-glow{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:600px;height:300px;
+  background:radial-gradient(ellipse,rgba(0,212,255,.12) 0%,transparent 70%);
+  pointer-events:none;
+}
+.hero h1{
+  font-family:var(--font-head);font-size:clamp(2rem,5vw,3.8rem);font-weight:800;
+  line-height:1.1;letter-spacing:-1px;
+  background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 60%,var(--accent) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.hero p{font-size:1.15rem;color:var(--muted);margin-top:1rem;max-width:620px;margin-inline:auto;line-height:1.6}
+.hero-badges{display:flex;justify-content:center;gap:.75rem;margin-top:1.5rem;flex-wrap:wrap}
+.badge{
+  font-family:var(--font-mono);font-size:.68rem;letter-spacing:1.5px;
+  padding:.3rem .75rem;border-radius:20px;
+  border:1px solid;
+}
+.badge.arduino{color:#00d4ff;border-color:rgba(0,212,255,.4);background:rgba(0,212,255,.06)}
+.badge.pi{color:#ff6b35;border-color:rgba(255,107,53,.4);background:rgba(255,107,53,.06)}
+.badge.iot{color:#00ff88;border-color:rgba(0,255,136,.4);background:rgba(0,255,136,.06)}
+
+/* ── EXPERIMENT LIST ── */
+.exp-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+  gap:1.25rem;padding:2rem;
+  position:relative;z-index:1;
+}
+.exp-card{
+  background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:1.4rem;cursor:pointer;transition:.25s;position:relative;overflow:hidden;
+}
+.exp-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--clr,var(--accent)),transparent);
+  opacity:0;transition:.25s;
+}
+.exp-card:hover{border-color:var(--clr,var(--accent));transform:translateY(-3px);box-shadow:0 8px 30px rgba(0,0,0,.4)}
+.exp-card:hover::before{opacity:1}
+.exp-num{
+  font-family:var(--font-mono);font-size:.65rem;color:var(--muted);
+  letter-spacing:2px;margin-bottom:.5rem;
+}
+.exp-title{
+  font-family:var(--font-head);font-weight:600;font-size:1rem;
+  line-height:1.3;margin-bottom:.75rem;color:var(--text);
+}
+.exp-tags{display:flex;gap:.4rem;flex-wrap:wrap}
+.exp-tag{
+  font-family:var(--font-mono);font-size:.62rem;letter-spacing:.8px;
+  padding:.18rem .5rem;border-radius:3px;
+  background:rgba(255,255,255,.05);color:var(--muted);
+}
+.exp-arrow{
+  position:absolute;bottom:1rem;right:1rem;
+  color:var(--clr,var(--accent));font-size:1.2rem;opacity:0;transition:.2s;
+}
+.exp-card:hover .exp-arrow{opacity:1;transform:translateX(3px)}
+
+/* ── EXPERIMENT DETAIL ── */
+.exp-detail{padding:2rem;max-width:1000px;margin:0 auto;position:relative;z-index:1}
+.back-btn{
+  font-family:var(--font-mono);font-size:.72rem;letter-spacing:1.5px;
+  color:var(--muted);background:none;border:1px solid var(--border);
+  padding:.4rem .9rem;border-radius:4px;cursor:pointer;transition:.2s;margin-bottom:1.5rem;display:inline-flex;align-items:center;gap:.4rem;
+}
+.back-btn:hover{color:var(--accent);border-color:var(--accent)}
+
+.exp-header{
+  border-left:3px solid var(--clr,var(--accent));padding-left:1.2rem;margin-bottom:2rem;
+}
+.exp-header .exp-num{font-size:.7rem;margin-bottom:.3rem}
+.exp-header h2{font-family:var(--font-head);font-weight:700;font-size:1.7rem;line-height:1.2;color:var(--text)}
+
+/* ── TAB NAV ── */
+.tab-nav{
+  display:flex;gap:.25rem;border-bottom:1px solid var(--border);
+  margin-bottom:1.75rem;overflow-x:auto;
+}
+.tab-btn{
+  font-family:var(--font-mono);font-size:.72rem;letter-spacing:1.2px;
+  padding:.6rem 1.1rem;background:none;border:none;color:var(--muted);
+  cursor:pointer;border-bottom:2px solid transparent;transition:.2s;white-space:nowrap;
+}
+.tab-btn.active{color:var(--clr,var(--accent));border-bottom-color:var(--clr,var(--accent))}
+.tab-btn:hover:not(.active){color:var(--text)}
+
+.tab-pane{display:none}
+.tab-pane.active{display:block;animation:fadeIn .25s ease}
+
+/* ── CONTENT BLOCKS ── */
+.content-block{
+  background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+  padding:1.5rem;margin-bottom:1.25rem;
+}
+.content-block h3{
+  font-family:var(--font-head);font-weight:600;font-size:1rem;
+  color:var(--clr,var(--accent));margin-bottom:.75rem;letter-spacing:.5px;
+  display:flex;align-items:center;gap:.5rem;
+}
+.content-block p,.content-block li{
+  font-size:.95rem;line-height:1.7;color:#b0c4de;margin-bottom:.4rem;
+}
+.content-block ul,.content-block ol{padding-left:1.4rem}
+.content-block ol li{margin-bottom:.3rem}
+
+/* ── CODE BLOCK ── */
+.code-block{
+  background:#060a14;border:1px solid rgba(0,212,255,.15);border-radius:8px;
+  padding:1.25rem 1.5rem;overflow-x:auto;margin-bottom:1.25rem;
+  position:relative;
+}
+.code-block pre{
+  font-family:var(--font-mono);font-size:.8rem;line-height:1.7;
+  color:#a8d8a8;white-space:pre;
+}
+.code-label{
+  position:absolute;top:.5rem;right:.75rem;
+  font-family:var(--font-mono);font-size:.6rem;letter-spacing:2px;
+  color:var(--muted);
+}
+.kw{color:#79b8ff}.fn{color:#b392f0}.cm{color:#6a737d;font-style:italic}
+.str{color:#f97583}.num{color:#ffab70}.pp{color:#85e89d}
+
+/* ── CIRCUIT DIAGRAM ── */
+.circuit-wrap{
+  background:#060a14;border:1px solid var(--border);border-radius:8px;
+  padding:1.5rem;text-align:center;
+}
+.circuit-wrap svg{max-width:100%;height:auto}
+
+/* ── QUIZ ── */
+.quiz-q{
+  background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+  padding:1.25rem;margin-bottom:1rem;
+}
+.quiz-q p{font-size:.95rem;color:var(--text);margin-bottom:.85rem;font-weight:600}
+.quiz-opts label{
+  display:flex;align-items:center;gap:.6rem;padding:.45rem .5rem;
+  border-radius:5px;cursor:pointer;font-size:.88rem;color:#b0c4de;transition:.15s;
+}
+.quiz-opts label:hover{background:rgba(255,255,255,.04);color:var(--text)}
+.quiz-opts input{accent-color:var(--clr,var(--accent))}
+.quiz-btn{
+  font-family:var(--font-mono);font-size:.75rem;letter-spacing:1.5px;
+  background:var(--clr,var(--accent));color:#000;border:none;
+  padding:.55rem 1.4rem;border-radius:5px;cursor:pointer;font-weight:700;
+  margin-top:.75rem;transition:.2s;
+}
+.quiz-btn:hover{filter:brightness(1.1)}
+.quiz-result{margin-top:.5rem;font-size:.85rem;font-family:var(--font-mono)}
+.quiz-result.correct{color:var(--accent2)}
+.quiz-result.wrong{color:#ff6b6b}
+
+/* ── SIMULATION ── */
+.sim-panel{
+  background:#060a14;border:1px solid var(--border);border-radius:10px;
+  padding:1.5rem;
+}
+.sim-controls{display:flex;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem}
+.sim-ctrl{
+  font-family:var(--font-mono);font-size:.75rem;letter-spacing:1px;
+  background:var(--bg3);border:1px solid var(--border);color:var(--text);
+  padding:.45rem .9rem;border-radius:5px;cursor:pointer;transition:.2s;
+}
+.sim-ctrl:hover,.sim-ctrl.on{border-color:var(--clr,var(--accent));color:var(--clr,var(--accent))}
+.sim-ctrl.on{background:rgba(0,212,255,.06)}
+.sim-display{
+  background:#030508;border:1px solid rgba(255,255,255,.06);border-radius:8px;
+  padding:1rem;min-height:120px;font-family:var(--font-mono);font-size:.8rem;
+  color:var(--accent2);line-height:1.8;
+}
+.sim-display span.ts{color:var(--muted)}
+.slider-row{display:flex;align-items:center;gap:1rem;margin-bottom:.75rem}
+.slider-row label{font-family:var(--font-mono);font-size:.72rem;color:var(--muted);min-width:130px}
+.slider-row input[type=range]{flex:1;accent-color:var(--clr,var(--accent))}
+.slider-row .val{font-family:var(--font-mono);font-size:.8rem;color:var(--clr,var(--accent));min-width:60px;text-align:right}
+
+/* ── CONNECTIONS TABLE ── */
+.conn-table{width:100%;border-collapse:collapse;font-size:.85rem}
+.conn-table th{
+  font-family:var(--font-mono);font-size:.68rem;letter-spacing:1.5px;
+  text-align:left;padding:.6rem .8rem;color:var(--clr,var(--accent));
+  border-bottom:1px solid var(--border);background:rgba(255,255,255,.03);
+}
+.conn-table td{
+  padding:.5rem .8rem;border-bottom:1px solid rgba(255,255,255,.04);color:#b0c4de;
+}
+.conn-table tr:hover td{background:rgba(255,255,255,.02)}
+
+/* ── RESPONSIVE ── */
+@media(max-width:600px){
+  .exp-grid{grid-template-columns:1fr}
+  .tab-btn{font-size:.65rem;padding:.5rem .8rem}
+  nav{padding:0 1rem}
+}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="#" onclick="showHome()">IoT<span>VLab</span></a>
+  <div class="nav-links">
+    <a href="#" onclick="showHome()" class="active" id="nav-home">HOME</a>
+    <a href="#" onclick="showView('about')">ABOUT</a>
+    <a href="#" onclick="showView('objective')">OBJECTIVE</a>
+    <a href="#" onclick="showHome()">EXPERIMENTS</a>
+    <a href="#" onclick="showView('feedback')">FEEDBACK</a>
+  </div>
+</nav>
+
+<!-- ═══════ HOME ═══════ -->
+<div class="view active" id="view-home">
+  <div class="hero">
+    <div class="hero-glow"></div>
+    <h1>IoT Virtual Laboratory</h1>
+    <p>Hands-on simulation of Arduino &amp; Raspberry Pi experiments — from sensor interfacing to smart automation systems.</p>
+    <div class="hero-badges">
+      <span class="badge arduino">ARDUINO UNO</span>
+      <span class="badge pi">RASPBERRY PI</span>
+      <span class="badge iot">IoT SYSTEMS</span>
+    </div>
+  </div>
+
+  <div class="exp-grid" id="exp-grid"></div>
+</div>
+
+<!-- ═══════ ABOUT ═══════ -->
+<div class="view" id="view-about">
+  <div class="exp-detail">
+    <h2 style="font-family:var(--font-head);font-size:1.8rem;margin-bottom:1.5rem;color:var(--accent)">About This Lab</h2>
+    <div class="content-block">
+      <h3>🔬 What is this Virtual Lab?</h3>
+      <p>This IoT Virtual Laboratory provides simulated experiments covering embedded systems with Arduino and Raspberry Pi. Students can explore sensor interfacing, actuator control, and smart system design through interactive simulations — without needing physical hardware.</p>
+    </div>
+    <div class="content-block">
+      <h3>🎯 Who is it for?</h3>
+      <p>Undergraduate and postgraduate students pursuing Electronics, Computer Science, Electrical Engineering, or IoT-related curricula. Ideal for lab sessions, pre-lab preparation, and remote learning.</p>
+    </div>
+    <div class="content-block">
+      <h3>🛠 Technologies Covered</h3>
+      <ul>
+        <li>Arduino Uno / Mega — sensor interfacing, actuator control, traffic systems</li>
+        <li>Raspberry Pi 3/4 — GPIO programming, Python scripting, home automation</li>
+        <li>Sensors — DHT11, DS18B20, PIR, Ultrasonic, Flow Sensor</li>
+        <li>Actuators — LEDs, DC Motors, Stepper Motors, Buzzers</li>
+        <li>Smart Systems — Health Monitoring, Traffic Control, Home Automation</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ OBJECTIVE ═══════ -->
+<div class="view" id="view-objective">
+  <div class="exp-detail">
+    <h2 style="font-family:var(--font-head);font-size:1.8rem;margin-bottom:1.5rem;color:var(--accent2)">Laboratory Objectives</h2>
+    <div class="content-block">
+      <h3>📌 Core Learning Outcomes</h3>
+      <ol>
+        <li>Understand the principles of Arduino and Raspberry Pi hardware platforms.</li>
+        <li>Interface sensors (temperature, humidity, motion, distance) with microcontrollers.</li>
+        <li>Write and interpret embedded C (Arduino) and Python (Raspberry Pi) programs.</li>
+        <li>Design and simulate real-world IoT systems like traffic lights and health monitors.</li>
+        <li>Develop problem-solving skills for embedded system design challenges.</li>
+        <li>Analyse sensor data and implement control logic for automation systems.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ FEEDBACK ═══════ -->
+<div class="view" id="view-feedback">
+  <div class="exp-detail">
+    <h2 style="font-family:var(--font-head);font-size:1.8rem;margin-bottom:1.5rem;color:var(--accent3)">Feedback</h2>
+    <div class="content-block">
+      <h3>💬 Share Your Experience</h3>
+      <p style="margin-bottom:1rem">Your feedback helps improve this virtual laboratory. Please rate your experience and share suggestions.</p>
+      <div style="display:flex;flex-direction:column;gap:.75rem">
+        <input id="fb-name" placeholder="Your Name" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:.7rem 1rem;border-radius:6px;font-family:var(--font-body);font-size:.9rem;outline:none"/>
+        <input id="fb-email" placeholder="Email Address" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:.7rem 1rem;border-radius:6px;font-family:var(--font-body);font-size:.9rem;outline:none"/>
+        <select id="fb-exp" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:.7rem 1rem;border-radius:6px;font-family:var(--font-body);font-size:.9rem;outline:none">
+          <option value="">Select Experiment</option>
+        </select>
+        <div style="display:flex;gap:.5rem;align-items:center">
+          <span style="font-size:.85rem;color:var(--muted)">Rating:</span>
+          <div id="stars" style="display:flex;gap:.3rem;font-size:1.4rem;cursor:pointer">
+            <span onclick="setRating(1)" class="star" data-v="1">☆</span>
+            <span onclick="setRating(2)" class="star" data-v="2">☆</span>
+            <span onclick="setRating(3)" class="star" data-v="3">☆</span>
+            <span onclick="setRating(4)" class="star" data-v="4">☆</span>
+            <span onclick="setRating(5)" class="star" data-v="5">☆</span>
+          </div>
+        </div>
+        <textarea id="fb-msg" placeholder="Your comments and suggestions..." rows="4" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:.7rem 1rem;border-radius:6px;font-family:var(--font-body);font-size:.9rem;outline:none;resize:vertical"></textarea>
+        <button onclick="submitFeedback()" class="quiz-btn" style="--clr:#ff6b35;width:fit-content">SUBMIT FEEDBACK</button>
+        <p id="fb-result" style="font-family:var(--font-mono);font-size:.8rem;color:var(--accent2)"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ EXPERIMENT DETAIL ═══════ -->
+<div class="view" id="view-exp">
+  <div class="exp-detail" id="exp-content"></div>
+</div>
+
+<script>
+// ────────────────────────────────────────────────
+//  EXPERIMENT DATA
+// ────────────────────────────────────────────────
+const experiments = [
+{
+  id:1, color:'#00d4ff',
+  platform:'Arduino',
+  title:'LED & DHT11 Temperature/Humidity Sensor Interfacing',
+  tags:['LED','DHT11','Temperature','Humidity','Arduino'],
+  aim:'To interface an LED and DHT11 temperature & humidity sensor with Arduino and display readings on the Serial Monitor.',
+  theory:`The DHT11 is a low-cost digital sensor that measures relative humidity (20–90% RH) and temperature (0–50°C). It uses a single-wire serial interface. The Arduino reads the sensor using the DHT library, and the onboard or external LED can indicate threshold breaches (e.g., temperature > 30°C turns LED ON). The sensor outputs calibrated digital data sequentially: 8 bits humidity integer, 8 bits humidity decimal, 8 bits temperature integer, 8 bits temperature decimal, and 8 bits checksum.`,
+  components:['Arduino Uno','DHT11 Sensor','LED (Red)','220Ω Resistor','10kΩ Pull-up Resistor','Connecting Wires','Breadboard'],
+  connections:[
+    ['DHT11 VCC','Arduino 5V'],['DHT11 GND','Arduino GND'],['DHT11 DATA','Arduino D2'],
+    ['LED Anode','Arduino D13 (via 220Ω)'],['LED Cathode','Arduino GND']
+  ],
+  code:`<span class="pp">#include</span> <span class="str">&lt;DHT.h&gt;</span>
+
+<span class="pp">#define</span> DHTPIN   <span class="num">2</span>
+<span class="pp">#define</span> DHTTYPE  DHT11
+<span class="pp">#define</span> LED_PIN  <span class="num">13</span>
+
+DHT dht(DHTPIN, DHTTYPE);
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  Serial.<span class="fn">begin</span>(<span class="num">9600</span>);
+  dht.<span class="fn">begin</span>();
+  <span class="fn">pinMode</span>(LED_PIN, OUTPUT);
+  Serial.<span class="fn">println</span>(<span class="str">"DHT11 Test Starting..."</span>);
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="fn">delay</span>(<span class="num">2000</span>);
+  <span class="kw">float</span> h = dht.<span class="fn">readHumidity</span>();
+  <span class="kw">float</span> t = dht.<span class="fn">readTemperature</span>();
+
+  <span class="kw">if</span> (<span class="fn">isnan</span>(h) || <span class="fn">isnan</span>(t)) {
+    Serial.<span class="fn">println</span>(<span class="str">"Sensor read failed!"</span>);
+    <span class="kw">return</span>;
+  }
+
+  Serial.<span class="fn">print</span>(<span class="str">"Humidity: "</span>);    Serial.<span class="fn">print</span>(h);   Serial.<span class="fn">println</span>(<span class="str">" %"</span>);
+  Serial.<span class="fn">print</span>(<span class="str">"Temperature: "</span>); Serial.<span class="fn">print</span>(t);   Serial.<span class="fn">println</span>(<span class="str">" °C"</span>);
+
+  <span class="cm">// LED ON if temperature exceeds threshold</span>
+  <span class="kw">if</span> (t > <span class="num">30</span>) {
+    <span class="fn">digitalWrite</span>(LED_PIN, HIGH);
+    Serial.<span class="fn">println</span>(<span class="str">"ALERT: High Temperature! LED ON"</span>);
+  } <span class="kw">else</span> {
+    <span class="fn">digitalWrite</span>(LED_PIN, LOW);
+  }
+}`,
+  procedure:[
+    'Connect the DHT11 VCC pin to Arduino 5V and GND to GND.',
+    'Connect the DHT11 DATA pin to Arduino digital pin D2 with a 10kΩ pull-up resistor to 5V.',
+    'Connect the LED anode to Arduino D13 via a 220Ω resistor; cathode to GND.',
+    'Include the DHT library in Arduino IDE (Sketch → Include Library → Manage Libraries → search "DHT sensor library").',
+    'Upload the provided code to Arduino.',
+    'Open Serial Monitor (9600 baud) to observe temperature and humidity readings.',
+    'Breathe on the sensor to increase humidity and observe the change.'
+  ],
+  quiz:[
+    {q:'What is the operating voltage of the DHT11?',opts:['1.8V','3.3V','5V','12V'],ans:2},
+    {q:'What is the temperature range of DHT11?',opts:['-40 to 80°C','0 to 50°C','-10 to 60°C','0 to 100°C'],ans:1},
+    {q:'How many wires does DHT11 use for data?',opts:['2','3','1','4'],ans:2},
+    {q:'What resistor is recommended for DHT11 pull-up?',opts:['1kΩ','4.7kΩ','10kΩ','100kΩ'],ans:2}
+  ],
+  simType:'dht11'
+},
+{
+  id:2, color:'#00ff88',
+  platform:'Arduino',
+  title:'Ultrasonic Sensor & PIR Sensor Interfacing',
+  tags:['HC-SR04','PIR','Distance','Motion','Arduino'],
+  aim:'To interface an HC-SR04 Ultrasonic sensor and a PIR motion sensor with Arduino to measure distance and detect motion.',
+  theory:`The HC-SR04 Ultrasonic sensor uses sound waves at 40 kHz to measure distance. It emits a pulse via the TRIG pin and measures the time for the echo to return via the ECHO pin. Distance = (Time × Speed of Sound) / 2. Range: 2 cm to 400 cm, resolution: 3 mm.\n\nThe PIR (Passive Infrared) sensor detects motion by sensing changes in infrared radiation emitted by warm bodies. It has adjustable sensitivity and delay. The output goes HIGH when motion is detected. Together these sensors can form a security or proximity system.`,
+  components:['Arduino Uno','HC-SR04 Ultrasonic Sensor','PIR Sensor (HC-SR501)','LED','220Ω Resistor','Connecting Wires','Breadboard'],
+  connections:[
+    ['HC-SR04 VCC','Arduino 5V'],['HC-SR04 GND','Arduino GND'],
+    ['HC-SR04 TRIG','Arduino D9'],['HC-SR04 ECHO','Arduino D10'],
+    ['PIR VCC','Arduino 5V'],['PIR GND','Arduino GND'],['PIR OUT','Arduino D7'],
+    ['LED Anode','Arduino D13 (via 220Ω)'],['LED Cathode','GND']
+  ],
+  code:`<span class="pp">#define</span> TRIG_PIN  <span class="num">9</span>
+<span class="pp">#define</span> ECHO_PIN  <span class="num">10</span>
+<span class="pp">#define</span> PIR_PIN   <span class="num">7</span>
+<span class="pp">#define</span> LED_PIN   <span class="num">13</span>
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  Serial.<span class="fn">begin</span>(<span class="num">9600</span>);
+  <span class="fn">pinMode</span>(TRIG_PIN, OUTPUT);
+  <span class="fn">pinMode</span>(ECHO_PIN, INPUT);
+  <span class="fn">pinMode</span>(PIR_PIN,  INPUT);
+  <span class="fn">pinMode</span>(LED_PIN,  OUTPUT);
+}
+
+<span class="kw">long</span> <span class="fn">readDistance</span>() {
+  <span class="fn">digitalWrite</span>(TRIG_PIN, LOW);   <span class="fn">delayMicroseconds</span>(<span class="num">2</span>);
+  <span class="fn">digitalWrite</span>(TRIG_PIN, HIGH);  <span class="fn">delayMicroseconds</span>(<span class="num">10</span>);
+  <span class="fn">digitalWrite</span>(TRIG_PIN, LOW);
+  <span class="kw">long</span> duration = <span class="fn">pulseIn</span>(ECHO_PIN, HIGH);
+  <span class="kw">return</span> duration * <span class="num">0.034</span> / <span class="num">2</span>;
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="kw">long</span> dist = <span class="fn">readDistance</span>();
+  <span class="kw">int</span>  pir  = <span class="fn">digitalRead</span>(PIR_PIN);
+
+  Serial.<span class="fn">print</span>(<span class="str">"Distance: "</span>); Serial.<span class="fn">print</span>(dist); Serial.<span class="fn">println</span>(<span class="str">" cm"</span>);
+  Serial.<span class="fn">print</span>(<span class="str">"Motion: "</span>);   Serial.<span class="fn">println</span>(pir ? <span class="str">"DETECTED"</span> : <span class="str">"None"</span>);
+
+  <span class="kw">if</span> (pir || dist < <span class="num">20</span>) {
+    <span class="fn">digitalWrite</span>(LED_PIN, HIGH);
+  } <span class="kw">else</span> {
+    <span class="fn">digitalWrite</span>(LED_PIN, LOW);
+  }
+  <span class="fn">delay</span>(<span class="num">500</span>);
+}`,
+  procedure:[
+    'Connect HC-SR04 VCC→5V, GND→GND, TRIG→D9, ECHO→D10.',
+    'Connect PIR sensor VCC→5V, GND→GND, OUT→D7.',
+    'Connect LED to D13 via 220Ω resistor.',
+    'Upload the code. Open Serial Monitor at 9600 baud.',
+    'Move an object near the ultrasonic sensor to observe distance readings.',
+    'Wave your hand in front of the PIR sensor — observe "DETECTED" output.',
+    'Note: Allow 30–60 seconds for PIR sensor to stabilise on startup.'
+  ],
+  quiz:[
+    {q:'What frequency does HC-SR04 use?',opts:['20 kHz','40 kHz','100 kHz','1 MHz'],ans:1},
+    {q:'Maximum range of HC-SR04?',opts:['100 cm','200 cm','400 cm','800 cm'],ans:2},
+    {q:'What does PIR stand for?',opts:['Passive Infrared','Positive IR','Programmable IR','Pulse Infrared'],ans:0},
+    {q:'Distance formula: Speed of sound ≈',opts:['100 m/s','340 m/s','500 m/s','1500 m/s'],ans:1}
+  ],
+  simType:'ultrasonic'
+},
+{
+  id:3, color:'#ff6b35',
+  platform:'Arduino',
+  title:'Traffic Light Simulator',
+  tags:['LED','Traffic','Timing','Arduino','Automation'],
+  aim:'To design and simulate a Traffic Light Controller using Arduino with Red, Yellow, and Green LEDs.',
+  theory:`A traffic light system cycles through three states: Green (vehicles go) → Yellow (vehicles prepare to stop) → Red (vehicles stop). The timing for each phase is configurable. In this project, three LEDs simulate the traffic lights, and the Arduino controls the sequence using digital output pins and delay functions. An extended version includes a pedestrian crossing button that triggers a special Red phase.`,
+  components:['Arduino Uno','Red LED','Yellow LED','Green LED','3× 220Ω Resistors','Push Button (optional)','Connecting Wires','Breadboard'],
+  connections:[
+    ['Red LED Anode','Arduino D2 (via 220Ω)'],['Yellow LED Anode','Arduino D3 (via 220Ω)'],
+    ['Green LED Anode','Arduino D4 (via 220Ω)'],['All LED Cathodes','GND']
+  ],
+  code:`<span class="pp">#define</span> RED_PIN    <span class="num">2</span>
+<span class="pp">#define</span> YELLOW_PIN <span class="num">3</span>
+<span class="pp">#define</span> GREEN_PIN  <span class="num">4</span>
+
+<span class="kw">void</span> <span class="fn">setLight</span>(<span class="kw">int</span> r, <span class="kw">int</span> y, <span class="kw">int</span> g) {
+  <span class="fn">digitalWrite</span>(RED_PIN,    r);
+  <span class="fn">digitalWrite</span>(YELLOW_PIN, y);
+  <span class="fn">digitalWrite</span>(GREEN_PIN,  g);
+}
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  <span class="fn">pinMode</span>(RED_PIN,    OUTPUT);
+  <span class="fn">pinMode</span>(YELLOW_PIN, OUTPUT);
+  <span class="fn">pinMode</span>(GREEN_PIN,  OUTPUT);
+  Serial.<span class="fn">begin</span>(<span class="num">9600</span>);
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="cm">// GREEN phase — 5 seconds</span>
+  <span class="fn">setLight</span>(LOW, LOW, HIGH);
+  Serial.<span class="fn">println</span>(<span class="str">"GREEN — Go!"</span>);
+  <span class="fn">delay</span>(<span class="num">5000</span>);
+
+  <span class="cm">// YELLOW phase — 2 seconds</span>
+  <span class="fn">setLight</span>(LOW, HIGH, LOW);
+  Serial.<span class="fn">println</span>(<span class="str">"YELLOW — Slow down"</span>);
+  <span class="fn">delay</span>(<span class="num">2000</span>);
+
+  <span class="cm">// RED phase — 5 seconds</span>
+  <span class="fn">setLight</span>(HIGH, LOW, LOW);
+  Serial.<span class="fn">println</span>(<span class="str">"RED — Stop!"</span>);
+  <span class="fn">delay</span>(<span class="num">5000</span>);
+}`,
+  procedure:[
+    'Connect Red, Yellow, and Green LEDs to pins D2, D3, D4 respectively through 220Ω resistors.',
+    'All cathodes connect to GND.',
+    'Upload the code to Arduino.',
+    'Observe the traffic light sequence: Green → Yellow → Red.',
+    'Modify delay values in code to change phase durations.',
+    'Optional: Add a push button to D5 for pedestrian crossing mode.'
+  ],
+  quiz:[
+    {q:'In a standard traffic sequence, which comes after Green?',opts:['Red','Blue','Yellow','White'],ans:2},
+    {q:'What is the purpose of the Yellow light?',opts:['Emergency stop','Prepare to stop','U-turn allowed','Pedestrian walk'],ans:1},
+    {q:'Which Arduino function is used for timing?',opts:['millis()','time()','delay()','timer()'],ans:2},
+    {q:'What limits current through an LED?',opts:['Capacitor','Resistor','Transistor','Diode'],ans:1}
+  ],
+  simType:'traffic'
+},
+{
+  id:4, color:'#a855f7',
+  platform:'Arduino',
+  title:'Water Flow Detection using Arduino',
+  tags:['Flow Sensor','YF-S201','Interrupt','Water','Arduino'],
+  aim:'To interface a YF-S201 water flow sensor with Arduino to measure flow rate and total water volume.',
+  theory:`The YF-S201 water flow sensor contains a hall-effect sensor and a plastic turbine. When water flows, the turbine spins, generating pulses via the hall-effect sensor. The Arduino counts these pulses using an interrupt on pin D2. Flow Rate (L/min) = Pulse Frequency / 7.5. Volume (L) = Total Pulses / 450. This is widely used in water dispensers, irrigation systems, and industrial flow monitoring.`,
+  components:['Arduino Uno','YF-S201 Flow Sensor','16×2 LCD (optional)','10kΩ Resistor (pull-up)','Connecting Wires'],
+  connections:[
+    ['Flow Sensor VCC','Arduino 5V'],['Flow Sensor GND','Arduino GND'],
+    ['Flow Sensor Signal','Arduino D2 (INT0)']
+  ],
+  code:`<span class="kw">volatile</span> <span class="kw">int</span> pulseCount = <span class="num">0</span>;
+<span class="kw">float</span> flowRate, totalLitres;
+<span class="kw">unsigned long</span> lastTime;
+
+<span class="kw">void</span> <span class="fn">pulseCounter</span>() {
+  pulseCount++;
+}
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  Serial.<span class="fn">begin</span>(<span class="num">9600</span>);
+  <span class="fn">pinMode</span>(<span class="num">2</span>, INPUT_PULLUP);
+  <span class="fn">attachInterrupt</span>(<span class="fn">digitalPinToInterrupt</span>(<span class="num">2</span>), pulseCounter, FALLING);
+  lastTime = <span class="fn">millis</span>();
+  totalLitres = <span class="num">0</span>;
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="kw">if</span> (<span class="fn">millis</span>() - lastTime >= <span class="num">1000</span>) {
+    <span class="fn">detachInterrupt</span>(<span class="fn">digitalPinToInterrupt</span>(<span class="num">2</span>));
+
+    flowRate   = pulseCount / <span class="num">7.5</span>;
+    totalLitres += flowRate / <span class="num">60</span>;
+
+    Serial.<span class="fn">print</span>(<span class="str">"Flow Rate: "</span>);    Serial.<span class="fn">print</span>(flowRate);   Serial.<span class="fn">println</span>(<span class="str">" L/min"</span>);
+    Serial.<span class="fn">print</span>(<span class="str">"Total Volume: "</span>); Serial.<span class="fn">print</span>(totalLitres); Serial.<span class="fn">println</span>(<span class="str">" L"</span>);
+
+    pulseCount = <span class="num">0</span>;
+    lastTime   = <span class="fn">millis</span>();
+    <span class="fn">attachInterrupt</span>(<span class="fn">digitalPinToInterrupt</span>(<span class="num">2</span>), pulseCounter, FALLING);
+  }
+}`,
+  procedure:[
+    'Connect the YF-S201 sensor: Red→5V, Black→GND, Yellow→D2.',
+    'Add a 10kΩ pull-up resistor between the signal wire and 5V.',
+    'Upload the code. Open Serial Monitor at 9600 baud.',
+    'Allow water to flow through the sensor.',
+    'Observe flow rate (L/min) and cumulative volume (L) on Serial Monitor.',
+    'Test with different flow rates and compare readings.'
+  ],
+  quiz:[
+    {q:'YF-S201 uses which sensing technology?',opts:['Optical','Ultrasonic','Hall-Effect','Capacitive'],ans:2},
+    {q:'Flow rate formula with pulse freq F:',opts:['F/7.5','F×7.5','F/60','F+7.5'],ans:0},
+    {q:'Which Arduino pin supports hardware interrupts (INT0)?',opts:['D0','D2','D5','A0'],ans:1},
+    {q:'What is "volatile" used for in Arduino?',opts:['Increase speed','Flag for ISR variables','Save memory','Increase voltage'],ans:1}
+  ],
+  simType:'flow'
+},
+{
+  id:5, color:'#f59e0b',
+  platform:'Raspberry Pi',
+  title:'LED & Push Button Interfacing with Raspberry Pi',
+  tags:['GPIO','LED','Button','Python','Raspberry Pi'],
+  aim:'To interface an LED and Push Button with Raspberry Pi using Python and the RPi.GPIO library.',
+  theory:`The Raspberry Pi exposes General Purpose Input/Output (GPIO) pins that can be configured as digital inputs or outputs. Using Python's RPi.GPIO library, pins are set as INPUT (for button) or OUTPUT (for LED). The button uses a pull-up resistor so the input reads HIGH normally and goes LOW when pressed. The LED is toggled based on button state. GPIO.BCM mode uses Broadcom chip numbering; GPIO.BOARD uses physical pin numbers.`,
+  components:['Raspberry Pi (any model)','LED','220Ω Resistor','Push Button','10kΩ Pull-down Resistor','Connecting Wires','Breadboard'],
+  connections:[
+    ['LED Anode','GPIO17 (Pin 11) via 220Ω'],['LED Cathode','GND (Pin 6)'],
+    ['Button Pin 1','GPIO27 (Pin 13)'],['Button Pin 2','3.3V (Pin 1) via 10kΩ']
+  ],
+  code:`<span class="kw">import</span> RPi.GPIO <span class="kw">as</span> GPIO
+<span class="kw">import</span> time
+
+<span class="cm"># Pin configuration</span>
+LED_PIN    = <span class="num">17</span>
+BUTTON_PIN = <span class="num">27</span>
+
+GPIO.<span class="fn">setmode</span>(GPIO.BCM)
+GPIO.<span class="fn">setup</span>(LED_PIN,    GPIO.OUT)
+GPIO.<span class="fn">setup</span>(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+<span class="fn">print</span>(<span class="str">"Press button to toggle LED. Ctrl+C to exit."</span>)
+
+led_state = <span class="kw">False</span>
+
+<span class="kw">try</span>:
+    <span class="kw">while True</span>:
+        <span class="kw">if</span> GPIO.<span class="fn">input</span>(BUTTON_PIN) == GPIO.HIGH:
+            led_state = <span class="kw">not</span> led_state
+            GPIO.<span class="fn">output</span>(LED_PIN, led_state)
+            state_str = <span class="str">"ON"</span> <span class="kw">if</span> led_state <span class="kw">else</span> <span class="str">"OFF"</span>
+            <span class="fn">print</span>(<span class="fn">f</span><span class="str">"LED {state_str}"</span>)
+            time.<span class="fn">sleep</span>(<span class="num">0.3</span>)  <span class="cm"># debounce</span>
+        time.<span class="fn">sleep</span>(<span class="num">0.05</span>)
+
+<span class="kw">except</span> KeyboardInterrupt:
+    <span class="fn">print</span>(<span class="str">"Cleaning up GPIO..."</span>)
+    GPIO.<span class="fn">cleanup</span>()`,
+  procedure:[
+    'Boot Raspberry Pi and open a terminal.',
+    'Install RPi.GPIO: sudo apt-get install python3-rpi.gpio',
+    'Connect LED to GPIO17 via 220Ω resistor; cathode to GND.',
+    'Connect button between GPIO27 and GND (use PUD_DOWN resistor in code).',
+    'Create a new file: nano led_button.py and paste the code.',
+    'Run: python3 led_button.py',
+    'Press the button to toggle the LED. Press Ctrl+C to exit cleanly.'
+  ],
+  quiz:[
+    {q:'Which Python library is used for Raspberry Pi GPIO?',opts:['pyGPIO','RPi.GPIO','gpio-py','Pi.GPIO'],ans:1},
+    {q:'GPIO.BCM refers to:',opts:['Board pin numbers','Broadcom chip numbering','Binary coded mode','None'],ans:1},
+    {q:'What does GPIO.cleanup() do?',opts:['Resets GPIO pins to safe defaults','Deletes Python files','Turns off Pi','Clears RAM'],ans:0},
+    {q:'Raspberry Pi GPIO operates at:',opts:['5V','3.3V','1.8V','12V'],ans:1}
+  ],
+  simType:'rpi_led'
+},
+{
+  id:6, color:'#ef4444',
+  platform:'Arduino / RPi',
+  title:'Motion Sensor Alarm using PIR Sensor',
+  tags:['PIR','Buzzer','Alarm','Motion Detection','Security'],
+  aim:'To design a motion-activated alarm system using a PIR sensor and buzzer with Arduino.',
+  theory:`A PIR (Passive Infrared) sensor detects changes in infrared radiation caused by moving warm bodies. The HC-SR501 PIR module has adjustable sensitivity (Sx) and time delay (Tx) potentiometers. When motion is detected, the output pin goes HIGH. The Arduino reads this signal and activates a buzzer/LED alarm. The alarm can include a countdown timer before reset, making it suitable for home security systems.`,
+  components:['Arduino Uno','PIR Sensor HC-SR501','Active Buzzer','Red LED','Green LED','220Ω Resistors','Connecting Wires'],
+  connections:[
+    ['PIR VCC','Arduino 5V'],['PIR GND','Arduino GND'],['PIR OUT','Arduino D7'],
+    ['Buzzer +','Arduino D8'],['Buzzer −','GND'],
+    ['Red LED','Arduino D12 (via 220Ω)'],['Green LED','Arduino D11 (via 220Ω)']
+  ],
+  code:`<span class="pp">#define</span> PIR_PIN    <span class="num">7</span>
+<span class="pp">#define</span> BUZZER     <span class="num">8</span>
+<span class="pp">#define</span> RED_LED    <span class="num">12</span>
+<span class="pp">#define</span> GREEN_LED  <span class="num">11</span>
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  Serial.<span class="fn">begin</span>(<span class="num">9600</span>);
+  <span class="fn">pinMode</span>(PIR_PIN,   INPUT);
+  <span class="fn">pinMode</span>(BUZZER,    OUTPUT);
+  <span class="fn">pinMode</span>(RED_LED,   OUTPUT);
+  <span class="fn">pinMode</span>(GREEN_LED, OUTPUT);
+  <span class="cm">// System ready indication</span>
+  <span class="fn">digitalWrite</span>(GREEN_LED, HIGH);
+  Serial.<span class="fn">println</span>(<span class="str">"PIR Alarm Ready — Waiting..."</span>);
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="kw">int</span> motion = <span class="fn">digitalRead</span>(PIR_PIN);
+
+  <span class="kw">if</span> (motion == HIGH) {
+    Serial.<span class="fn">println</span>(<span class="str">"⚠ MOTION DETECTED — ALARM!"</span>);
+    <span class="fn">digitalWrite</span>(GREEN_LED, LOW);
+    <span class="fn">digitalWrite</span>(RED_LED,   HIGH);
+
+    <span class="kw">for</span> (<span class="kw">int</span> i = <span class="num">0</span>; i < <span class="num">10</span>; i++) {
+      <span class="fn">digitalWrite</span>(BUZZER, HIGH); <span class="fn">delay</span>(<span class="num">200</span>);
+      <span class="fn">digitalWrite</span>(BUZZER, LOW);  <span class="fn">delay</span>(<span class="num">200</span>);
+    }
+    <span class="fn">digitalWrite</span>(RED_LED, LOW);
+    <span class="fn">digitalWrite</span>(GREEN_LED, HIGH);
+  } <span class="kw">else</span> {
+    Serial.<span class="fn">println</span>(<span class="str">"No motion — System Idle"</span>);
+  }
+  <span class="fn">delay</span>(<span class="num">500</span>);
+}`,
+  procedure:[
+    'Allow PIR sensor to warm up for ~60 seconds after power-on.',
+    'Connect PIR OUT to Arduino D7; Buzzer to D8; LEDs to D11 and D12.',
+    'Upload the code and open Serial Monitor.',
+    'Green LED stays ON in idle state.',
+    'Walk in front of PIR — Red LED turns ON and buzzer beeps 10 times.',
+    'Adjust PIR sensitivity (Sx) and hold time (Tx) knobs for tuning.',
+    'Experiment: add a timestamp or SMS alert via GSM module.'
+  ],
+  quiz:[
+    {q:'PIR sensor detects:',opts:['Visible light','Ultrasonic waves','Infrared radiation','Magnetic fields'],ans:2},
+    {q:'HC-SR501 warm-up time needed:',opts:['5 sec','30–60 sec','5 min','None'],ans:1},
+    {q:'Active buzzer vs passive buzzer:',opts:['Active needs external tone','Active has internal oscillator','No difference','Passive is louder'],ans:1},
+    {q:'Which adjusts PIR detection range?',opts:['Tx knob','Sx knob','Reset pin','Power LED'],ans:1}
+  ],
+  simType:'pir_alarm'
+},
+{
+  id:7, color:'#06b6d4',
+  platform:'Raspberry Pi',
+  title:'DHT11 Temperature & Humidity with Raspberry Pi',
+  tags:['DHT11','Temperature','Humidity','Python','Raspberry Pi'],
+  aim:'To interface the DHT11 temperature and humidity sensor with Raspberry Pi using Python and the Adafruit DHT library.',
+  theory:`The DHT11 sensor communicates via a single-wire protocol. On Raspberry Pi, the Adafruit_DHT Python library handles the low-level timing. The sensor is connected to any GPIO pin. Python reads temperature in Celsius and humidity as a percentage. The data can be logged to a file, displayed in real-time, or sent to an IoT cloud platform. Typical use cases include greenhouse monitoring, HVAC control, and weather stations.`,
+  components:['Raspberry Pi','DHT11 Sensor','10kΩ Resistor','Connecting Wires'],
+  connections:[
+    ['DHT11 VCC','3.3V (Pin 1)'],['DHT11 GND','GND (Pin 6)'],
+    ['DHT11 DATA','GPIO4 (Pin 7) + 10kΩ pull-up to 3.3V']
+  ],
+  code:`<span class="kw">import</span> Adafruit_DHT
+<span class="kw">import</span> time
+
+DHT_SENSOR = Adafruit_DHT.DHT11
+DHT_PIN    = <span class="num">4</span>   <span class="cm"># GPIO4</span>
+
+<span class="fn">print</span>(<span class="str">"DHT11 on Raspberry Pi — Reading sensor..."</span>)
+
+<span class="kw">while True</span>:
+    humidity, temperature = Adafruit_DHT.<span class="fn">read_retry</span>(DHT_SENSOR, DHT_PIN)
+
+    <span class="kw">if</span> humidity <span class="kw">is not None and</span> temperature <span class="kw">is not None</span>:
+        <span class="fn">print</span>(<span class="fn">f</span><span class="str">"Temp={temperature:.1f}°C  Humidity={humidity:.1f}%"</span>)
+
+        <span class="cm"># Log to CSV file</span>
+        <span class="kw">with</span> <span class="fn">open</span>(<span class="str">"dht_log.csv"</span>, <span class="str">"a"</span>) <span class="kw">as</span> f:
+            ts = time.<span class="fn">strftime</span>(<span class="str">"%Y-%m-%d %H:%M:%S"</span>)
+            f.<span class="fn">write</span>(<span class="fn">f</span><span class="str">"{ts},{temperature:.1f},{humidity:.1f}\n"</span>)
+    <span class="kw">else</span>:
+        <span class="fn">print</span>(<span class="str">"Failed to read sensor!"</span>)
+
+    time.<span class="fn">sleep</span>(<span class="num">2</span>)`,
+  procedure:[
+    'Install the library: pip3 install Adafruit_DHT',
+    'Connect DHT11 DATA pin to GPIO4 with a 10kΩ pull-up resistor to 3.3V.',
+    'Create the Python script and run: python3 dht_rpi.py',
+    'Observe temperature and humidity values printed every 2 seconds.',
+    'Check dht_log.csv for logged data.',
+    'Optionally plot data using matplotlib: pip3 install matplotlib'
+  ],
+  quiz:[
+    {q:'DHT11 data pin on Raspberry Pi needs:',opts:['Pull-down','Pull-up','No resistor','Capacitor'],ans:1},
+    {q:'read_retry() retries how many times by default?',opts:['3','5','15','1'],ans:2},
+    {q:'Python f-string syntax:',opts:['f"text{var}"','"{var}".format()','str(var)','All of these'],ans:3},
+    {q:'CSV stands for:',opts:['Comma Separated Values','Code Save Version','Calibrated Sensor Values','None'],ans:0}
+  ],
+  simType:'dht11'
+},
+{
+  id:8, color:'#8b5cf6',
+  platform:'Raspberry Pi',
+  title:'DS18B20 Temperature Sensor with Raspberry Pi',
+  tags:['DS18B20','1-Wire','Temperature','Python','Raspberry Pi'],
+  aim:'To interface the DS18B20 digital temperature sensor with Raspberry Pi using the 1-Wire protocol.',
+  theory:`The DS18B20 is a waterproof digital thermometer with 9–12 bit resolution (-55°C to +125°C). It uses the Dallas 1-Wire protocol on GPIO4 by default. The Raspberry Pi kernel includes 1-Wire support; it must be enabled in raspi-config or /boot/config.txt. Each DS18B20 has a unique 64-bit serial code, allowing multiple sensors on the same data line — ideal for multi-zone temperature monitoring.`,
+  components:['Raspberry Pi','DS18B20 Sensor (waterproof probe)','4.7kΩ Resistor','Connecting Wires'],
+  connections:[
+    ['DS18B20 Red (VDD)','3.3V'],['DS18B20 Black (GND)','GND'],
+    ['DS18B20 Yellow (Data)','GPIO4 + 4.7kΩ pull-up to 3.3V']
+  ],
+  code:`<span class="kw">import</span> os, glob, time
+
+<span class="cm"># Enable 1-Wire: add dtoverlay=w1-gpio to /boot/config.txt</span>
+os.<span class="fn">system</span>(<span class="str">'modprobe w1-gpio'</span>)
+os.<span class="fn">system</span>(<span class="str">'modprobe w1-therm'</span>)
+
+base_dir   = <span class="str">'/sys/bus/w1/devices/'</span>
+device_dir = <span class="fn">glob</span>.<span class="fn">glob</span>(base_dir + <span class="str">'28*'</span>)[<span class="num">0</span>]
+device_file = device_dir + <span class="str">'/w1_slave'</span>
+
+<span class="kw">def</span> <span class="fn">read_temp_raw</span>():
+    <span class="kw">with</span> <span class="fn">open</span>(device_file, <span class="str">'r'</span>) <span class="kw">as</span> f:
+        <span class="kw">return</span> f.<span class="fn">readlines</span>()
+
+<span class="kw">def</span> <span class="fn">read_temp</span>():
+    lines = <span class="fn">read_temp_raw</span>()
+    <span class="kw">while</span> lines[<span class="num">0</span>].<span class="fn">strip</span>()[-<span class="num">3</span>:] != <span class="str">'YES'</span>:
+        time.<span class="fn">sleep</span>(<span class="num">0.2</span>)
+        lines = <span class="fn">read_temp_raw</span>()
+    eq_pos = lines[<span class="num">1</span>].<span class="fn">find</span>(<span class="str">'t='</span>)
+    temp_c = <span class="fn">float</span>(lines[<span class="num">1</span>][eq_pos+<span class="num">2</span>:]) / <span class="num">1000.0</span>
+    <span class="kw">return</span> temp_c
+
+<span class="kw">while True</span>:
+    temp = <span class="fn">read_temp</span>()
+    <span class="fn">print</span>(<span class="fn">f</span><span class="str">"Temperature: {temp:.3f}°C  |  {temp*9/5+32:.3f}°F"</span>)
+    time.<span class="fn">sleep</span>(<span class="num">1</span>)`,
+  procedure:[
+    'Enable 1-Wire: sudo raspi-config → Interface Options → 1-Wire → Enable.',
+    'Reboot: sudo reboot',
+    'Connect DS18B20 data line to GPIO4 with 4.7kΩ pull-up to 3.3V.',
+    'Verify sensor detected: ls /sys/bus/w1/devices/ (should see 28-xxxx directory)',
+    'Run the Python script: python3 ds18b20.py',
+    'Dip probe in warm and cold water to test different temperatures.',
+    'Multiple sensors: add more DS18B20 on same data line; each has unique ID.'
+  ],
+  quiz:[
+    {q:'DS18B20 protocol:',opts:['SPI','I2C','1-Wire','UART'],ans:2},
+    {q:'Temperature range of DS18B20:',opts:['0 to 100°C','-55 to 125°C','-10 to 60°C','0 to 50°C'],ans:1},
+    {q:'Pull-up resistor value for 1-Wire:',opts:['1kΩ','4.7kΩ','10kΩ','100kΩ'],ans:1},
+    {q:'Sensor ID prefix in /sys/bus/w1/devices:',opts:['11-','28-','ds-','tmp-'],ans:1}
+  ],
+  simType:'ds18b20'
+},
+{
+  id:9, color:'#10b981',
+  platform:'Raspberry Pi',
+  title:'DC Motor & Stepper Motor Control with Raspberry Pi',
+  tags:['DC Motor','Stepper','L298N','Python','Raspberry Pi'],
+  aim:'To control a DC motor (speed & direction) and stepper motor using Raspberry Pi with Python and L298N motor driver.',
+  theory:`DC motors require an H-bridge driver (L298N) to control direction and PWM for speed. The L298N has Enable, IN1, IN2 pins per motor. PWM via GPIO allows variable speed control (0–100%). Stepper motors (28BYJ-48 with ULN2003 driver) move in discrete steps via coil sequences. Half-step sequence (8 steps) provides smoother motion at lower torque; full-step (4 steps) gives higher torque. RPM = (Steps/sec) / (Steps per revolution).`,
+  components:['Raspberry Pi','L298N Motor Driver','DC Motor (5V)','28BYJ-48 Stepper Motor','ULN2003 Driver Board','12V Power Supply','Connecting Wires'],
+  connections:[
+    ['L298N ENA','GPIO18 (PWM)'],['L298N IN1','GPIO23'],['L298N IN2','GPIO24'],
+    ['L298N 12V','External 12V'],['L298N GND','Common GND'],
+    ['ULN2003 IN1-IN4','GPIO17,27,22,5']
+  ],
+  code:`<span class="kw">import</span> RPi.GPIO <span class="kw">as</span> GPIO
+<span class="kw">import</span> time
+
+GPIO.<span class="fn">setmode</span>(GPIO.BCM)
+
+<span class="cm"># ── DC Motor (L298N) ─────────────────────</span>
+ENA, IN1, IN2 = <span class="num">18</span>, <span class="num">23</span>, <span class="num">24</span>
+GPIO.<span class="fn">setup</span>([ENA, IN1, IN2], GPIO.OUT)
+pwm = GPIO.<span class="fn">PWM</span>(ENA, <span class="num">1000</span>)
+pwm.<span class="fn">start</span>(<span class="num">0</span>)
+
+<span class="kw">def</span> <span class="fn">motor_forward</span>(speed):
+    GPIO.<span class="fn">output</span>(IN1, GPIO.HIGH)
+    GPIO.<span class="fn">output</span>(IN2, GPIO.LOW)
+    pwm.<span class="fn">ChangeDutyCycle</span>(speed)
+
+<span class="kw">def</span> <span class="fn">motor_stop</span>():
+    pwm.<span class="fn">ChangeDutyCycle</span>(<span class="num">0</span>)
+
+<span class="cm"># ── Stepper Motor (ULN2003) ───────────────</span>
+step_pins = [<span class="num">17</span>, <span class="num">27</span>, <span class="num">22</span>, <span class="num">5</span>]
+seq = [[<span class="num">1</span>,<span class="num">0</span>,<span class="num">0</span>,<span class="num">1</span>],[<span class="num">1</span>,<span class="num">0</span>,<span class="num">0</span>,<span class="num">0</span>],[<span class="num">1</span>,<span class="num">1</span>,<span class="num">0</span>,<span class="num">0</span>],[<span class="num">0</span>,<span class="num">1</span>,<span class="num">0</span>,<span class="num">0</span>],
+       [<span class="num">0</span>,<span class="num">1</span>,<span class="num">1</span>,<span class="num">0</span>],[<span class="num">0</span>,<span class="num">0</span>,<span class="num">1</span>,<span class="num">0</span>],[<span class="num">0</span>,<span class="num">0</span>,<span class="num">1</span>,<span class="num">1</span>],[<span class="num">0</span>,<span class="num">0</span>,<span class="num">0</span>,<span class="num">1</span>]]
+<span class="kw">for</span> p <span class="kw">in</span> step_pins: GPIO.<span class="fn">setup</span>(p, GPIO.OUT)
+
+<span class="kw">def</span> <span class="fn">step</span>(steps, delay=<span class="num">0.001</span>):
+    <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(steps):
+        <span class="kw">for</span> s <span class="kw">in</span> seq:
+            <span class="kw">for</span> i, p <span class="kw">in</span> <span class="fn">enumerate</span>(step_pins):
+                GPIO.<span class="fn">output</span>(p, GPIO.HIGH <span class="kw">if</span> s[i] <span class="kw">else</span> GPIO.LOW)
+            time.<span class="fn">sleep</span>(delay)
+
+<span class="cm"># ── Demo ──────────────────────────────────</span>
+<span class="fn">motor_forward</span>(<span class="num">75</span>); time.<span class="fn">sleep</span>(<span class="num">3</span>); <span class="fn">motor_stop</span>()
+<span class="fn">step</span>(<span class="num">512</span>)   <span class="cm"># ~one full revolution</span>
+GPIO.<span class="fn">cleanup</span>()`,
+  procedure:[
+    'Connect L298N: ENA→GPIO18, IN1→GPIO23, IN2→GPIO24.',
+    'Connect stepper via ULN2003: IN1-IN4 → GPIO17, 27, 22, 5.',
+    'Power the L298N with external 12V; share common GND with Pi.',
+    'Run python3 motor.py — DC motor runs at 75% speed for 3s.',
+    'Stepper rotates 512 steps (~1 revolution for 28BYJ-48).',
+    'Adjust delay in step() to control stepper speed.',
+    'Modify ChangeDutyCycle value (0–100) to control DC motor speed.'
+  ],
+  quiz:[
+    {q:'L298N is a:',opts:['Sensor','H-Bridge Motor Driver','Voltage regulator','Amplifier'],ans:1},
+    {q:'PWM frequency used in the code:',opts:['100 Hz','500 Hz','1000 Hz','2000 Hz'],ans:2},
+    {q:'28BYJ-48 steps per revolution (half-step):',opts:['200','512','1024','4096'],ans:3},
+    {q:'Duty cycle 0 means:',opts:['Full speed','Half speed','Motor stopped','Reverse'],ans:2}
+  ],
+  simType:'motor'
+},
+{
+  id:10, color:'#f97316',
+  platform:'Raspberry Pi',
+  title:'Smartphone Controlled Home Automation with Raspberry Pi',
+  tags:['Home Automation','WiFi','Flask','GPIO','Smartphone'],
+  aim:'To implement a smartphone-controlled home automation system using Raspberry Pi as a WiFi server and Flask web framework.',
+  theory:`Raspberry Pi runs a Flask web server accessible over the local WiFi network. A smartphone browser sends HTTP GET requests to control GPIO pins. Each pin maps to a home appliance (light, fan, etc.) via a relay module. The relay provides electrical isolation between 3.3V GPIO logic and 230V AC loads. The web interface shows real-time status of each appliance and provides toggle buttons, accessible from any device on the same network.`,
+  components:['Raspberry Pi 3/4','4-Channel Relay Module','LEDs (simulate loads)','WiFi Network','Smartphone / PC Browser'],
+  connections:[
+    ['Relay IN1–IN4','GPIO17, 27, 22, 23'],['Relay VCC','5V'],['Relay GND','GND'],
+    ['Note','Use opto-isolated relay for 230V AC loads']
+  ],
+  code:`<span class="kw">from</span> flask <span class="kw">import</span> Flask, render_template_string, redirect
+<span class="kw">import</span> RPi.GPIO <span class="kw">as</span> GPIO
+
+app = <span class="fn">Flask</span>(__name__)
+GPIO.<span class="fn">setmode</span>(GPIO.BCM)
+
+devices = {
+    <span class="str">'Light'</span>: <span class="num">17</span>, <span class="str">'Fan'</span>: <span class="num">27</span>, <span class="str">'AC'</span>: <span class="num">22</span>, <span class="str">'TV'</span>: <span class="num">23</span>
+}
+state = {k: <span class="kw">False</span> <span class="kw">for</span> k <span class="kw">in</span> devices}
+<span class="kw">for</span> pin <span class="kw">in</span> devices.<span class="fn">values</span>(): GPIO.<span class="fn">setup</span>(pin, GPIO.OUT, initial=GPIO.LOW)
+
+HTML = <span class="str">"""
+&lt;h1&gt;Home Automation&lt;/h1&gt;
+{% for name, pin in devices.items() %}
+  &lt;p&gt;{{name}}: {{state[name]}}
+  &lt;a href="/toggle/{{name}}"&gt;Toggle&lt;/a&gt;&lt;/p&gt;
+{% endfor %}"""</span>
+
+<span class="fn">@app.route</span>(<span class="str">'/'</span>)
+<span class="kw">def</span> <span class="fn">index</span>():
+    <span class="kw">return</span> <span class="fn">render_template_string</span>(HTML, devices=devices, state=state)
+
+<span class="fn">@app.route</span>(<span class="str">'/toggle/&lt;name&gt;'</span>)
+<span class="kw">def</span> <span class="fn">toggle</span>(name):
+    <span class="kw">if</span> name <span class="kw">in</span> devices:
+        state[name] = <span class="kw">not</span> state[name]
+        GPIO.<span class="fn">output</span>(devices[name], state[name])
+    <span class="kw">return</span> <span class="fn">redirect</span>(<span class="str">'/'</span>)
+
+<span class="kw">if</span> __name__ == <span class="str">'__main__'</span>:
+    app.<span class="fn">run</span>(host=<span class="str">'0.0.0.0'</span>, port=<span class="num">5000</span>)`,
+  procedure:[
+    'Install Flask: pip3 install flask',
+    'Connect 4-channel relay IN1–IN4 to GPIO17, 27, 22, 23.',
+    'Run: python3 home_auto.py',
+    'Find Pi IP: hostname -I (e.g., 192.168.1.100)',
+    'Open smartphone browser: http://192.168.1.100:5000',
+    'Tap Toggle buttons to switch appliances ON/OFF.',
+    'Ensure smartphone and Pi are on the same WiFi network.'
+  ],
+  quiz:[
+    {q:'Flask runs on which default port?',opts:['80','3000','5000','8080'],ans:2},
+    {q:'host="0.0.0.0" means:',opts:['Only localhost','All network interfaces','Only WiFi','Only LAN'],ans:1},
+    {q:'Why use relay with Raspberry Pi?',opts:['Increase speed','Electrical isolation for AC loads','Save power','Reduce noise'],ans:1},
+    {q:'HTTP method for visiting a URL in browser:',opts:['POST','PUT','GET','DELETE'],ans:2}
+  ],
+  simType:'home_auto'
+},
+{
+  id:11, color:'#eab308',
+  platform:'Advanced',
+  title:'Smart Traffic Light Controller',
+  tags:['Traffic','Density','Smart','Arduino','Adaptive'],
+  aim:'To design an adaptive Smart Traffic Light Controller that adjusts green light duration based on simulated traffic density.',
+  theory:`A smart traffic system uses sensors (IR, ultrasonic, or camera) to detect vehicle density at each lane. The controller allocates more green time to the lane with higher density using a weighted round-robin algorithm. In simulation, potentiometers represent traffic density. A microcontroller calculates green phase duration = Base_Time + (Density × Scale_Factor). Emergency vehicle detection can force all lights red. This reduces average waiting time by 40–60% over fixed-timing systems.`,
+  components:['Arduino Mega','12× LEDs (3 sets RGYG)','4× Potentiometers','4× IR Sensors (optional)','LCD 16×2','Connecting Wires'],
+  connections:[
+    ['Lane 1 R/Y/G LEDs','Pins 22,23,24'],['Lane 2 R/Y/G LEDs','Pins 25,26,27'],
+    ['Lane 3 R/Y/G LEDs','Pins 28,29,30'],['Lane 4 R/Y/G LEDs','Pins 31,32,33'],
+    ['Density Pots','A0, A1, A2, A3']
+  ],
+  code:`<span class="kw">int</span> redPins[]   = {<span class="num">22</span>,<span class="num">25</span>,<span class="num">28</span>,<span class="num">31</span>};
+<span class="kw">int</span> yelPins[]   = {<span class="num">23</span>,<span class="num">26</span>,<span class="num">29</span>,<span class="num">32</span>};
+<span class="kw">int</span> grnPins[]   = {<span class="num">24</span>,<span class="num">27</span>,<span class="num">30</span>,<span class="num">33</span>};
+<span class="kw">int</span> densityPin[]= {A0, A1, A2, A3};
+
+<span class="kw">void</span> <span class="fn">allRed</span>() {
+  <span class="kw">for</span>(<span class="kw">int</span> i=<span class="num">0</span>;i<<span class="num">4</span>;i++){
+    <span class="fn">digitalWrite</span>(redPins[i],HIGH);
+    <span class="fn">digitalWrite</span>(yelPins[i],LOW);
+    <span class="fn">digitalWrite</span>(grnPins[i],LOW);
+  }
+}
+
+<span class="kw">void</span> <span class="fn">setGreen</span>(<span class="kw">int</span> lane) {
+  <span class="fn">allRed</span>();
+  <span class="fn">digitalWrite</span>(redPins[lane], LOW);
+  <span class="fn">digitalWrite</span>(grnPins[lane], HIGH);
+}
+
+<span class="kw">void</span> <span class="fn">setup</span>() {
+  <span class="kw">for</span>(<span class="kw">int</span> i=<span class="num">0</span>;i<<span class="num">4</span>;i++){
+    <span class="fn">pinMode</span>(redPins[i],OUTPUT);
+    <span class="fn">pinMode</span>(yelPins[i],OUTPUT);
+    <span class="fn">pinMode</span>(grnPins[i],OUTPUT);
+  }
+  <span class="fn">allRed</span>(); Serial.<span class="fn">begin</span>(<span class="num">9600</span>);
+}
+
+<span class="kw">void</span> <span class="fn">loop</span>() {
+  <span class="kw">for</span>(<span class="kw">int</span> i=<span class="num">0</span>;i<<span class="num">4</span>;i++){
+    <span class="kw">int</span> density  = <span class="fn">analogRead</span>(densityPin[i]);
+    <span class="kw">int</span> greenTime = <span class="num">3000</span> + (<span class="kw">long</span>)density * <span class="num">7</span>;
+    Serial.<span class="fn">print</span>(<span class="str">"Lane "</span>); Serial.<span class="fn">print</span>(i+<span class="num">1</span>);
+    Serial.<span class="fn">print</span>(<span class="str">" Green: "</span>); Serial.<span class="fn">print</span>(greenTime); Serial.<span class="fn">println</span>(<span class="str">"ms"</span>);
+    <span class="fn">setGreen</span>(i);  <span class="fn">delay</span>(greenTime);
+    <span class="cm">// Yellow transition</span>
+    <span class="fn">digitalWrite</span>(grnPins[i], LOW);
+    <span class="fn">digitalWrite</span>(yelPins[i], HIGH);
+    <span class="fn">delay</span>(<span class="num">2000</span>);
+  }
+}`,
+  procedure:[
+    'Set up 4 lanes with R/Y/G LEDs on Arduino Mega.',
+    'Connect potentiometers to A0–A3 to simulate traffic density.',
+    'Upload the code. Open Serial Monitor.',
+    'Rotate pots to different positions — observe green times change.',
+    'Lane with highest density (pot fully turned) gets longest green phase.',
+    'Extend: add IR sensors for real vehicle detection.',
+    'Extend: display countdown timer on LCD.'
+  ],
+  quiz:[
+    {q:'Smart traffic adjusts green time based on:',opts:['Time of day','Vehicle density','Temperature','Random'],ans:1},
+    {q:'analogRead() returns a value of:',opts:['0–255','0–1023','0–5','0–100'],ans:1},
+    {q:'Advantage of smart traffic over fixed timing:',opts:['Lower cost','Reduced waiting time','Simpler wiring','None'],ans:1},
+    {q:'Yellow light duration in this code:',opts:['1s','2s','3s','5s'],ans:1}
+  ],
+  simType:'smart_traffic'
+},
+{
+  id:12, color:'#ec4899',
+  platform:'Raspberry Pi',
+  title:'Smart Health Monitoring System',
+  tags:['Health','Pulse Sensor','Temperature','ThingSpeak','IoT'],
+  aim:'To build a smart health monitoring system using Raspberry Pi that measures body temperature and heart rate, and logs data to a cloud dashboard.',
+  theory:`The Smart Health Monitoring System integrates a DS18B20 temperature sensor (body temperature) and a pulse sensor (heart rate via photoplethysmography). The Raspberry Pi reads these values, computes BPM using peak detection on pulse sensor ADC data (via MCP3008 SPI ADC since Pi lacks analog pins), and evaluates thresholds: Normal Temp 36.1–37.2°C, Normal BPM 60–100. Alerts are triggered on abnormal readings. Data is sent to ThingSpeak IoT cloud using HTTP API for remote monitoring by healthcare providers.`,
+  components:['Raspberry Pi 3/4','DS18B20 Temperature Sensor','Pulse Sensor (SEN-11574)','MCP3008 ADC','4.7kΩ Resistor','OLED Display (optional)','WiFi Dongle'],
+  connections:[
+    ['DS18B20 Data','GPIO4 + 4.7kΩ pull-up'],
+    ['MCP3008 CLK/MOSI/MISO/CS','GPIO11,10,9,8 (SPI0)'],
+    ['Pulse Sensor OUT','MCP3008 CH0']
+  ],
+  code:`<span class="kw">import</span> time, requests, spidev
+<span class="kw">import</span> RPi.GPIO <span class="kw">as</span> GPIO
+<span class="kw">import</span> glob
+
+<span class="cm"># ── DS18B20 setup ────────────────────────</span>
+device = <span class="fn">glob</span>.<span class="fn">glob</span>(<span class="str">'/sys/bus/w1/devices/28*'</span>)[<span class="num">0</span>]
+
+<span class="kw">def</span> <span class="fn">read_temp</span>():
+    <span class="kw">with</span> <span class="fn">open</span>(device+<span class="str">'/w1_slave'</span>) <span class="kw">as</span> f: raw = f.<span class="fn">read</span>()
+    <span class="kw">return</span> <span class="fn">float</span>(raw.<span class="fn">split</span>(<span class="str">'t='</span>)[<span class="num">1</span>]) / <span class="num">1000</span>
+
+<span class="cm"># ── MCP3008 SPI ──────────────────────────</span>
+spi = spidev.<span class="fn">SpiDev</span>(); spi.<span class="fn">open</span>(<span class="num">0</span>,<span class="num">0</span>); spi.max_speed_hz=<span class="num">1350000</span>
+
+<span class="kw">def</span> <span class="fn">read_adc</span>(ch):
+    r = spi.<span class="fn">xfer2</span>([<span class="num">1</span>, (<span class="num">8</span>+ch)<<span class="num">4</span>, <span class="num">0</span>])
+    <span class="kw">return</span> ((r[<span class="num">1</span>]&<span class="num">3</span>)<<span class="num">8</span>) + r[<span class="num">2</span>]
+
+<span class="cm"># ── ThingSpeak Config ─────────────────────</span>
+API_KEY = <span class="str">"YOUR_THINGSPEAK_API_KEY"</span>
+URL     = <span class="str">"https://api.thingspeak.com/update"</span>
+
+<span class="kw">def</span> <span class="fn">upload</span>(temp, bpm):
+    requests.<span class="fn">get</span>(URL, params={<span class="str">'api_key'</span>:API_KEY,
+        <span class="str">'field1'</span>:temp, <span class="str">'field2'</span>:bpm})
+
+<span class="kw">while True</span>:
+    temp = <span class="fn">read_temp</span>()
+    bpm_raw = [<span class="fn">read_adc</span>(<span class="num">0</span>) <span class="kw">for</span> _ <span class="kw">in</span> <span class="fn">range</span>(<span class="num">100</span>)]
+    bpm = <span class="num">60</span> + ((<span class="fn">max</span>(bpm_raw)-<span class="fn">min</span>(bpm_raw))//<span class="num">10</span>)  <span class="cm"># simplified</span>
+
+    status = <span class="str">"NORMAL"</span>
+    <span class="kw">if not</span> (<span class="num">36.1</span> <= temp <= <span class="num">37.2</span>): status = <span class="str">"⚠ TEMP ALERT"</span>
+    <span class="kw">if not</span> (<span class="num">60</span>   <= bpm  <= <span class="num">100</span>):  status = <span class="str">"⚠ BPM ALERT"</span>
+
+    <span class="fn">print</span>(<span class="fn">f</span><span class="str">"Temp:{temp:.1f}°C BPM:{bpm} [{status}]"</span>)
+    <span class="fn">upload</span>(temp, bpm)
+    time.<span class="fn">sleep</span>(<span class="num">15</span>)`,
+  procedure:[
+    'Enable SPI: sudo raspi-config → Interface Options → SPI → Enable.',
+    'Enable 1-Wire for DS18B20 (see Experiment 8).',
+    'Install dependencies: pip3 install spidev requests',
+    'Wire pulse sensor via MCP3008 SPI ADC.',
+    'Create a free ThingSpeak account and get your API key.',
+    'Paste your API key into the code and run it.',
+    'Visit your ThingSpeak channel to see real-time charts of temperature and BPM.',
+    'Set ThingSpeak alerts for abnormal values.'
+  ],
+  quiz:[
+    {q:'Why use MCP3008 with Raspberry Pi?',opts:['GPIO shortage','Pi has no ADC pins','Faster processing','Cost reduction'],ans:1},
+    {q:'Normal human body temperature range:',opts:['34–36°C','36.1–37.2°C','37.5–39°C','35–40°C'],ans:1},
+    {q:'ThingSpeak is used for:',opts:['GPS tracking','IoT cloud data logging','Motor control','Image processing'],ans:1},
+    {q:'PPG (photoplethysmography) detects:',opts:['Blood pressure','Oxygen saturation','Blood volume pulse','All of these'],ans:2}
+  ],
+  simType:'health'
+}
+];
+
+// ────────────────────────────────────────────────
+//  SIMULATION ENGINE
+// ────────────────────────────────────────────────
+function simHTML(exp){
+  const t = exp.simType, c = exp.color;
+  if(t==='dht11') return `
+    <div class="sim-panel">
+      <div class="slider-row">
+        <label style="--clr:${c}">Temperature (°C)</label>
+        <input type="range" min="15" max="50" value="28" id="s_temp" oninput="simDHT()" style="--clr:${c}">
+        <span class="val" id="v_temp" style="color:${c}">28°C</span>
+      </div>
+      <div class="slider-row">
+        <label style="--clr:${c}">Humidity (%)</label>
+        <input type="range" min="20" max="90" value="55" id="s_hum" oninput="simDHT()" style="--clr:${c}">
+        <span class="val" id="v_hum" style="color:${c}">55%</span>
+      </div>
+      <div style="margin:.75rem 0;display:flex;align-items:center;gap:.75rem">
+        <div id="led_dht" style="width:20px;height:20px;border-radius:50%;background:#222;border:2px solid #333;transition:.3s"></div>
+        <span id="led_lbl" style="font-family:var(--font-mono);font-size:.75rem;color:var(--muted)">LED OFF</span>
+      </div>
+      <div class="sim-display" id="dht_log"></div>
+    </div>`;
+  if(t==='ultrasonic') return `
+    <div class="sim-panel">
+      <div class="slider-row">
+        <label>Object Distance (cm)</label>
+        <input type="range" min="2" max="400" value="150" id="s_dist" oninput="simUltrasonic()">
+        <span class="val" id="v_dist">150cm</span>
+      </div>
+      <div class="sim-controls">
+        <button class="sim-ctrl" id="pir_btn" onclick="togglePIR()" style="--clr:${c}">PIR: OFF</button>
+        <button class="sim-ctrl" onclick="simUltrasonic()" style="--clr:${c}">READ SENSORS</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:.75rem;margin:.5rem 0">
+        <div id="led_ultra" style="width:20px;height:20px;border-radius:50%;background:#222;border:2px solid #333;transition:.3s"></div>
+        <span id="led_ultra_lbl" style="font-family:var(--font-mono);font-size:.75rem;color:var(--muted)">LED OFF</span>
+      </div>
+      <div class="sim-display" id="ultra_log"></div>
+    </div>`;
+  if(t==='traffic') return `
+    <div class="sim-panel">
+      <div style="display:flex;gap:2rem;justify-content:center;margin-bottom:1.5rem">
+        ${['R','Y','G'].map((l,i)=>`
+          <div style="text-align:center">
+            <div id="tl_${l}" style="width:50px;height:50px;border-radius:50%;background:#111;border:2px solid #333;margin:0 auto .4rem;transition:.3s;box-shadow:0 0 0 0 ${['#ef4444','#eab308','#22c55e'][i]}"></div>
+            <span style="font-family:var(--font-mono);font-size:.65rem;color:var(--muted)">${['RED','YELLOW','GREEN'][i]}</span>
+          </div>`).join('')}
+      </div>
+      <div class="sim-controls">
+        <button class="sim-ctrl on" id="tl_run" onclick="toggleTraffic()" style="--clr:${c}">▶ RUNNING</button>
+      </div>
+      <div class="sim-display" id="tl_log"></div>
+    </div>`;
+  if(t==='flow') return `
+    <div class="sim-panel">
+      <div class="slider-row">
+        <label>Flow Rate (L/min)</label>
+        <input type="range" min="0" max="30" value="8" step="0.5" id="s_flow" oninput="simFlow()">
+        <span class="val" id="v_flow">8 L/min</span>
+      </div>
+      <div class="sim-display" id="flow_log"></div>
+    </div>`;
+  if(t==='rpi_led') return `
+    <div class="sim-panel">
+      <div class="sim-controls">
+        <button class="sim-ctrl" id="rpi_btn" onclick="toggleRPiLED()" style="--clr:${c}">🔘 PRESS BUTTON</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:1rem;margin:.75rem 0">
+        <div id="rpi_led" style="width:28px;height:28px;border-radius:50%;background:#111;border:2px solid #333;transition:.3s"></div>
+        <span id="rpi_led_lbl" style="font-family:var(--font-mono);font-size:.8rem;color:var(--muted)">GPIO17: OFF</span>
+      </div>
+      <div class="sim-display" id="rpi_log"></div>
+    </div>`;
+  if(t==='pir_alarm') return `
+    <div class="sim-panel">
+      <div class="sim-controls">
+        <button class="sim-ctrl" onclick="triggerPIR()" style="--clr:${c}">👋 TRIGGER MOTION</button>
+      </div>
+      <div style="display:flex;gap:1.5rem;align-items:center;margin:.75rem 0">
+        <div style="text-align:center"><div id="alarm_green" style="width:22px;height:22px;border-radius:50%;background:#22c55e;border:2px solid #333;margin:0 auto .3rem;box-shadow:0 0 10px #22c55e44"></div><span style="font-family:var(--font-mono);font-size:.6rem;color:var(--muted)">READY</span></div>
+        <div style="text-align:center"><div id="alarm_red" style="width:22px;height:22px;border-radius:50%;background:#111;border:2px solid #333;margin:0 auto .3rem;transition:.3s"></div><span style="font-family:var(--font-mono);font-size:.6rem;color:var(--muted)">ALARM</span></div>
+      </div>
+      <div class="sim-display" id="alarm_log"></div>
+    </div>`;
+  if(t==='ds18b20') return `
+    <div class="sim-panel">
+      <div class="slider-row">
+        <label>Temperature (°C)</label>
+        <input type="range" min="-10" max="85" value="25" id="s_ds" oninput="simDS18()">
+        <span class="val" id="v_ds">25°C</span>
+      </div>
+      <div class="sim-display" id="ds_log"></div>
+    </div>`;
+  if(t==='motor') return `
+    <div class="sim-panel">
+      <div class="slider-row">
+        <label>DC Motor Speed (%)</label>
+        <input type="range" min="0" max="100" value="0" id="s_motor" oninput="simMotor()">
+        <span class="val" id="v_motor">0%</span>
+      </div>
+      <div class="sim-controls">
+        <button class="sim-ctrl" onclick="motorFwd()" style="--clr:${c}">▶ FORWARD</button>
+        <button class="sim-ctrl" onclick="motorRev()" style="--clr:${c}">◀ REVERSE</button>
+        <button class="sim-ctrl" onclick="motorStop()" style="--clr:${c}">■ STOP</button>
+        <button class="sim-ctrl" onclick="simStepper()" style="--clr:${c}">⟳ STEP (512)</button>
+      </div>
+      <div class="sim-display" id="motor_log"></div>
+    </div>`;
+  if(t==='home_auto') return `
+    <div class="sim-panel">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:1rem">
+        ${[['Light','💡','17'],['Fan','🌀','27'],['AC','❄','22'],['TV','📺','23']].map(([n,e,p])=>`
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:.75rem;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-family:var(--font-mono);font-size:.78rem">${e} ${n}</span>
+            <button onclick="haToggle('${n}','${p}')" id="ha_${n}" class="sim-ctrl" style="--clr:${c};padding:.3rem .7rem;font-size:.65rem">OFF</button>
+          </div>`).join('')}
+      </div>
+      <div class="sim-display" id="ha_log"></div>
+    </div>`;
+  if(t==='smart_traffic') return `
+    <div class="sim-panel">
+      ${[1,2,3,4].map(i=>`
+        <div class="slider-row">
+          <label>Lane ${i} Density</label>
+          <input type="range" min="0" max="100" value="${i*20}" id="st_d${i}" oninput="simSmartTraffic()">
+          <span class="val" id="st_v${i}">${i*20}%</span>
+        </div>`).join('')}
+      <div style="display:flex;gap:2rem;justify-content:center;margin:1rem 0" id="st_lights">
+        ${[1,2,3,4].map(i=>`
+          <div style="text-align:center">
+            <div id="st_led${i}" style="width:20px;height:20px;border-radius:50%;background:#ef4444;margin:0 auto .3rem;transition:.3s"></div>
+            <span style="font-family:var(--font-mono);font-size:.6rem;color:var(--muted)">L${i}</span>
+          </div>`).join('')}
+      </div>
+      <div class="sim-display" id="st_log"></div>
+    </div>`;
+  if(t==='health') return `
+    <div class="sim-panel">
+      <div class="slider-row">
+        <label>Body Temp (°C)</label>
+        <input type="range" min="34" max="42" step="0.1" value="36.8" id="s_ht" oninput="simHealth()">
+        <span class="val" id="v_ht" style="color:${c}">36.8°C</span>
+      </div>
+      <div class="slider-row">
+        <label>Heart Rate (BPM)</label>
+        <input type="range" min="40" max="180" value="72" id="s_bpm" oninput="simHealth()">
+        <span class="val" id="v_bpm" style="color:${c}">72 BPM</span>
+      </div>
+      <div class="sim-display" id="health_log"></div>
+    </div>`;
+  return `<div class="sim-display">Simulation not available for this experiment.</div>`;
+}
+
+// ── Simulation Logic ──────────────────────────────
+
+let pirState=false, trafficTimer=null, trafficPhase=0, rpiLedState=false, haState={};
+
+function simLog(id, msg){
+  const d=document.getElementById(id); if(!d) return;
+  const ts=new Date().toLocaleTimeString();
+  d.innerHTML=`<span class="ts">[${ts}]</span> ${msg}\n`+d.innerHTML;
+  if(d.innerHTML.length>3000) d.innerHTML=d.innerHTML.slice(0,3000);
+}
+
+function simDHT(){
+  const t=+document.getElementById('s_temp').value;
+  const h=+document.getElementById('s_hum').value;
+  document.getElementById('v_temp').textContent=t+'°C';
+  document.getElementById('v_hum').textContent=h+'%';
+  const hot=t>30;
+  const led=document.getElementById('led_dht');
+  const lbl=document.getElementById('led_lbl');
+  if(led){ led.style.background=hot?'#ef4444':'#222'; led.style.boxShadow=hot?'0 0 12px #ef4444':'none'; }
+  if(lbl) lbl.textContent=hot?'LED ON (High Temp!)':'LED OFF';
+  simLog('dht_log',`Humidity: ${h}%  Temperature: ${t}°C${hot?' ⚠ ALERT':''}`)
+}
+
+function simUltrasonic(){
+  const d=+document.getElementById('s_dist').value;
+  document.getElementById('v_dist').textContent=d+'cm';
+  const alert=pirState||d<20;
+  const led=document.getElementById('led_ultra');
+  const lbl=document.getElementById('led_ultra_lbl');
+  if(led){led.style.background=alert?'#00d4ff':'#222';led.style.boxShadow=alert?'0 0 12px #00d4ff':'none';}
+  if(lbl) lbl.textContent=alert?'LED ON':'LED OFF';
+  simLog('ultra_log',`Distance: ${d} cm  |  Motion: ${pirState?'DETECTED':'None'}  |  LED: ${alert?'ON':'OFF'}`);
+}
+
+function togglePIR(){
+  pirState=!pirState;
+  const b=document.getElementById('pir_btn');
+  if(b){b.textContent='PIR: '+(pirState?'DETECTED':'OFF');b.classList.toggle('on',pirState);}
+  simUltrasonic();
+}
+
+let tPhase=0,tRunning=true;
+const PHASES=[{l:'GREEN',c:'#22c55e',t:5},{ l:'YELLOW',c:'#eab308',t:2},{ l:'RED',c:'#ef4444',t:5}];
+function trafficStep(){
+  if(!tRunning) return;
+  const p=PHASES[tPhase%3];
+  ['R','Y','G'].forEach((x,i)=>{
+    const el=document.getElementById('tl_'+x);
+    const on=(i===2&&p.l==='GREEN')||(i===1&&p.l==='YELLOW')||(i===0&&p.l==='RED');
+    const colors=['#ef4444','#eab308','#22c55e'];
+    if(el){el.style.background=on?colors[i]:'#111';el.style.boxShadow=on?`0 0 20px ${colors[i]}66`:'none';}
+  });
+  simLog('tl_log',p.l+' — '+{GREEN:'Go!',YELLOW:'Slow down',RED:'Stop!'}[p.l]);
+  tPhase++;
+  trafficTimer=setTimeout(trafficStep,p.t*1000);
+}
+function toggleTraffic(){
+  tRunning=!tRunning;
+  const b=document.getElementById('tl_run');
+  if(b){b.textContent=(tRunning?'▶ RUNNING':'⏸ PAUSED');b.classList.toggle('on',tRunning);}
+  if(tRunning) trafficStep(); else { clearTimeout(trafficTimer); }
+}
+
+function simFlow(){
+  const f=+document.getElementById('s_flow').value;
+  document.getElementById('v_flow').textContent=f+' L/min';
+  const pulses=Math.round(f*7.5);
+  simLog('flow_log',`Flow: ${f} L/min  |  Pulses/s: ${pulses}  |  Vol: ${(f/60).toFixed(4)} L this second`);
+}
+
+function toggleRPiLED(){
+  rpiLedState=!rpiLedState;
+  const led=document.getElementById('rpi_led');
+  const lbl=document.getElementById('rpi_led_lbl');
+  const color='#f59e0b';
+  if(led){led.style.background=rpiLedState?color:'#111';led.style.boxShadow=rpiLedState?`0 0 14px ${color}`:'none';}
+  if(lbl) lbl.textContent='GPIO17: '+(rpiLedState?'ON':'OFF');
+  simLog('rpi_log',`Button pressed → LED ${rpiLedState?'ON':'OFF'}  (GPIO17 = ${rpiLedState?1:0})`);
+}
+
+function triggerPIR(){
+  const red=document.getElementById('alarm_red');
+  const green=document.getElementById('alarm_green');
+  if(red){ red.style.background='#ef4444'; red.style.boxShadow='0 0 16px #ef4444'; }
+  if(green) green.style.background='#333';
+  simLog('alarm_log','⚠ MOTION DETECTED — ALARM ACTIVE! Buzzer beeping...');
+  setTimeout(()=>{
+    if(red){red.style.background='#111';red.style.boxShadow='none';}
+    if(green){green.style.background='#22c55e';green.style.boxShadow='0 0 10px #22c55e44';}
+    simLog('alarm_log','✓ Motion cleared — System back to READY state');
+  },3000);
+}
+
+function simDS18(){
+  const t=+document.getElementById('s_ds').value;
+  document.getElementById('v_ds').textContent=t+'°C';
+  const f=(t*9/5+32).toFixed(3);
+  simLog('ds_log',`Temperature: ${t.toFixed(3)}°C  |  ${f}°F  |  Device: 28-abcdef012345`);
+}
+
+let motorDir='stopped';
+function motorFwd(){motorDir='forward';document.getElementById('s_motor').value=75;simMotor();}
+function motorRev(){motorDir='reverse';simLog('motor_log','DC Motor: REVERSE at current speed');}
+function motorStop(){motorDir='stopped';document.getElementById('s_motor').value=0;simMotor();}
+function simMotor(){
+  const s=+document.getElementById('s_motor').value;
+  document.getElementById('v_motor').textContent=s+'%';
+  simLog('motor_log',`DC Motor: ${s>0?motorDir.toUpperCase():' STOPPED'}  Duty Cycle: ${s}%  PWM: ${Math.round(s*10.23)}/1023`);
+}
+function simStepper(){
+  simLog('motor_log','Stepper: Running 512 steps (half-step mode) — ~1 revolution @ 28BYJ-48');
+  setTimeout(()=>simLog('motor_log','Stepper: 512 steps COMPLETE'),1200);
+}
+
+function haToggle(name,pin){
+  haState[name]=!haState[name];
+  const b=document.getElementById('ha_'+name);
+  if(b){b.textContent=haState[name]?'ON':'OFF';b.classList.toggle('on',!!haState[name]);}
+  simLog('ha_log',`GPIO${pin} (${name}): ${haState[name]?'HIGH — ON':'LOW — OFF'}  | HTTP GET /toggle/${name}`);
+}
+
+function simSmartTraffic(){
+  const ds=[1,2,3,4].map(i=>{
+    const v=+document.getElementById(`st_d${i}`).value;
+    document.getElementById(`st_v${i}`).textContent=v+'%';
+    return v;
+  });
+  const max=Math.max(...ds);
+  const activeIdx=ds.indexOf(max)+1;
+  [1,2,3,4].forEach(i=>{
+    const led=document.getElementById(`st_led${i}`);
+    if(led){
+      led.style.background=i===activeIdx?'#22c55e':'#ef4444';
+      led.style.boxShadow=i===activeIdx?'0 0 14px #22c55e':'none';
+    }
+  });
+  const greenTime=(3000+max*70)/1000;
+  simLog('st_log',`Lane ${activeIdx} gets GREEN (density ${max}%) — Green time: ${greenTime.toFixed(1)}s`);
+}
+
+function simHealth(){
+  const t=+document.getElementById('s_ht').value;
+  const b=+document.getElementById('s_bpm').value;
+  document.getElementById('v_ht').textContent=t+'°C';
+  document.getElementById('v_bpm').textContent=b+' BPM';
+  const tempOk=t>=36.1&&t<=37.2, bpmOk=b>=60&&b<=100;
+  let status=tempOk&&bpmOk?'✅ NORMAL':'⚠ ALERT';
+  let detail='';
+  if(!tempOk) detail+=` Temp ${t<36.1?'LOW':'HIGH'}`;
+  if(!bpmOk) detail+=` BPM ${b<60?'LOW (Bradycardia)':'HIGH (Tachycardia)'}`;
+  simLog('health_log',`Temp: ${t}°C  BPM: ${b}  Status: ${status}${detail} → ThingSpeak updated`);
+}
+
+// ────────────────────────────────────────────────
+//  QUIZ ENGINE
+// ────────────────────────────────────────────────
+function buildQuiz(quiz, color){
+  return quiz.map((q,qi)=>`
+    <div class="quiz-q">
+      <p>Q${qi+1}: ${q.q}</p>
+      <div class="quiz-opts">
+        ${q.opts.map((o,oi)=>`
+          <label>
+            <input type="radio" name="q${qi}" value="${oi}"> ${o}
+          </label>`).join('')}
+      </div>
+      <button class="quiz-btn" style="--clr:${color}" onclick="checkQ(${qi},${q.ans},'qr${qi}')">CHECK</button>
+      <p class="quiz-result" id="qr${qi}"></p>
+    </div>`).join('');
+}
+
+function checkQ(qi, ans, rid){
+  const sel=document.querySelector(`input[name="q${qi}"]:checked`);
+  const res=document.getElementById(rid);
+  if(!sel){res.textContent='⚠ Please select an answer';res.className='quiz-result';return;}
+  const correct=+sel.value===ans;
+  res.textContent=correct?'✅ Correct!':'❌ Incorrect. Try again.';
+  res.className='quiz-result '+(correct?'correct':'wrong');
+}
+
+// ────────────────────────────────────────────────
+//  CIRCUIT DIAGRAMS (SVG)
+// ────────────────────────────────────────────────
+function circuitSVG(id){
+  const svgs={
+    1:`<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg" style="max-width:400px">
+      <rect width="400" height="220" fill="#030508" rx="8"/>
+      <!-- Arduino board -->
+      <rect x="20" y="40" width="100" height="140" rx="6" fill="#1a2a1a" stroke="#00d4ff" stroke-width="1.5"/>
+      <text x="70" y="116" font-family="Share Tech Mono" font-size="9" fill="#00d4ff" text-anchor="middle">ARDUINO</text>
+      <text x="70" y="128" font-family="Share Tech Mono" font-size="8" fill="#6b8cae" text-anchor="middle">UNO</text>
+      <!-- Pins -->
+      <circle cx="120" cy="65" r="3" fill="#00d4ff"/><text x="130" y="69" font-size="7" font-family="Share Tech Mono" fill="#6b8cae">D2</text>
+      <circle cx="120" cy="85" r="3" fill="#ff6b35"/><text x="130" y="89" font-size="7" font-family="Share Tech Mono" fill="#6b8cae">D13</text>
+      <circle cx="120" cy="105" r="3" fill="#00ff88"/><text x="130" y="109" font-size="7" font-family="Share Tech Mono" fill="#6b8cae">5V</text>
+      <circle cx="120" cy="125" r="3" fill="#6b8cae"/><text x="130" y="129" font-size="7" font-family="Share Tech Mono" fill="#6b8cae">GND</text>
+      <!-- DHT11 -->
+      <rect x="240" y="50" width="60" height="80" rx="6" fill="#1a1a2a" stroke="#00d4ff" stroke-width="1.5"/>
+      <text x="270" y="90" font-family="Share Tech Mono" font-size="8" fill="#00d4ff" text-anchor="middle">DHT11</text>
+      <circle cx="240" cy="70" r="3" fill="#00ff88"/>
+      <circle cx="240" cy="85" r="3" fill="#00d4ff"/>
+      <circle cx="240" cy="100" r="3" fill="#6b8cae"/>
+      <!-- LED -->
+      <polygon points="320,140 340,155 340,125" fill="#ef4444" opacity=".8"/>
+      <line x1="320" y1="140" x2="310" y2="140" stroke="#ff6b35" stroke-width="1.5"/>
+      <line x1="340" y1="140" x2="360" y2="140" stroke="#6b8cae" stroke-width="1.5"/>
+      <rect x="355" y="135" width="8" height="10" fill="none" stroke="#888" stroke-width="1.5"/>
+      <!-- Wires -->
+      <line x1="120" y1="105" x2="240" y2="70" stroke="#00ff88" stroke-width="1" stroke-dasharray="3,2" opacity=".7"/>
+      <line x1="120" y1="65" x2="240" y2="85" stroke="#00d4ff" stroke-width="1" stroke-dasharray="3,2" opacity=".7"/>
+      <line x1="120" y1="85" x2="310" y2="140" stroke="#ff6b35" stroke-width="1" stroke-dasharray="3,2" opacity=".7"/>
+      <line x1="120" y1="125" x2="240" y2="100" stroke="#444" stroke-width="1" opacity=".7"/>
+      <text x="200" y="210" font-family="Share Tech Mono" font-size="8" fill="#6b8cae" text-anchor="middle">LED + DHT11 Interfacing</text>
+    </svg>`,
+    3:`<svg viewBox="0 0 420 200" xmlns="http://www.w3.org/2000/svg" style="max-width:420px">
+      <rect width="420" height="200" fill="#030508" rx="8"/>
+      <rect x="20" y="30" width="90" height="140" rx="6" fill="#1a2a1a" stroke="#00d4ff" stroke-width="1.5"/>
+      <text x="65" y="105" font-family="Share Tech Mono" font-size="9" fill="#00d4ff" text-anchor="middle">ARDUINO</text>
+      ${[['D2','65','#ef4444'],['D3','85','#eab308'],['D4','105','#22c55e'],['GND','125','#6b8cae']].map(([l,y,c])=>
+        `<circle cx="110" cy="${y}" r="3" fill="${c}"/><text x="118" y="${+y+4}" font-size="7" font-family="Share Tech Mono" fill="#6b8cae">${l}</text>`).join('')}
+      <!-- 3 LEDs -->
+      ${[[220,'#ef4444','RED'],[270,'#eab308','YEL'],[320,'#22c55e','GRN']].map(([x,c,l])=>
+        `<polygon points="${x},95 ${x+15},108 ${x+15},82" fill="${c}" opacity=".85"/>
+         <text x="${x+7}" y="125" font-family="Share Tech Mono" font-size="8" fill="${c}" text-anchor="middle">${l}</text>
+         <rect x="${x+14}" y="90" width="7" height="10" fill="none" stroke="#666" stroke-width="1.5"/>`).join('')}
+      <!-- Wires -->
+      <line x1="110" y1="65" x2="220" y2="95" stroke="#ef4444" stroke-width="1" stroke-dasharray="3,2" opacity=".6"/>
+      <line x1="110" y1="85" x2="270" y2="95" stroke="#eab308" stroke-width="1" stroke-dasharray="3,2" opacity=".6"/>
+      <line x1="110" y1="105" x2="320" y2="95" stroke="#22c55e" stroke-width="1" stroke-dasharray="3,2" opacity=".6"/>
+      <text x="210" y="188" font-family="Share Tech Mono" font-size="8" fill="#6b8cae" text-anchor="middle">Traffic Light — R/Y/G LED Wiring</text>
+    </svg>`
+  };
+  return svgs[id]||`<svg viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="120" fill="#030508" rx="8"/><text x="200" y="65" font-family="Share Tech Mono" font-size="11" fill="#6b8cae" text-anchor="middle">Circuit Diagram — See Connections Table</text></svg>`;
+}
+
+// ────────────────────────────────────────────────
+//  RENDERING
+// ────────────────────────────────────────────────
+function renderExpList(){
+  const grid=document.getElementById('exp-grid');
+  const fsel=document.getElementById('fb-exp');
+  grid.innerHTML='';
+  experiments.forEach(e=>{
+    const card=document.createElement('div');
+    card.className='exp-card';
+    card.style.setProperty('--clr',e.color);
+    card.innerHTML=`
+      <div class="exp-num">EXP ${String(e.id).padStart(2,'0')} — ${e.platform.toUpperCase()}</div>
+      <div class="exp-title">${e.title}</div>
+      <div class="exp-tags">${e.tags.map(t=>`<span class="exp-tag">${t}</span>`).join('')}</div>
+      <span class="exp-arrow">→</span>`;
+    card.onclick=()=>openExp(e.id);
+    grid.appendChild(card);
+    if(fsel){const o=document.createElement('option');o.value=e.id;o.textContent=`Exp ${e.id}: ${e.title}`;fsel.appendChild(o);}
+  });
+}
+
+function openExp(id){
+  const e=experiments.find(x=>x.id===id);
+  if(!e) return;
+  const content=document.getElementById('exp-content');
+  content.innerHTML=`
+    <button class="back-btn" onclick="showHome()">← BACK TO EXPERIMENTS</button>
+    <div class="exp-header" style="--clr:${e.color}">
+      <div class="exp-num">EXPERIMENT ${String(e.id).padStart(2,'0')} — ${e.platform.toUpperCase()}</div>
+      <h2>${e.title}</h2>
+    </div>
+    <div class="tab-nav" style="--clr:${e.color}">
+      ${['AIM','THEORY','COMPONENTS','CIRCUIT','PROCEDURE','CODE','SIMULATION','PRETEST','REFERENCES'].map((t,i)=>`
+        <button class="tab-btn${i===0?' active':''}" onclick="switchTab('tp${e.id}',${i},this)" style="--clr:${e.color}">${t}</button>`).join('')}
+    </div>
+    <div id="tp${e.id}">
+      <!-- 0: AIM -->
+      <div class="tab-pane active">
+        <div class="content-block"><h3 style="color:${e.color}">🎯 Aim</h3><p>${e.aim}</p></div>
+        <div class="content-block"><h3 style="color:${e.color}">📦 Platform</h3><p>${e.platform}</p></div>
+        <div class="content-block"><h3 style="color:${e.color}">🏷 Keywords</h3><div class="exp-tags" style="margin-top:.25rem">${e.tags.map(t=>`<span class="exp-tag">${t}</span>`).join('')}</div></div>
+      </div>
+      <!-- 1: THEORY -->
+      <div class="tab-pane">
+        <div class="content-block"><h3 style="color:${e.color}">📖 Theory</h3>${e.theory.split('\n\n').map(p=>`<p style="margin-bottom:.75rem">${p}</p>`).join('')}</div>
+      </div>
+      <!-- 2: COMPONENTS -->
+      <div class="tab-pane">
+        <div class="content-block"><h3 style="color:${e.color}">🔩 Components Required</h3><ul>${e.components.map(c=>`<li>${c}</li>`).join('')}</ul></div>
+      </div>
+      <!-- 3: CIRCUIT -->
+      <div class="tab-pane">
+        <div class="circuit-wrap">${circuitSVG(e.id)}</div>
+        <div class="content-block" style="margin-top:1rem">
+          <h3 style="color:${e.color}">🔌 Pin Connections</h3>
+          <table class="conn-table">
+            <thead><tr><th style="color:${e.color}">FROM</th><th style="color:${e.color}">TO</th></tr></thead>
+            <tbody>${e.connections.map(c=>`<tr><td>${c[0]}</td><td>${c[1]}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 4: PROCEDURE -->
+      <div class="tab-pane">
+        <div class="content-block"><h3 style="color:${e.color}">📋 Procedure</h3><ol>${e.procedure.map(s=>`<li>${s}</li>`).join('')}</ol></div>
+      </div>
+      <!-- 5: CODE -->
+      <div class="tab-pane">
+        <div class="code-block">
+          <div class="code-label">${e.platform==='Raspberry Pi'?'PYTHON':'ARDUINO C'}</div>
+          <pre>${e.code}</pre>
+        </div>
+      </div>
+      <!-- 6: SIMULATION -->
+      <div class="tab-pane">
+        <div class="content-block" style="margin-bottom:1rem"><h3 style="color:${e.color}">⚡ Interactive Simulation</h3><p>Adjust controls to simulate real hardware behaviour.</p></div>
+        ${simHTML(e)}
+      </div>
+      <!-- 7: PRETEST QUIZ -->
+      <div class="tab-pane">
+        <div class="content-block" style="margin-bottom:.75rem"><h3 style="color:${e.color}">📝 Pre-test Quiz</h3><p>Test your understanding before attempting the experiment.</p></div>
+        ${buildQuiz(e.quiz,e.color)}
+      </div>
+      <!-- 8: REFERENCES -->
+      <div class="tab-pane">
+        <div class="content-block"><h3 style="color:${e.color}">📚 References</h3>
+          <ul>
+            <li>Arduino Official Documentation — <em>arduino.cc/reference</em></li>
+            <li>Raspberry Pi Foundation — <em>raspberrypi.org/documentation</em></li>
+            <li>Adafruit Sensor Libraries — <em>github.com/adafruit</em></li>
+            <li>NPTEL IoT Course — <em>nptel.ac.in</em></li>
+            <li>Boylestad &amp; Nashelsky, <em>Electronic Devices and Circuit Theory</em></li>
+          </ul>
+        </div>
+      </div>
+    </div>`;
+
+  showView('exp');
+  // auto-start simulations
+  setTimeout(()=>{
+    if(e.simType==='dht11') simDHT();
+    if(e.simType==='traffic'){tPhase=0;tRunning=true;trafficStep();}
+    if(e.simType==='flow') simFlow();
+    if(e.simType==='ds18b20') simDS18();
+    if(e.simType==='smart_traffic') simSmartTraffic();
+    if(e.simType==='health') simHealth();
+    if(e.simType==='ultrasonic') simUltrasonic();
+  },200);
+}
+
+function switchTab(panelId, idx, btn){
+  const panel=document.getElementById(panelId);
+  if(!panel) return;
+  panel.querySelectorAll('.tab-pane').forEach((p,i)=>p.classList.toggle('active',i===idx));
+  const nav=btn.parentElement;
+  nav.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ── Navigation ──────────────────────────────────
+function showView(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  const v=document.getElementById('view-'+name);
+  if(v) v.classList.add('active');
+  document.querySelectorAll('.nav-links a').forEach(a=>a.classList.remove('active'));
+  if(name==='home') document.getElementById('nav-home').classList.add('active');
+  clearTimeout(trafficTimer);
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function showHome(){showView('home');}
+
+// ── Feedback ────────────────────────────────────
+let fbRating=0;
+function setRating(n){
+  fbRating=n;
+  document.querySelectorAll('.star').forEach(s=>{
+    s.textContent=+s.dataset.v<=n?'★':'☆';
+    s.style.color=+s.dataset.v<=n?'#f59e0b':'#6b8cae';
+  });
+}
+function submitFeedback(){
+  const n=document.getElementById('fb-name').value.trim();
+  const r=document.getElementById('fb-result');
+  if(!n){r.textContent='⚠ Please enter your name.';r.style.color='#ef4444';return;}
+  r.textContent=`✅ Thank you, ${n}! Your feedback (${fbRating}★) has been recorded.`;
+  r.style.color='#00ff88';
+}
+
+// ── Init ─────────────────────────────────────────
+renderExpList();
+</script>
+</body>
+</html>
