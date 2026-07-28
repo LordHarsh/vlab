@@ -56,8 +56,16 @@ export function partBoxWorld(part: PlacedPart): { x: number; y: number; w: numbe
   return { x: cx - w / 2, y: cy - h / 2, w, h }
 }
 
-/** Verbatim from CircuitCanvas.tsx's `docBounds`, built on the exported `partBounds`. */
-function docBounds(doc: CircuitDoc): { x: number; y: number; w: number; h: number } | null {
+/**
+ * Verbatim from CircuitCanvas.tsx's `docBounds`, built on the exported `partBounds`.
+ *
+ * Exported as well as used here: StaticSimulator.tsx sizes the canvas BOX from
+ * this drawing's own aspect ratio, so that a wide circuit gets a wide, short
+ * box instead of being fitted into a tall one and leaving half of it empty.
+ * That is the same content rectangle `fitView` below scales into, so the two
+ * cannot disagree about what "the drawing" is.
+ */
+export function docBounds(doc: CircuitDoc): { x: number; y: number; w: number; h: number } | null {
   if (doc.parts.length === 0) return null
   let x0 = Infinity
   let y0 = Infinity

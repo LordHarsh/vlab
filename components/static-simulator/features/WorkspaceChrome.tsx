@@ -124,6 +124,7 @@ export function WorkspaceToolbar({
   onToggleCode,
   selection,
   onPickColour,
+  wide,
 }: {
   boardLabel: string
   isRunning: boolean
@@ -137,12 +138,19 @@ export function WorkspaceToolbar({
   /** The wire/LED selected on the canvas right now, if any — see ColourPickerOverlay.tsx. */
   selection: ColourSelection | null
   onPickColour: (value: string) => void
+  /**
+   * Whether the PANEL has room for the decorative left cluster. Measured, not
+   * a `sm:` — on a lesson page the window is wide while the panel is ~720 px,
+   * so the viewport query kept the furniture and pushed the controls that
+   * matter onto a second row. Furniture yields first.
+   */
+  wide: boolean
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-[#dfe3e8] bg-white px-2 py-1.5 sm:px-3">
       {/* Edit tools. Decoration, and announced as such — `aria-hidden` keeps a
           screen reader out of eleven controls that do nothing. */}
-      <div className="hidden items-center gap-0.5 sm:flex" aria-hidden="true">
+      <div className={`${wide ? 'flex' : 'hidden'} items-center gap-0.5`} aria-hidden="true">
         <span className={ICON_SLOT}>
           <Copy className="h-4 w-4" />
         </span>
@@ -506,6 +514,10 @@ const KIND_RANK: Record<string, number> = {
   source: 7,
 }
 
+/** The rail's width when it sits beside the canvas. Narrower than the code
+ *  panel because eight thumbnails in a 3-column grid need less than a sketch. */
+const RAIL_W = 264
+
 interface RailTile {
   type: string
   name: string
@@ -541,11 +553,17 @@ interface RailTile {
 export function ComponentsRail({
   doc,
   frame,
-  className = '',
+  wide,
 }: {
   doc: CircuitDoc
   frame: ShowreelFrame
-  className?: string
+  /**
+   * Whether the PANEL (not the window) has room for this to sit beside the
+   * canvas — see StaticSimulator.tsx's `panelLayout` and useContainerWidth.ts.
+   * Stacked under the canvas it becomes a capped, scrolling strip instead of
+   * a full-height column.
+   */
+  wide: boolean
 }) {
   const tiles = useMemo<RailTile[]>(() => {
     const byType = new Map<string, RailTile>()
@@ -570,7 +588,10 @@ export function ComponentsRail({
   return (
     <aside
       aria-label="Components in this circuit"
-      className={`workspace-scroll shrink-0 border-t border-[#dfe3e8] bg-white lg:border-l lg:border-t-0 ${className}`}
+      className={`workspace-scroll shrink-0 overflow-y-auto bg-white ${
+        wide ? 'border-l border-[#dfe3e8]' : 'max-h-[300px] w-full border-t border-[#dfe3e8]'
+      }`}
+      style={wide ? { width: RAIL_W } : undefined}
     >
       {/* The rail head: category dropdown, view switch, search. All three are
           drawn, none are wired. */}

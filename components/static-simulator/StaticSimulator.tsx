@@ -17,6 +17,8 @@ import {
   WorkspaceToolbar,
 } from './features/WorkspaceChrome'
 import { ColourPickerOverlay, type ColourSelection } from './features/ColourPickerOverlay'
+import { docBounds } from './features/fit'
+import { useContainerWidth } from './useContainerWidth'
 import { languageForPlatform } from './utils/highlight'
 import { useShowreel, useStickToBottom, type SerialLine } from './showreel/useShowreel'
 import { useSensorOverride } from './showreel/useSensorOverride'
@@ -138,6 +140,12 @@ export function StaticSimulator({
   const logRef = useStickToBottom(showreel.serialLines.length)
   const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
   /**
+   * The panel's OWN width, not the viewport's — see useContainerWidth.ts for
+   * why every `lg:`/`xl:` this layout used to be built on was measuring the
+   * wrong box, and what it cost (a clipped circuit on every lesson page).
+   */
+  const panelWidth = useContainerWidth(fullscreenRef)
+  /**
    * Defaults OPEN, matching what every lesson page has shown since this
    * panel shipped — closing it is a new option, not a new default a student
    * would have to discover before seeing the code at all.
@@ -198,6 +206,7 @@ export function StaticSimulator({
 
   const boardLabel = boardNameOf(doc, experiment)
   const fileName = experiment.platform === 'Arduino' ? 'sketch.ino' : 'main.py'
+  const layout = panelLayout(panelWidth, doc)
 
   return (
     // `static-sim` is the scope class every rule in static-simulator.css hangs
@@ -265,25 +274,31 @@ export function StaticSimulator({
         onToggleCode={() => setCodeOpen((open) => !open)}
         selection={selection}
         onPickColour={handlePickColour}
+        wide={layout.wide}
       />
 
-      {/* Canvas beside a SLOT from `lg` up, stacked below it below that. The
-          slot holds the Components rail OR the Code-and-output panel, never
-          both — exactly one at a time, toggled by the same Code button in
-          the toolbar, matching where the product puts its own code editor:
+      {/* Canvas beside a SLOT once the PANEL (not the window) is wide enough,
+          stacked under it when it is not — see panelLayout above, and
+          useContainerWidth.ts for why this is measured rather than a `lg:`.
+          The slot holds the Components rail OR the Code-and-output panel,
+          never both — exactly one at a time, toggled by the same Code button
+          in the toolbar, matching where the product puts its own code editor:
           a side panel that takes the parts palette's place rather than a
-          second panel bolted on beside it. A 264 px rail AND a code-width
-          panel side by side, against a 390 px viewport, would leave the
-          circuit itself no room at all; stacked, the canvas keeps the full
-          width and whichever slot is open becomes a strip under it.
+          second panel bolted on beside it.
 
-          `lg:items-start` only while the code panel is open: a 120-line
-          sketch plus its serial log is taller than the canvas column, and
-          stretching that column to match would leave empty white space
-          under the circuit. The rail's own content is short enough that the
-          default stretch (no `items-start`) is what makes it fill the row
-          the way it always has. */}
-      <div className={`flex flex-col lg:flex-row ${codeOpen ? 'lg:items-start' : ''}`}>
+          `items-start` only while the code panel is open: a 120-line sketch
+          plus its serial log is taller than the canvas column, and stretching
+          that column to match would leave empty white space under the
+          circuit. The rail's own content is short enough that the default
+          stretch is what makes it fill the row the way it always has. */}
+      {/* Exactly ONE direction class — `flex-col` and `flex-row` together do
+          not resolve by which one React wrote last, they resolve by which one
+          Tailwind emitted last in the stylesheet, and that is `flex-col`. */}
+      <div
+        className={`flex ${layout.wide ? 'flex-row' : 'flex-col'} ${
+          layout.wide && codeOpen ? 'items-start' : ''
+        }`}
+      >
         <div className="flex min-w-0 flex-1 flex-col">
           {/* `bg-[#f7f8f9]` is the box behind the drawing; the canvas paints its
               own near-white ground and its own dot grid over the whole of it, so
@@ -293,7 +308,10 @@ export function StaticSimulator({
               white lettering, the near-white breadboard keeps its grey outline,
               and the grid is our editor's own #d3d8dd rather than the ported
               white-on-navy dots that had to be re-tuned. */}
-          <div className="static-sim-canvas relative h-[260px] bg-[#f7f8f9] sm:h-[320px] lg:h-[380px]">
+          <div
+            className="static-sim-canvas relative bg-[#f7f8f9]"
+            style={{ height: layout.canvasHeight }}
+          >
             <StaticCircuit doc={coloredDoc ?? doc} title={title ?? experiment.title} frame={sensorOverride.frame} />
             {/* Part 2's click layer — see ColourPickerOverlay.tsx's own header
                 for why it is a sibling here rather than anything added inside
@@ -327,7 +345,12 @@ export function StaticSimulator({
             it is one less off-screen copy of a 120-line sketch for a phone
             to hold in memory whenever a student is looking at the rail. */}
         {codeOpen ? (
-          <div className="static-sim-code flex shrink-0 flex-col border-t border-[#dfe3e8] bg-white p-3 sm:p-4 lg:w-[380px] lg:border-l lg:border-t-0 xl:w-[420px]">
+          <div
+            className={`static-sim-code flex shrink-0 flex-col bg-white p-3 sm:p-4 ${
+              layout.wide ? 'border-l border-[#dfe3e8]' : 'w-full border-t border-[#dfe3e8]'
+            }`}
+            style={layout.wide ? { width: SIDE_PANEL_W } : undefined}
+          >
             <div className="mb-2 flex items-center gap-2">
               <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
               <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
@@ -372,12 +395,68 @@ export function StaticSimulator({
           <ComponentsRail
             doc={coloredDoc ?? doc}
             frame={sensorOverride.frame}
-            className="max-h-[300px] overflow-y-auto lg:max-h-none lg:w-[264px] lg:overflow-y-auto xl:w-[288px]"
+            wide={layout.wide}
           />
         )}
       </div>
     </div>
   )
+}
+
+/* ── How the panel divides itself up ──────────────────────────────────────
+ *
+ * All of this used to be Tailwind viewport breakpoints, and all of it was
+ * measuring the wrong box — see useContainerWidth.ts for the full account.
+ * These numbers are transcribed against CircuitCanvas's own fit constants
+ * (FIT_PADDING = 24 a side, FIT_MIN_Z = 0.45), because the failure being
+ * prevented is specifically the fit bottoming out at that floor and clipping
+ * the drawing instead of shrinking it.
+ */
+
+/** The code/rail column's width when the panel is wide enough for one. */
+const SIDE_PANEL_W = 380
+
+/**
+ * The least canvas width worth going side-by-side for.
+ *
+ * The widest reference circuit's content box is ~690 px. At 460 px of canvas
+ * the fit lands at (460 - 48) / 690 = 0.60 — comfortably clear of the 0.45
+ * floor, so nothing clips. Below this the code panel goes UNDER the canvas
+ * instead, which costs a scroll and buys a drawing that is actually legible.
+ */
+const MIN_CANVAS_W = 460
+
+/** `FIT_PADDING` from CircuitCanvas, doubled: the fit's own margin, both sides. */
+const FIT_MARGIN = 48
+
+const MIN_CANVAS_H = 220
+const MAX_CANVAS_H = 460
+
+/**
+ * Where the split falls, and how tall the canvas should be for THIS drawing.
+ *
+ * The height is derived from the circuit's own aspect ratio rather than fixed,
+ * which is the other half of the same bug: every reference circuit is roughly
+ * 2:1 landscape, and pouring one into a fixed 380 px-tall box left well over
+ * half of it empty. Sizing the box to the drawing means the drawing fills it.
+ *
+ * `width === 0` is the pre-measurement state (first paint, and the server's
+ * render, which has no box at all). It deliberately resolves to the STACKED
+ * layout: a panel that stacks and then widens reflows once, whereas one that
+ * guesses side-by-side and turns out not to fit clips the circuit — which is
+ * the whole failure this replaced.
+ */
+function panelLayout(width: number, doc: CircuitDoc): { wide: boolean; canvasHeight: number } {
+  const wide = width >= SIDE_PANEL_W + MIN_CANVAS_W
+  const canvasWidth = wide ? width - SIDE_PANEL_W : width
+
+  const b = docBounds(doc)
+  if (!b || b.w <= 0 || b.h <= 0 || canvasWidth <= 0) {
+    return { wide, canvasHeight: MIN_CANVAS_H }
+  }
+
+  const ideal = ((canvasWidth - FIT_MARGIN) * b.h) / b.w + FIT_MARGIN
+  return { wide, canvasHeight: Math.round(Math.min(MAX_CANVAS_H, Math.max(MIN_CANVAS_H, ideal))) }
 }
 
 /**
