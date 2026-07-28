@@ -11,12 +11,11 @@ import { REFERENCE_CIRCUITS } from './circuits'
 import { StaticCircuit } from './StaticCircuit'
 import { SyntaxCodeViewer } from './features/SyntaxCodeViewer'
 import {
-  CanvasCornerMark,
   CanvasStatusStrip,
   ComponentsRail,
   WorkspaceToolbar,
 } from './features/WorkspaceChrome'
-import { ColourPickerOverlay, type ColourSelection } from './features/ColourPickerOverlay'
+import type { ColourSelection } from './features/colours'
 import { docBounds } from './features/fit'
 import { useContainerWidth } from './useContainerWidth'
 import { languageForPlatform } from './utils/highlight'
@@ -27,17 +26,25 @@ import './static-simulator.css'
 /**
  * One experiment's reference circuit, mounted as a read-only workbench.
  *
- * DRAWN BY OUR OWN CANVAS. The circuit is a `CircuitDoc` from ./circuits.ts —
- * our part library, our pin ids — rendered by components/simulator/
- * CircuitCanvas with `readOnly`, which is the same component and the same
- * artwork the live editor uses. There is no second renderer here any more: the
- * ported ComponentSVGs.tsx and features/Wire.tsx are deleted, and with them the
- * risk of a part looking one way in the lab and another way in the figure.
+ * DRAWN BY OUR OWN CANVAS — THE REAL ONE. The circuit is a `CircuitDoc` from
+ * ./circuits.ts — our part library, our pin ids — rendered by
+ * components/simulator/CircuitCanvas, the same component and the same artwork
+ * the live editor uses. There is no second renderer here any more: the ported
+ * ComponentSVGs.tsx and features/Wire.tsx are deleted, and with them the risk
+ * of a part looking one way in the lab and another way in the figure.
  *
- * READ-ONLY BY CONSTRUCTION, not by configuration. `readOnly` attaches no
- * handler, exposes no focusable control and puts `pointer-events: none` on the
- * drawing; the workbench furniture around it contains no `<button>`, `<input>`
- * or handler at all. There is nothing to defeat and nothing to flip.
+ * NAVIGABLE, WITH THE CIRCUIT LOCKED. The canvas is mounted `lockTopology`:
+ * pan, wheel-zoom, picking a part or a wire, and the device inputs are the
+ * editor's own and behave exactly as they do there. What cannot happen is any
+ * change to the CIRCUIT — no dragging a part onto different pins, no drawing a
+ * wire, no reshaping or deleting one — and the code beside it is a viewer with
+ * no editor behind it. See CircuitCanvas's `lockTopology` prop.
+ *
+ * It was `readOnly` until the owner asked for a workspace a student could
+ * actually scroll and zoom. That flag puts `pointer-events: none` over the
+ * whole drawing, so this panel had grown a sibling hit-shape layer duplicating
+ * the canvas's fit transform just to recover a click. Deleted: the canvas had
+ * pan, zoom and selection all along, they were only switched off.
  *
  * IT PLAYS, BUT IT DOES NOT SIMULATE. The circuit animates, the sensors count,
  * the serial monitor scrolls and the clock runs — all of it from
@@ -167,7 +174,14 @@ export function StaticSimulator({
    */
   const [partColors, setPartColors] = React.useState<Record<string, string>>({})
   const [wireColors, setWireColors] = React.useState<Record<string, string>>({})
-  const [selection, setSelection] = React.useState<ColourSelection | null>(null)
+  /**
+   * What the CANVAS says is picked. Two ids rather than one union, because
+   * that is the shape CircuitCanvas already owns — `selected` for a part,
+   * `selectedWire` for a wire — and translating between the two representations
+   * on every render is how they would drift apart.
+   */
+  const [selectedPart, setSelectedPart] = React.useState<string | null>(null)
+  const [selectedWireId, setSelectedWireId] = React.useState<string | null>(null)
   const coloredDoc = React.useMemo(() => {
     if (!doc) return doc
     if (Object.keys(partColors).length === 0 && Object.keys(wireColors).length === 0) return doc
@@ -176,7 +190,39 @@ export function StaticSimulator({
       wires: doc.wires.map((w) => (wireColors[w.id] ? { ...w, color: wireColors[w.id] } : w)),
     }
   }, [doc, partColors, wireColors])
-  const handleClearSelection = React.useCallback(() => setSelection(null), [])
+  /**
+   * The canvas's selection, translated into what the toolbar's swatch needs:
+   * which palette to show, which swatch is current, and what to call it.
+   *
+   * Only LEDs get a part entry. Every part on these boards is selectable — that
+   * is the canvas's behaviour and it is the right one, a student clicking a
+   * Pico should see it acknowledged — but only an LED has a `color` prop this
+   * panel can change, so anything else selects without offering a palette.
+   */
+  const selection = React.useMemo<ColourSelection | null>(() => {
+    if (selectedWireId) {
+      const wire = doc?.wires.find((w) => w.id === selectedWireId)
+      if (!wire) return null
+      return {
+        kind: 'wire',
+        id: wire.id,
+        label: 'Wire colour',
+        current: wireColors[wire.id] ?? wire.color,
+      }
+    }
+    if (selectedPart) {
+      const part = doc?.parts.find((p) => p.id === selectedPart)
+      if (!part || getPart(part.type).electrical.kind !== 'led') return null
+      return {
+        kind: 'part',
+        id: part.id,
+        label: `${getPart(part.type).label} colour`,
+        current: partColors[part.id] ?? String(part.props.color ?? 'red'),
+      }
+    }
+    return null
+  }, [doc, selectedPart, selectedWireId, partColors, wireColors])
+
   const handlePickColour = React.useCallback(
     (value: string) => {
       if (!selection) return
@@ -185,7 +231,6 @@ export function StaticSimulator({
       } else {
         setWireColors((prev) => ({ ...prev, [selection.id]: value }))
       }
-      setSelection(null)
     },
     [selection],
   )
@@ -312,21 +357,15 @@ export function StaticSimulator({
             className="static-sim-canvas relative bg-[#f7f8f9]"
             style={{ height: layout.canvasHeight }}
           >
-            <StaticCircuit doc={coloredDoc ?? doc} title={title ?? experiment.title} frame={sensorOverride.frame} />
-            {/* Part 2's click layer — see ColourPickerOverlay.tsx's own header
-                for why it is a sibling here rather than anything added inside
-                StaticCircuit/CircuitCanvas. Geometry comes from the
-                UNCOLOURED `doc`: a part's position never changes, so the hit
-                boxes stay correct however many colours are picked. */}
-            <ColourPickerOverlay
-              doc={doc}
-              partColors={partColors}
-              wireColors={wireColors}
-              selection={selection}
-              onSelect={setSelection}
-              onClear={handleClearSelection}
+            <StaticCircuit
+              doc={coloredDoc ?? doc}
+              title={title ?? experiment.title}
+              frame={sensorOverride.frame}
+              selectedPart={selectedPart}
+              onSelectPart={setSelectedPart}
+              selectedWire={selectedWireId}
+              onSelectWire={setSelectedWireId}
             />
-            <CanvasCornerMark />
           </div>
           <CanvasStatusStrip
             frame={sensorOverride.frame}

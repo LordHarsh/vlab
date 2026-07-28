@@ -31,7 +31,7 @@ import type { ShowreelFrame } from '../showreel/useShowreel'
 import type { ShowreelSensors } from '../showreel/timelines'
 import { isSensorWarn, type SensorControlSpec } from '../showreel/sensorOverrides'
 import { SensorControls } from './SensorControls'
-import { LED_OPTIONS, WIRE_OPTIONS, type ColourSelection } from './ColourPickerOverlay'
+import { LED_OPTIONS, WIRE_OPTIONS, type ColourSelection } from './colours'
 
 /**
  * THE WORKBENCH FURNITURE AROUND THE READ-ONLY CIRCUIT.

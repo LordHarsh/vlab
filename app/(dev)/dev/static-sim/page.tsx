@@ -31,8 +31,9 @@ export default function DevStaticSimPage() {
         drawing is one of our own <code className="font-mono text-[13px]">CircuitDoc</code>s from{' '}
         <code className="font-mono text-[13px]">circuits.ts</code>, rendered by the lab editor&rsquo;s
         own <code className="font-mono text-[13px]">CircuitCanvas</code> in{' '}
-        <code className="font-mono text-[13px]">readOnly</code> — same parts, same wires, nothing
-        editable. Each panel plays a scripted sequence from{' '}
+        <code className="font-mono text-[13px]">lockTopology</code> — same parts, same wires. Pan,
+        zoom and selection are the editor&rsquo;s own; what cannot change is the wiring and the
+        code. Each panel plays a scripted sequence from{' '}
         <code className="font-mono text-[13px]">showreel/timelines.ts</code>: hand-written stage
         direction, not a simulation. No interpreter, no solver, no computed voltages.
       </p>

@@ -103,6 +103,27 @@ interface Props {
    * focus ring and the `role` come off.
    */
   readOnly?: boolean
+  /**
+   * NAVIGABLE, BUT THE CIRCUIT ITSELF CANNOT BE CHANGED.
+   *
+   * The third mode, between `readOnly` (a picture) and the full editor. Pan,
+   * wheel-zoom, selecting a part or a wire, and every device INPUT — a
+   * potentiometer's knob, a slide switch, a push button — all work exactly as
+   * they do in the editor. What is locked is the circuit's TOPOLOGY: parts
+   * cannot be dragged to new pins, wires cannot be drawn, reshaped or deleted.
+   *
+   * WHY IT EXISTS. The reference panel needs a student to be able to look
+   * around a circuit — scroll it, zoom into a corner, click a wire to recolour
+   * it — while being unable to rewire it. `readOnly` cannot do that: it puts
+   * `pointer-events: none` on the whole surface, so there is no pan, no zoom
+   * and no selection to build on. Before this flag that panel carried its own
+   * sibling hit-shape layer duplicating this file's fit transform, which is
+   * exactly the kind of second implementation StaticCircuit.tsx's header
+   * argues against.
+   *
+   * Ignored when `readOnly` is set — that stays the stricter of the two.
+   */
+  lockTopology?: boolean
   /** partId → 0..1 LED brightness, from the running simulation. */
   ledBrightness?: Map<string, number>
   /**
@@ -583,6 +604,7 @@ export function CircuitCanvas({
   doc,
   dispatch,
   readOnly = false,
+  lockTopology = false,
   ledBrightness,
   deviceStates,
   netOf,
@@ -591,6 +613,31 @@ export function CircuitCanvas({
   selectedWire,
   onSelectWire,
 }: Props) {
+  /**
+   * "This gesture would CHANGE THE CIRCUIT" — the one question every editing
+   * handler below is gated on, asked once.
+   *
+   * Kept separate from `readOnly` because the two forbid different things:
+   * `readOnly` forbids touching the canvas at all, this forbids only the
+   * subset of gestures that rewire it. Navigation and device inputs are
+   * deliberately NOT behind it.
+   */
+  const noEdit = readOnly || lockTopology
+  /**
+   * Whether the student has taken the view over, under `lockTopology`.
+   *
+   * The panel this serves lays out around the canvas — a code column claims
+   * its width a beat after mount, a lesson page settles, a slider strip
+   * appears — so the box the first fit measured is routinely not the box the
+   * drawing ends up in. Reframing on every resize fixes that and is what
+   * `readOnly` does. It is also exactly the wrong thing to do the moment a
+   * student has panned somewhere deliberately.
+   *
+   * So: reframe freely until the first pan or zoom, then never again. A ref
+   * rather than state because nothing renders differently because of it — it
+   * only decides whether the observer below is allowed to act.
+   */
+  const viewTaken = useRef(false)
   const svgRef = useRef<SVGSVGElement>(null)
   /**
    * The view, which starts UNSET and is fitted to the document on first paint.
@@ -691,12 +738,14 @@ export function CircuitCanvas({
    * has a size, instead of drawing at DEFAULT_VIEW forever.
    */
   useEffect(() => {
-    if (!readOnly) return
+    if (!noEdit) return
     const svg = svgRef.current
     if (!svg) return
     const observer = new ResizeObserver(() => {
       const rect = svg.getBoundingClientRect()
       if (rect.width === 0 || rect.height === 0) return
+      // Once the student owns the view, the box is theirs to have framed badly.
+      if (viewTaken.current) return
       dispatchView({
         type: 'refit',
         doc: docRef.current,
@@ -706,7 +755,7 @@ export function CircuitCanvas({
     })
     observer.observe(svg)
     return () => observer.disconnect()
-  }, [readOnly])
+  }, [noEdit, readOnly])
 
   /**
    * Escape abandons a wire being routed.
@@ -1353,6 +1402,30 @@ export function CircuitCanvas({
   }
 
   /**
+   * The same first look, for `lockTopology`: it SELECTS the wire under the
+   * pointer and stops there.
+   *
+   * Deliberately not `onCanvasPointerDownCapture` with a flag threaded through
+   * it. That one's job is to start a gesture — shaping a lead, dragging a bend
+   * — and every one of those ends in a `dispatch` that rewrites the document.
+   * Reusing it and then suppressing the dispatch would leave the shaping state,
+   * the pointer capture and the handles all still running for an edit that can
+   * never land. Selecting is a different, smaller thing, so it is written as
+   * one.
+   *
+   * `stopPropagation` matters: without it the background handler underneath
+   * would start a pan on the very press that selected the wire, and the
+   * selection would be cleared by its own `onSelect(null)`.
+   */
+  function onLockedPointerDownCapture(e: React.PointerEvent) {
+    if (e.button > 0) return
+    const target = grabAt(toWorld(e.clientX, e.clientY))
+    if (!target) return
+    e.stopPropagation()
+    onSelectWire?.(target.wireId)
+  }
+
+  /**
    * Double-click: remove the bend under the pointer, or the whole wire.
    *
    * On the canvas rather than on each wire, for the reason the press is: the
@@ -1450,22 +1523,48 @@ export function CircuitCanvas({
   // ─── Rendering ──────────────────────────────────────────────────────────────
 
   /**
-   * Every handler the editing surface has, as one bundle — or an empty one.
+   * Every handler the surface has, as one bundle — in three sizes.
    *
-   * Gathered here rather than spread through the JSX so that "read-only means
-   * no handlers" is a single, checkable statement instead of eight separate
-   * conditions that a later edit could add a ninth to and miss.
+   * Gathered here rather than spread through the JSX so that what each mode
+   * does and does not respond to is a single, checkable statement instead of
+   * eight separate conditions that a later edit could add a ninth to and miss.
+   *
+   * `lockTopology` gets the NAVIGATION half and none of the editing half:
+   * move/up/leave (which drive panning and hover), the wheel (zoom) and a
+   * press on the background (pan, and clearing the selection). It does not get
+   * `onPointerDownCapture` — that is where a press on a pin starts drawing a
+   * wire — nor `onDoubleClick`, which puts a bend in one.
    */
+  const navigation: React.SVGProps<SVGSVGElement> = {
+    onPointerMove,
+    onPointerUp: () => endGesture(),
+    onPointerLeave: () => {
+      setHoverWire(null)
+      endGesture()
+    },
+    onWheel,
+  }
+
   const surface: React.SVGProps<SVGSVGElement> = readOnly
     ? {}
-    : {
-        onPointerMove,
-        onPointerUp: () => endGesture(),
-        onPointerLeave: () => {
-          setHoverWire(null)
-          endGesture()
-        },
-        onWheel,
+    : lockTopology
+      ? {
+          ...navigation,
+          // Both gestures hand the view to the student — see `viewTaken`.
+          onWheel: (e: React.WheelEvent) => {
+            viewTaken.current = true
+            onWheel(e)
+          },
+          onPointerDownCapture: onLockedPointerDownCapture,
+          onPointerDown: (e: React.PointerEvent) => {
+            viewTaken.current = true
+            onSelect(null)
+            onSelectWire?.(null)
+            setPanning({ x: e.clientX, y: e.clientY })
+          },
+        }
+      : {
+        ...navigation,
         onPointerDownCapture: onCanvasPointerDownCapture,
         onDoubleClick: onCanvasDoubleClick,
         onPointerDown: (e: React.PointerEvent) => {
@@ -1608,10 +1707,29 @@ export function CircuitCanvas({
                   />
                 )}
 
+                {/* Dragging a part is a TOPOLOGY change, not a view change: on
+                    a breadboard it moves the part's legs into different tie
+                    points. So it goes with the wire tools, not with pan and
+                    zoom. `cursor-move` goes with it — a move cursor over
+                    something that will not move is a promise the canvas cannot
+                    keep. */}
                 <g
                   style={vars as React.CSSProperties}
-                  {...(readOnly ? {} : { onPointerDown: (e: React.PointerEvent) => startPartDrag(e, part) })}
-                  className={readOnly ? undefined : 'cursor-move'}
+                  {...(readOnly
+                    ? {}
+                    : lockTopology
+                      ? {
+                          /* Select it, do not move it. `stopPropagation` keeps
+                             the background press underneath from starting a
+                             pan and clearing this selection immediately. */
+                          onPointerDown: (e: React.PointerEvent) => {
+                            e.stopPropagation()
+                            onSelect(part.id)
+                            onSelectWire?.(null)
+                          },
+                        }
+                      : { onPointerDown: (e: React.PointerEvent) => startPartDrag(e, part) })}
+                  className={noEdit ? undefined : 'cursor-move'}
                   dangerouslySetInnerHTML={{ __html: readOnly ? inertPartArt(def) : def.svg }}
                 />
 
@@ -1730,7 +1848,11 @@ export function CircuitCanvas({
                 wire={w}
                 a={a}
                 b={b}
-                readOnly={readOnly}
+                /* Locked as well as read-only: the grab band, the bend handles
+                   and the "drag to bend" tooltip are all offers to reshape a
+                   lead. The selection outline is drawn either way, so a wire
+                   can still be picked out — it just cannot be moved. */
+                readOnly={noEdit}
                 lit={hoverNet != null && netOf?.get(`${w.from.partId} ${w.from.pinId}`) === hoverNet}
                 shaping={shaping === w.id}
                 hovered={hoverWire === w.id}
@@ -1760,7 +1882,10 @@ export function CircuitCanvas({
                       pin={pin}
                       hitR={hitRadius(def)}
                       partId={part.id}
-                      readOnly={readOnly}
+                      /* No crosshair and no hit target when the topology is
+                         locked — a pin that highlights under the pointer is an
+                         offer to start a wire from it. */
+                      readOnly={noEdit}
                       netOf={netOf}
                       hoverNet={hoverNet}
                       wiring={wire != null}
