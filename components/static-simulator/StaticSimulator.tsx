@@ -16,7 +16,7 @@ import {
   ComponentsRail,
   WorkspaceToolbar,
 } from './features/WorkspaceChrome'
-import { ColourPickerOverlay } from './features/ColourPickerOverlay'
+import { ColourPickerOverlay, type ColourSelection } from './features/ColourPickerOverlay'
 import { languageForPlatform } from './utils/highlight'
 import { useShowreel, useStickToBottom, type SerialLine } from './showreel/useShowreel'
 import { useSensorOverride } from './showreel/useSensorOverride'
@@ -149,9 +149,17 @@ export function StaticSimulator({
    * colour, in local state only — nothing here ever writes into `doc`, which
    * stays the exact object `circuits.ts` exports. `coloredDoc` below is the
    * one clone, built fresh only when there is something to override.
+   *
+   * `selection` is which shape is picked on the canvas right now, lifted up
+   * from ColourPickerOverlay so the toolbar's swatch control (in
+   * WorkspaceChrome.tsx) can render and drive it — clicking a wire or an LED
+   * no longer opens a popover on the canvas, it selects, and the real
+   * colour control lives in the toolbar. See ColourPickerOverlay.tsx's file
+   * header for the full reasoning.
    */
   const [partColors, setPartColors] = React.useState<Record<string, string>>({})
   const [wireColors, setWireColors] = React.useState<Record<string, string>>({})
+  const [selection, setSelection] = React.useState<ColourSelection | null>(null)
   const coloredDoc = React.useMemo(() => {
     if (!doc) return doc
     if (Object.keys(partColors).length === 0 && Object.keys(wireColors).length === 0) return doc
@@ -160,12 +168,19 @@ export function StaticSimulator({
       wires: doc.wires.map((w) => (wireColors[w.id] ? { ...w, color: wireColors[w.id] } : w)),
     }
   }, [doc, partColors, wireColors])
-  const handlePartColor = React.useCallback((partId: string, color: string) => {
-    setPartColors((prev) => ({ ...prev, [partId]: color }))
-  }, [])
-  const handleWireColor = React.useCallback((wireId: string, color: string) => {
-    setWireColors((prev) => ({ ...prev, [wireId]: color }))
-  }, [])
+  const handleClearSelection = React.useCallback(() => setSelection(null), [])
+  const handlePickColour = React.useCallback(
+    (value: string) => {
+      if (!selection) return
+      if (selection.kind === 'part') {
+        setPartColors((prev) => ({ ...prev, [selection.id]: value }))
+      } else {
+        setWireColors((prev) => ({ ...prev, [selection.id]: value }))
+      }
+      setSelection(null)
+    },
+    [selection],
+  )
 
   if (!experiment || !doc) {
     return (
@@ -248,6 +263,8 @@ export function StaticSimulator({
         onToggleRun={showreel.toggleRunning}
         codeOpen={codeOpen}
         onToggleCode={() => setCodeOpen((open) => !open)}
+        selection={selection}
+        onPickColour={handlePickColour}
       />
 
       {/* Canvas beside a SLOT from `lg` up, stacked below it below that. The
@@ -287,8 +304,9 @@ export function StaticSimulator({
               doc={doc}
               partColors={partColors}
               wireColors={wireColors}
-              onPickPart={handlePartColor}
-              onPickWire={handleWireColor}
+              selection={selection}
+              onSelect={setSelection}
+              onClear={handleClearSelection}
             />
             <CanvasCornerMark />
           </div>

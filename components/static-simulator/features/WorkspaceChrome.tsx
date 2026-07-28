@@ -31,6 +31,7 @@ import type { ShowreelFrame } from '../showreel/useShowreel'
 import type { ShowreelSensors } from '../showreel/timelines'
 import { isSensorWarn, type SensorControlSpec } from '../showreel/sensorOverrides'
 import { SensorControls } from './SensorControls'
+import { LED_OPTIONS, WIRE_OPTIONS, type ColourSelection } from './ColourPickerOverlay'
 
 /**
  * THE WORKBENCH FURNITURE AROUND THE READ-ONLY CIRCUIT.
@@ -38,15 +39,17 @@ import { SensorControls } from './SensorControls'
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ ALMOST EVERY CONTROL IN THIS FILE IS A PICTURE OF A CONTROL.            │
  * │                                                                         │
- * │ Two are real, on the owner's explicit instruction: the Code toggle and  │
- * │ the RunState Start/Stop button, both below. Both are safe by what they  │
- * │ DO, not by being disabled — showing or hiding a panel, and playing or   │
- * │ pausing a canned loop, touch neither the circuit's topology nor its     │
- * │ code. Everything else — the edit-tool icons, the wire-colour swatch,    │
- * │ the Components dropdown, the search field — is still a `<span>`/`<div>` │
- * │ with a border on it: not focusable, not tabbable, no pointer cursor,    │
- * │ `aria-hidden` so a screen reader is never walked through a control that │
- * │ does nothing.                                                          │
+ * │ Three are real, on the owner's explicit instruction: the Code toggle,   │
+ * │ the RunState Start/Stop button, and the colour swatch that appears once │
+ * │ a wire or an LED is selected on the canvas (ColourSwatchControl,        │
+ * │ below). All three are safe by what they DO, not by being disabled —     │
+ * │ showing or hiding a panel, playing or pausing a canned loop, and        │
+ * │ recolouring a part or a wire, touch neither the circuit's topology nor  │
+ * │ its code. Everything else — the edit-tool icons, the decorative wire-   │
+ * │ style swatch, the Components dropdown, the search field — is still a    │
+ * │ `<span>`/`<div>` with a border on it: not focusable, not tabbable, no   │
+ * │ pointer cursor, `aria-hidden` so a screen reader is never walked        │
+ * │ through a control that does nothing.                                   │
  * │                                                                         │
  * │ That is not laziness about wiring the REST of it up — it is the whole   │
  * │ point. A student cannot add a part, cannot draw a wire, cannot rewire   │
@@ -119,6 +122,8 @@ export function WorkspaceToolbar({
   onToggleRun,
   codeOpen,
   onToggleCode,
+  selection,
+  onPickColour,
 }: {
   boardLabel: string
   isRunning: boolean
@@ -129,6 +134,9 @@ export function WorkspaceToolbar({
   onToggleRun?: () => void
   codeOpen: boolean
   onToggleCode: () => void
+  /** The wire/LED selected on the canvas right now, if any — see ColourPickerOverlay.tsx. */
+  selection: ColourSelection | null
+  onPickColour: (value: string) => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-[#dfe3e8] bg-white px-2 py-1.5 sm:px-3">
@@ -203,6 +211,13 @@ export function WorkspaceToolbar({
           <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
           Code
         </button>
+
+        {/* THE REAL COLOUR CONTROL — see the file header. Rendered only once
+            something is selected on the canvas; there is nothing to swatch
+            or recolour otherwise, and a permanently-visible but disabled
+            button would be exactly the "live-looking but dead" control this
+            toolbar is built to avoid everywhere else. */}
+        {selection && <ColourSwatchControl selection={selection} onPick={onPickColour} />}
 
         {hasTimeline && (
           <RunState
@@ -329,6 +344,113 @@ const RunState = React.memo(function RunState({
     </button>
   )
 })
+
+/**
+ * The colour swatch and palette dropdown, for whichever wire or LED is
+ * currently selected on the canvas.
+ *
+ * ONE CONTROL FOR BOTH KINDS, exactly as the owner asked for wires and LEDs
+ * alike: it does not know or care which is selected beyond picking the right
+ * palette (`LED_OPTIONS` vs `WIRE_OPTIONS`, the same lists the old floating
+ * popover drew from). `selection.current` seeds which swatch reads as
+ * "already chosen" in the dropdown.
+ *
+ * AUTO-OPENS ON A NEW SELECTION, because "click a wire and connect it with
+ * the options in the toolbar" is the whole feature — a student should not
+ * have to find and click a second control after the first one to see the
+ * palette. Re-selecting whatever is already open does not reopen it if the
+ * student closed the dropdown without picking; that only happens by picking
+ * a fresh shape on the canvas, which is a new `selection.id`/`kind` pair.
+ *
+ * CLOSES WITHOUT CLEARING on outside-click, so dismissing the dropdown still
+ * leaves the highlight ring on the canvas and the swatch in the toolbar —
+ * clicking the swatch button again reopens the same palette. Escape/clicking
+ * blank canvas clears the selection entirely, and with it this control —
+ * that listener lives in ColourPickerOverlay.tsx, since the selection state
+ * itself lives above both this control and that overlay, in
+ * StaticSimulator.tsx.
+ */
+function ColourSwatchControl({
+  selection,
+  onPick,
+}: {
+  selection: ColourSelection
+  onPick: (value: string) => void
+}) {
+  const [open, setOpen] = React.useState(true)
+  const wrapRef = React.useRef<HTMLDivElement>(null)
+  const options = selection.kind === 'part' ? LED_OPTIONS : WIRE_OPTIONS
+  const swatch = options.find((o) => o.value === selection.current)?.swatch ?? '#9aa3ab'
+
+  React.useEffect(() => {
+    setOpen(true)
+  }, [selection.kind, selection.id])
+
+  React.useEffect(() => {
+    if (!open) return
+    function onPointerDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [open])
+
+  return (
+    <div ref={wrapRef} className="relative flex shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="true"
+        title={selection.label}
+        className="flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border border-[#dfe3e8] bg-white px-2 text-[11px] font-medium text-[#34495e] transition-colors hover:border-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+      >
+        <span
+          className="h-3.5 w-3.5 shrink-0 rounded-[2px] border border-black/10"
+          style={{ background: swatch }}
+          aria-hidden="true"
+        />
+        <span className="hidden sm:inline">{selection.label}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 text-[#9aa3ab]" aria-hidden="true" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label={selection.label}
+          className="absolute right-0 top-[calc(100%+4px)] z-50 grid w-[176px] grid-cols-4 gap-1 rounded-[6px] border border-[#dfe3e8] bg-white p-2 shadow-lg"
+        >
+          {options.map((opt) => {
+            const isCurrent = opt.value === selection.current
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={isCurrent}
+                title={opt.label}
+                onClick={() => {
+                  onPick(opt.value)
+                  setOpen(false)
+                }}
+                className={`flex h-8 w-8 items-center justify-center rounded-full border-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] ${
+                  isCurrent ? 'border-[#1477d1]' : 'border-transparent hover:border-[#dfe3e8]'
+                }`}
+              >
+                <span
+                  className="h-5 w-5 rounded-full border border-black/10"
+                  style={{ background: opt.swatch }}
+                  aria-hidden="true"
+                />
+                <span className="sr-only">{opt.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /* ── The canvas corner control ────────────────────────────────────────── */
 
