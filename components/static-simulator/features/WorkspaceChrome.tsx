@@ -585,21 +585,26 @@ function readouts(
 const NO_CONTROLS: readonly SensorControlSpec[] = []
 
 /**
- * The bench's status line: a verdict on the left, the sliders/toggles (if
- * this experiment has any) in the middle, the live readouts on the right.
+ * The bench's status line: the sliders/toggles (if this experiment has any)
+ * on the left, the live readouts on the right.
  *
- * WHAT THE VERDICT MEANS HERE. Our own editor earns "No problems detected" by
- * compiling a netlist and solving it. This panel solves nothing, so it claims
- * nothing of the sort — it reports that the circuit is the published reference
- * build, which is a fact about the drawing and is true.
+ * NO VERDICT LINE HERE, ON PURPOSE. This panel used to open with "Reference
+ * build — wiring matches the lab sheet" — a fact about the drawing, and true,
+ * but on the owner's instruction it is gone: this strip is where a student's
+ * eye actually lands to read a number, and a sentence with nothing to do with
+ * that reading was competing with it for the same line. Our own editor's
+ * "No problems detected" is a real verdict, earned by compiling a netlist and
+ * solving it — this panel solves nothing, so it is better off not echoing
+ * that shape of claim in miniature.
  *
  * The readouts are the same numbers the artwork is displaying this instant,
  * read off the same `frame`. They are labelled as the sensors' readings, never
- * as measurements, because nothing measured them: they are stage direction from
- * showreel/timelines.ts, OR — while a control below is being dragged — the
- * student's own override, applied by showreel/sensorOverrides.ts on top of
- * whichever frame the drag paused. Same `frame`, same field, so the two can
- * never disagree.
+ * as measurements, because nothing measured them: for a field with no slider
+ * they are stage direction from showreel/timelines.ts; for a field WITH one
+ * they are the student's own dragged value, or the circuit's authored resting
+ * value if nobody has touched it yet — never the timeline's live sweep of
+ * that field, dragging or not. Same `frame`, same field, so the two can never
+ * disagree. See showreel/sensorOverrides.ts's `applySensorOverrides`.
  *
  * `warn` recolours a reading red the instant it crosses the line the sketch
  * beside it draws (`showreel/sensorOverrides.ts`'s `isSensorWarn`) — true
@@ -626,11 +631,6 @@ export function CanvasStatusStrip({
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[#dfe3e8] bg-white px-3 py-1.5">
-      <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-[#15803d]">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#16a34a]" aria-hidden="true" />
-        Reference build — wiring matches the lab sheet
-      </span>
-
       {controls.length > 0 && onSensorChange && (
         <SensorControls controls={controls} sensors={frame.sensors} warn={warn} onChange={onSensorChange} />
       )}

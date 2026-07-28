@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import type { CircuitDoc } from '@/lib/simulator/model/document'
 import type { ShowreelFrame } from './useShowreel'
 import type { ShowreelSensors } from './timelines'
-import { applySensorOverrides, controlsFor, type SensorField } from './sensorOverrides'
+import { applySensorOverrides, controlsFor, restingSensors, type SensorField } from './sensorOverrides'
 
 /**
  * Local, in-memory state for the sliders and toggles in the status strip.
@@ -11,49 +12,35 @@ import { applySensorOverrides, controlsFor, type SensorField } from './sensorOve
  * NOTHING PERSISTS. `overrides` is a plain `useState` that starts empty on
  * every mount and is thrown away with the component — no `sim_attempts` row,
  * no localStorage, no cookie. Reloading the page resets a dragged slider to
- * whatever the timeline's own default frame is, the same as everything else
- * in this panel.
+ * whatever it was authored with, the same as everything else in this panel.
  *
- * ONE CLOCK, STILL. This hook adds no timer of its own: `pause` is the SAME
- * `manualPause` flag useShowreel's existing effect already reads, so dragging
- * a slider freezes the showreel exactly the way pressing Stop does, and the
- * override is applied ON TOP of that one frozen frame — see
- * `applySensorOverrides` in ./sensorOverrides.ts for the merge.
+ * DRAGGING DOES NOT TOUCH THE CLOCK, on the owner's explicit instruction.
+ * This hook used to call `useShowreel`'s `pause()` on every drag — removed:
+ * the showreel keeps running, keeps ticking its clock and its serial log,
+ * exactly as if nobody had touched a slider at all. A dragged field's value
+ * is layered on top of whatever frame is current, every frame, by
+ * `applySensorOverrides` — not by freezing one frame and editing it.
+ *
+ * THE OTHER HALF OF THE SAME FIX: a field with a slider no longer shows the
+ * timeline's own live sweep of that field EVER, dragged or not — it shows
+ * `overrides[field] ?? restingSensors(doc)[field]`. Without this, removing
+ * the pause-on-drag would have made the "why is the slider moving on its
+ * own" complaint WORSE, not better: the thumb would drift continuously in
+ * the background instead of only between drags. See sensorOverrides.ts's
+ * own header on `applySensorOverrides` for the full reasoning.
  */
-export function useSensorOverride(
-  experimentId: number | undefined,
-  frame: ShowreelFrame,
-  isRunning: boolean,
-  pause: () => void,
-) {
+export function useSensorOverride(experimentId: number | undefined, frame: ShowreelFrame, doc: CircuitDoc | undefined) {
   const controls = controlsFor(experimentId)
   const [overrides, setOverrides] = useState<Partial<Record<SensorField, number | boolean>>>({})
+  const resting = useMemo(() => restingSensors(doc, experimentId), [doc, experimentId])
 
-  /**
-   * Resuming playback drops every override.
-   *
-   * "Releasing the Start/Stop button... resumes scripted playback" — the
-   * owner's brief — means a value the student dialled in stops being
-   * authoritative the instant the script is running again. Restarting from
-   * t = 0 with a stale override still applied would show a number the
-   * timeline never wrote, which is exactly the kind of disagreement this
-   * whole panel exists to avoid.
-   */
-  useEffect(() => {
-    if (isRunning) setOverrides({})
-  }, [isRunning])
-
-  const setValue = useCallback(
-    (field: SensorField, value: number | boolean) => {
-      pause()
-      setOverrides((prev) => ({ ...prev, [field]: value }))
-    },
-    [pause],
-  )
+  const setValue = useCallback((field: SensorField, value: number | boolean) => {
+    setOverrides((prev) => ({ ...prev, [field]: value }))
+  }, [])
 
   const overriddenFrame = useMemo(
-    () => applySensorOverrides(frame, experimentId, overrides),
-    [frame, experimentId, overrides],
+    () => applySensorOverrides(frame, experimentId, overrides, resting),
+    [frame, experimentId, overrides, resting],
   )
 
   return { frame: overriddenFrame, controls, overrides, setValue }

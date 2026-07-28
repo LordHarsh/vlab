@@ -30,6 +30,7 @@
  */
 
 import { getPart } from '@/lib/simulator/model/parts'
+import type { CircuitDoc } from '@/lib/simulator/model/document'
 import type { ShowreelFrame } from './useShowreel'
 import type { ShowreelSensors } from './timelines'
 
@@ -198,10 +199,59 @@ export function isSensorWarn(experimentId: number | undefined, sensors: Showreel
 }
 
 /**
- * The base frame, with any active slider/toggle overrides layered on top.
+ * The AUTHORED value a slider's own part/prop was placed with, in
+ * `circuits.ts` — the number a real bench would read before anyone touched
+ * anything, e.g. the 24 °C `dht.props.temperature` experiment 1's circuit was
+ * built with, not whatever the timeline currently happens to be sweeping it
+ * through.
  *
- * Same discipline as StaticCircuit's `withOverrides`: a fresh object only
- * when there is something to override, everything the timeline did not
+ * WHY THIS EXISTS: a slider is a MANUAL control, and a manual control that
+ * silently drifts on its own — because the field it shows also happens to be
+ * something showreel/timelines.ts animates as stage direction — reads as
+ * broken, not as realistic. So once a field has a slider, that slider's
+ * resting position (before a student ever drags it) is this authored number,
+ * fixed, not the live scripted value. See `restingSensors` below for how this
+ * is threaded through every controllable field at once.
+ */
+function restingValue(doc: CircuitDoc | undefined, spec: SliderControlSpec): number {
+  const raw = doc?.parts.find((p) => p.id === spec.partId)?.props[spec.propKey]
+  return typeof raw === 'number' ? raw : spec.min
+}
+
+/**
+ * Every SLIDER field's resting value, keyed the same way `overrides` is —
+ * computed once per `doc` (it is a document-authored constant, not a live
+ * reading) rather than on every frame.
+ */
+export function restingSensors(
+  doc: CircuitDoc | undefined,
+  experimentId: number | undefined,
+): Partial<Record<SensorField, number>> {
+  const out: Partial<Record<SensorField, number>> = {}
+  for (const spec of controlsFor(experimentId)) {
+    if (spec.kind === 'slider') out[spec.field] = restingValue(doc, spec)
+  }
+  return out
+}
+
+/**
+ * The base frame, with sliders resolved to override-or-resting and any active
+ * toggle override layered on top.
+ *
+ * A SLIDER FIELD IS ALWAYS RESOLVED, even with no active drag — to
+ * `overrides[field] ?? resting[field]`, never to the live scripted value.
+ * That is what stops the "why is the slider moving by itself" symptom: the
+ * timeline still varies that field internally (the serial log still narrates
+ * its own sweep — a known, disclosed gap, not silently patched over), but
+ * nothing this panel actually SHOWS for a slider's own field is allowed to
+ * come from that sweep any more. A TOGGLE field (motion) keeps the old
+ * behaviour — pass through the live scripted boolean until the student flips
+ * it — because a binary alarm-style reading flipping on the timeline's own
+ * schedule is the demo, not a bug report waiting to happen the way a
+ * continuously drifting slider thumb is.
+ *
+ * Same discipline as StaticCircuit's `withOverrides` otherwise: a fresh object
+ * only when there is something to resolve, everything the timeline did not
  * mention passes through by reference, and a field is touched only because a
  * control named it — nothing here infers a second field from the first.
  */
@@ -209,10 +259,11 @@ export function applySensorOverrides(
   frame: ShowreelFrame,
   experimentId: number | undefined,
   overrides: Readonly<Partial<Record<SensorField, number | boolean>>>,
+  resting: Readonly<Partial<Record<SensorField, number>>>,
 ): ShowreelFrame {
-  const keys = Object.keys(overrides) as SensorField[]
   const specs = controlsFor(experimentId)
-  if (keys.length === 0 || specs.length === 0) return frame
+  const hasSliders = specs.some((s) => s.kind === 'slider')
+  if (!hasSliders && Object.keys(overrides).length === 0) return frame
 
   const sensors = { ...frame.sensors } as Record<string, number | boolean>
   let props = frame.props
@@ -220,10 +271,11 @@ export function applySensorOverrides(
   let leds = frame.leds
 
   for (const spec of specs) {
-    const value = overrides[spec.field]
-    if (value === undefined) continue
+    if (spec.kind === 'slider') {
+      const override = overrides[spec.field]
+      const value = typeof override === 'number' ? override : resting[spec.field]
+      if (value === undefined) continue
 
-    if (spec.kind === 'slider' && typeof value === 'number') {
       sensors[spec.field] = value
       props = { ...props, [spec.partId]: { ...props[spec.partId], [spec.propKey]: value } }
       if (spec.deviceFor) {
@@ -233,7 +285,9 @@ export function applySensorOverrides(
         leds = new Map(leds)
         leds.set(spec.ledId, value > spec.warnAbove ? 1 : 0)
       }
-    } else if (spec.kind === 'toggle' && typeof value === 'boolean') {
+    } else {
+      const value = overrides[spec.field]
+      if (typeof value !== 'boolean') continue
       sensors[spec.field] = value
       devices = {
         ...devices,

@@ -127,11 +127,14 @@ export function StaticSimulator({
   // hook cannot sit behind a branch.
   const showreel = useShowreel(experiment?.id)
   /**
-   * Part 1's sliders/toggles: pauses `showreel` (its own `pause`, not a new
-   * timer) and layers the dragged value onto whichever frame that pause
-   * lands on. See showreel/useSensorOverride.ts and ./showreel/sensorOverrides.ts.
+   * Part 1's sliders/toggles. Does NOT touch `showreel`'s clock — dragging a
+   * slider used to pause it, on the owner's later instruction it no longer
+   * does. The override is layered onto whichever frame is CURRENTLY playing,
+   * every frame, and a slider's own field is resolved to the student's value
+   * or the circuit's authored default, never to the timeline's live sweep of
+   * it. See showreel/useSensorOverride.ts and ./showreel/sensorOverrides.ts.
    */
-  const sensorOverride = useSensorOverride(experiment?.id, showreel.frame, showreel.isRunning, showreel.pause)
+  const sensorOverride = useSensorOverride(experiment?.id, showreel.frame, doc)
   const logRef = useStickToBottom(showreel.serialLines.length)
   const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
   /**
