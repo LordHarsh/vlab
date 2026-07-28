@@ -247,11 +247,23 @@ export function StaticSimulator({
         onToggleCode={() => setCodeOpen((open) => !open)}
       />
 
-      {/* Canvas beside the rail from `lg` up, stacked below it. A 264 px rail
-          against a 390 px viewport would leave the circuit 126 px wide, which
-          is not a circuit; stacked, the canvas keeps the full width and the
-          rail becomes a strip of tiles under it. */}
-      <div className="flex flex-col lg:flex-row">
+      {/* Canvas beside a SLOT from `lg` up, stacked below it below that. The
+          slot holds the Components rail OR the Code-and-output panel, never
+          both — exactly one at a time, toggled by the same Code button in
+          the toolbar, matching where the product puts its own code editor:
+          a side panel that takes the parts palette's place rather than a
+          second panel bolted on beside it. A 264 px rail AND a code-width
+          panel side by side, against a 390 px viewport, would leave the
+          circuit itself no room at all; stacked, the canvas keeps the full
+          width and whichever slot is open becomes a strip under it.
+
+          `lg:items-start` only while the code panel is open: a 120-line
+          sketch plus its serial log is taller than the canvas column, and
+          stretching that column to match would leave empty white space
+          under the circuit. The rail's own content is short enough that the
+          default stretch (no `items-start`) is what makes it fill the row
+          the way it always has. */}
+      <div className={`flex flex-col lg:flex-row ${codeOpen ? 'lg:items-start' : ''}`}>
         <div className="flex min-w-0 flex-1 flex-col">
           {/* `bg-[#f7f8f9]` is the box behind the drawing; the canvas paints its
               own near-white ground and its own dot grid over the whole of it, so
@@ -285,63 +297,64 @@ export function StaticSimulator({
           />
         </div>
 
-        <ComponentsRail
-          doc={coloredDoc ?? doc}
-          frame={sensorOverride.frame}
-          className="max-h-[300px] overflow-y-auto lg:max-h-none lg:w-[264px] lg:overflow-y-auto xl:w-[288px]"
-        />
-      </div>
-
-      {/* The code panel and its serial drawer, docked at the foot the way the
-          product docks them. Fixed height with the listing scrolling inside:
-          experiment 11's sketch is 120 lines, and a panel that grows to fit it
-          pushes the circuit off the top of the lesson page.
-
-          Gated on `codeOpen`, which the toolbar's Code button now toggles —
-          see WorkspaceChrome.tsx for why that button is one of the two real
-          controls in this whole panel. Unmounted rather than hidden when
-          closed: the code and the serial log are both derived straight from
-          props/state that do not reset, so there is nothing to lose by tearing
-          the DOM down, and it is one less always-present, always-offscreen
-          copy of a 120-line sketch for a phone to hold in memory. */}
-      {codeOpen && (
-        <div className="static-sim-code border-t border-[#dfe3e8] bg-white p-3 sm:p-4">
-          <div className="mb-2 flex items-center gap-2">
-            <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
-              Code
-            </h3>
-            {/* What the listing is bound to, which is what the product's code
-                panel puts here. The FILE name is not repeated: the viewer draws
-                its own tab a few pixels below this line. */}
-            <span className="truncate font-mono text-[10px] text-[#9aa3ab]">{boardLabel}</span>
-          </div>
-
-          {/* A plain block, not a flex row. `.snitch-code-block` is itself
-              `display: flex`, so as a block-level child it fills this width and
-              `snitch-h-full` gives it the height; as a flex ITEM it sized to its
-              longest line instead and left a ragged gap down the right. */}
-          <div className="h-[300px] sm:h-[340px]">
-            <SyntaxCodeViewer
-              code={code ?? experiment.defaultCode}
-              language={languageForPlatform(experiment.platform)}
-              fileName={fileName}
-            />
-          </div>
-
-          {showreel.hasTimeline && (
-            <div className="mt-3">
-              <div className="mb-2 flex items-center gap-2">
-                <Terminal className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
-                  Serial monitor
-                </h3>
-              </div>
-              <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
+        {/* THE SLOT. `codeOpen` picks which of the two goes here — see the
+            toolbar comment above for why they are mutually exclusive rather
+            than stacked. Unmounting the one that is not showing (rather than
+            hiding it) is deliberate for the code side: the listing and the
+            serial log are both derived straight from props/state that does
+            not reset, so there is nothing lost by tearing the DOM down, and
+            it is one less off-screen copy of a 120-line sketch for a phone
+            to hold in memory whenever a student is looking at the rail. */}
+        {codeOpen ? (
+          <div className="static-sim-code flex shrink-0 flex-col border-t border-[#dfe3e8] bg-white p-3 sm:p-4 lg:w-[380px] lg:border-l lg:border-t-0 xl:w-[420px]">
+            <div className="mb-2 flex items-center gap-2">
+              <Code2 className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
+                Code
+              </h3>
+              {/* What the listing is bound to, which is what the product's code
+                  panel puts here. The FILE name is not repeated: the viewer draws
+                  its own tab a few pixels below this line. */}
+              <span className="truncate font-mono text-[10px] text-[#9aa3ab]">{boardLabel}</span>
             </div>
-          )}
-        </div>
-      )}
+
+            {/* A plain block, not a flex row. `.snitch-code-block` is itself
+                `display: flex`, so as a block-level child it fills this width and
+                `snitch-h-full` gives it the height; as a flex ITEM it sized to its
+                longest line instead and left a ragged gap down the right. */}
+            <div className="h-[300px] sm:h-[340px]">
+              <SyntaxCodeViewer
+                code={code ?? experiment.defaultCode}
+                language={languageForPlatform(experiment.platform)}
+                fileName={fileName}
+              />
+            </div>
+
+            {/* THE OUTPUT — the serial log — lives in this same side panel,
+                under the listing it is the output OF, rather than as a
+                separate full-width block. That is the one thing this panel
+                is FOR: a sketch and what it printed, both in the same place
+                a student can see without scrolling the circuit off screen. */}
+            {showreel.hasTimeline && (
+              <div className="mt-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <Terminal className="h-3.5 w-3.5 shrink-0 text-[#566573]" aria-hidden="true" />
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#566573]">
+                    Serial monitor
+                  </h3>
+                </div>
+                <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
+              </div>
+            )}
+          </div>
+        ) : (
+          <ComponentsRail
+            doc={coloredDoc ?? doc}
+            frame={sensorOverride.frame}
+            className="max-h-[300px] overflow-y-auto lg:max-h-none lg:w-[264px] lg:overflow-y-auto xl:w-[288px]"
+          />
+        )}
+      </div>
     </div>
   )
 }
