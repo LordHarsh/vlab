@@ -40,10 +40,14 @@
  * Every value is one a real bench would produce, because a fake that teaches
  * something false is worse than no fake at all. A DHT11 reads whole degrees
  * over 0–50 °C, so it reads whole degrees here. An HC-SR04 spans 2–400 cm. A
- * resting adult pulse sits in the seventies. Experiment 9's 2,450 rpm is the
- * figure our own DCMotor model gives for this motor on what an L298N passes
- * through from a 5 V rail — `rpmFor` works out to 1000 rpm per terminal volt
- * for HOBBY_MOTOR_6V, and the bridge leaves about 2.45 V of a 5 V supply.
+ * resting adult pulse sits in the seventies. Experiment 4's flow rates are all
+ * a whole number of pulses over the sensor's own 7.5 pulses/L/min, because
+ * `flowRate = pulseCount / 7.5` cannot produce anything else. Experiment 9's
+ * 2,450 rpm is the figure our own DCMotor model gives for this motor on what
+ * an L298N passes through from a 5 V rail — `rpmFor` works out to 1000 rpm per
+ * terminal volt for HOBBY_MOTOR_6V, and the bridge leaves about 2.45 V of a
+ * 5 V supply — and its 40 % and 70 % duty steps are that figure scaled, which
+ * is what a PWM'd ENA does to the average terminal voltage.
  *
  * ONE STEP IS ONE TRUTH. A reading that appears in more than one place — the
  * status strip's `sensors`, a target's `props`, a module's `devices` — is the
@@ -55,6 +59,16 @@
  * Every serial line is lifted from the experiment's own `defaultCode` in
  * utils/experimentData.ts, with the placeholders filled in from the same step
  * that drives the artwork. If you change a reading, change its line too.
+ *
+ * AND ONLY FROM THERE. Every timeline below was re-derived when those sketches
+ * were replaced with the lab sheet's own (reference/iot_virtual_lab.html), and
+ * what that removed is as important as what it changed: five of the twelve
+ * were printing lines their sketch never had — a "Security Scanner Online..."
+ * banner on an experiment whose `setup()` prints nothing, a "WARNING: High
+ * flow rate detected!" at a threshold the program does not test, a "CRITICAL:
+ * Hot room!", a "HIGH TEMP WARNING: Liquid boiling!", a "Traffic Lights
+ * Starting...". A log line with no `print` behind it is the same defect as a
+ * pin number the wire does not land on; there are none left.
  *
  * HOW A TIMELINE PLAYS
  *
@@ -193,215 +207,304 @@ function grid11(active: number, phase: 'green' | 'yellow'): NonNullable<Showreel
  * the circuit inert, exactly as it did before this existed.
  */
 export const SHOWREEL_TIMELINES: Readonly<Record<number, ShowreelTimeline>> = {
-  /* 1 — LED & DHT11. The sketch samples every 2 s and blinks D13 at 500 ms
-     for as long as the last reading was over 28 °C. So: seven readings, and
-     the three that clear 28 are the three that blink. */
+  /* 1 — LED & DHT11. `delay(2000)` at the top of `loop()`, so one reading
+     every two seconds, and `if (t > 30)` drives D13 HIGH with an `else` that
+     drives it LOW — STEADY while the reading is over the line, not blinking.
+     The blink this used to play came from a rewritten sketch; the lab sheet's
+     own has no `millis()` in it.
+
+     Eight readings, warming and cooling again, and the sweep is chosen to
+     land ON the line as well as over it: 31 and 33 alert, 30 does NOT — the
+     comparison is `>`, not `>=`, and a reading exactly at the threshold
+     leaving the lamp dark is the most useful thing this sequence can show. */
   1: {
-    stillStep: 2,
+    stillStep: 3,
     steps: [
       {
         ms: 2000,
         props: { dht: { temperature: 24, humidity: 45 } },
         sensors: { temperature: 24, humidity: 45 },
-        serial: [
-          'DHT11 Sensor & LED System Initialized',
-          'Temperature: 24.00 *C  |  Humidity: 45.00 %',
-        ],
+        serial: ['DHT11 Test Starting...', 'Humidity: 45.00 %', 'Temperature: 24.00 °C'],
       },
       {
         ms: 2000,
         props: { dht: { temperature: 26, humidity: 47 } },
         sensors: { temperature: 26, humidity: 47 },
-        serial: ['Temperature: 26.00 *C  |  Humidity: 47.00 %'],
+        serial: ['Humidity: 47.00 %', 'Temperature: 26.00 °C'],
       },
-
-      // 29 °C — over the threshold, LED starts blinking.
       {
-        ms: 500,
-        leds: { led: LIT },
+        ms: 2000,
         props: { dht: { temperature: 29, humidity: 50 } },
         sensors: { temperature: 29, humidity: 50 },
-        serial: ['Temperature: 29.00 *C  |  Humidity: 50.00 %'],
+        serial: ['Humidity: 50.00 %', 'Temperature: 29.00 °C'],
       },
-      { ms: 500, props: { dht: { temperature: 29, humidity: 50 } }, sensors: { temperature: 29, humidity: 50 } },
-      { ms: 500, leds: { led: LIT }, props: { dht: { temperature: 29, humidity: 50 } }, sensors: { temperature: 29, humidity: 50 } },
-      { ms: 500, props: { dht: { temperature: 29, humidity: 50 } }, sensors: { temperature: 29, humidity: 50 } },
 
-      // 31 °C.
+      // Over the line: D13 HIGH and stays there while the readings do.
       {
-        ms: 500,
+        ms: 2000,
         leds: { led: LIT },
         props: { dht: { temperature: 31, humidity: 53 } },
         sensors: { temperature: 31, humidity: 53 },
-        serial: ['Temperature: 31.00 *C  |  Humidity: 53.00 %'],
+        serial: [
+          'Humidity: 53.00 %',
+          'Temperature: 31.00 °C',
+          'ALERT: High Temperature! LED ON',
+        ],
       },
-      { ms: 500, props: { dht: { temperature: 31, humidity: 53 } }, sensors: { temperature: 31, humidity: 53 } },
-      { ms: 500, leds: { led: LIT }, props: { dht: { temperature: 31, humidity: 53 } }, sensors: { temperature: 31, humidity: 53 } },
-      { ms: 500, props: { dht: { temperature: 31, humidity: 53 } }, sensors: { temperature: 31, humidity: 53 } },
-
-      // 30 °C — still over, still blinking.
       {
-        ms: 500,
+        ms: 2000,
         leds: { led: LIT },
+        props: { dht: { temperature: 33, humidity: 55 } },
+        sensors: { temperature: 33, humidity: 55 },
+        serial: [
+          'Humidity: 55.00 %',
+          'Temperature: 33.00 °C',
+          'ALERT: High Temperature! LED ON',
+        ],
+      },
+
+      // Exactly 30.00 °C. `30 > 30` is false, so the `else` runs and the lamp
+      // goes out one degree earlier than a student expects it to.
+      {
+        ms: 2000,
         props: { dht: { temperature: 30, humidity: 52 } },
         sensors: { temperature: 30, humidity: 52 },
-        serial: ['Temperature: 30.00 *C  |  Humidity: 52.00 %'],
+        serial: ['Humidity: 52.00 %', 'Temperature: 30.00 °C'],
       },
-      { ms: 500, props: { dht: { temperature: 30, humidity: 52 } }, sensors: { temperature: 30, humidity: 52 } },
-      { ms: 500, leds: { led: LIT }, props: { dht: { temperature: 30, humidity: 52 } }, sensors: { temperature: 30, humidity: 52 } },
-      { ms: 500, props: { dht: { temperature: 30, humidity: 52 } }, sensors: { temperature: 30, humidity: 52 } },
-
-      // Back under the threshold: the sketch drives D13 LOW and leaves it there.
       {
         ms: 2000,
         props: { dht: { temperature: 27, humidity: 49 } },
         sensors: { temperature: 27, humidity: 49 },
-        serial: ['Temperature: 27.00 *C  |  Humidity: 49.00 %'],
+        serial: ['Humidity: 49.00 %', 'Temperature: 27.00 °C'],
       },
       {
         ms: 2000,
         props: { dht: { temperature: 25, humidity: 46 } },
         sensors: { temperature: 25, humidity: 46 },
-        serial: ['Temperature: 25.00 *C  |  Humidity: 46.00 %'],
+        serial: ['Humidity: 46.00 %', 'Temperature: 25.00 °C'],
       },
     ],
   },
 
-  /* 2 — Ultrasonic & PIR. delay(1500) per reading, split into a 200 ms sample
-     and the 1300 ms of waiting that follows. Somebody walks in from 2.4 m to
-     40 cm and back out; BOTH sensors are watching the same person, so the
-     ultrasonic's reticle and the PIR's cone move together. */
+  /* 2 — Ultrasonic & PIR. `delay(500)` per reading, and the sketch's `setup()`
+     prints nothing at all, so the log opens straight on a distance.
+
+     The lamp is `if (pir || dist < 20)`, an OR, and the walk exercises both
+     halves separately. Someone comes in from 2.4 m: the PIR trips first and
+     lights D13 from three-quarters of a metre out, well before anything is
+     near the 20 cm line. Then they stop, 18 cm from the module — the PIR
+     reports NO motion, because a PIR detects movement and not presence, and
+     the lamp stays lit on the distance half alone. That pair of steps is the
+     whole reason this sequence is worth watching. */
   2: {
-    stillStep: 7,
+    stillStep: 4,
     steps: [
-      { ms: 200, ...scan(240, false), serial: ['Security Scanner Online...', 'Motion: 0 | Range: 240 cm'] },
-      { ms: 1300, ...scan(240, false) },
+      { ms: 500, ...scan(240, false), serial: ['Distance: 240 cm', 'Motion: None'] },
+      { ms: 500, ...scan(150, false), serial: ['Distance: 150 cm', 'Motion: None'] },
 
-      { ms: 200, ...scan(150, false), serial: ['Motion: 0 | Range: 150 cm'] },
-      { ms: 1300, ...scan(150, false) },
-
+      // Motion alone, at a distance nothing would call close.
       {
-        ms: 200,
+        ms: 500,
+        leds: { led: LIT },
         ...scan(85, true),
-        serial: ['Motion: 1 | Range: 85 cm', 'Notice: Motion detected at safe distance.'],
+        serial: ['Distance: 85 cm', 'Motion: DETECTED'],
       },
-      { ms: 1300, ...scan(85, true) },
-
       {
-        ms: 200,
+        ms: 500,
+        leds: { led: LIT },
         ...scan(40, true),
-        serial: ['Motion: 1 | Range: 40 cm', 'WARNING: Intruder Detected close by!'],
+        serial: ['Distance: 40 cm', 'Motion: DETECTED'],
       },
-      { ms: 1300, ...scan(40, true) },
-
       {
-        ms: 200,
-        ...scan(110, true),
-        serial: ['Motion: 1 | Range: 110 cm', 'Notice: Motion detected at safe distance.'],
+        ms: 500,
+        leds: { led: LIT },
+        ...scan(15, true),
+        serial: ['Distance: 15 cm', 'Motion: DETECTED'],
       },
-      { ms: 1300, ...scan(110, true) },
 
-      { ms: 200, ...scan(210, false), serial: ['Motion: 0 | Range: 210 cm'] },
-      { ms: 1300, ...scan(210, false) },
+      // Standing still, close: the distance half holds the lamp on by itself.
+      {
+        ms: 500,
+        leds: { led: LIT },
+        ...scan(18, false),
+        serial: ['Distance: 18 cm', 'Motion: None'],
+      },
+
+      { ms: 500, ...scan(210, false), serial: ['Distance: 210 cm', 'Motion: None'] },
     ],
   },
 
-  /* 3 — Traffic light. The three `ms` below ARE the sketch's three delays;
-     change one and the light dwells for longer. */
+  /* 3 — Traffic light. The three `ms` below ARE the sketch's three delays, in
+     the sketch's own order: `loop()` opens on GREEN, not on red, and its
+     `setup()` prints nothing. Change one `ms` and the light dwells for
+     longer. */
   3: {
     stillStep: 0,
     steps: [
-      {
-        ms: 3000,
-        leds: { led_red: LIT },
-        serial: ['Traffic Lights Starting...', 'State: RED - STOP!'],
-      },
-      { ms: 3000, leds: { led_green: LIT }, serial: ['State: GREEN - GO!'] },
-      { ms: 1000, leds: { led_yellow: LIT }, serial: ['State: YELLOW - CAUTION!'] },
+      { ms: 5000, leds: { led_green: LIT }, serial: ['GREEN — Go!'] },
+      { ms: 2000, leds: { led_yellow: LIT }, serial: ['YELLOW — Slow down'] },
+      { ms: 5000, leds: { led_red: LIT }, serial: ['RED — Stop!'] },
     ],
   },
 
-  /* 4 — Water flow. A tap opened and closed again: still at 0 L/min, running,
-     and the sketch's 8 L/min alarm trips once at the peak. A YF-S201 is rated
-     1–30 L/min.
+  /* 4 — Water flow. One reading a second, which is the `millis() - lastTime >=
+     1000` gate, and TWO lines each — a rate and a running total, because
+     `totalLitres += flowRate / 60` accumulates across the whole run.
+
+     EVERY RATE IS A WHOLE NUMBER OF PULSES. `flowRate = pulseCount / 7.5`, and
+     `pulseCount` is an interrupt count, so a YF-S201 cannot report 9.1 L/min:
+     the reachable values around it are 68/7.5 = 9.07 and 69/7.5 = 9.20. The
+     seven below are 0, 24, 48, 69, 54, 36 and 0 pulses in the second.
+
+     There is no alarm in this sketch and so there is none here. The 8 L/min
+     "WARNING: High flow rate detected!" this used to print came from a
+     rewrite; the lab sheet's own program only ever reports.
      NOTHING ON THE BOARD MOVES for this one, and that is honest rather than an
      omission: our YF-S201 has no live readout on its face, so the reading lives
      in the status strip and the serial log. */
   4: {
     stillStep: 3,
     steps: [
-      { ms: 2000, props: { flow: { flow: 0 } }, sensors: { flowRate: 0 }, serial: ['Flow Meter Activated.', 'Current Flow Rate: 0.00 L/min'] },
-      { ms: 2000, props: { flow: { flow: 3.4 } }, sensors: { flowRate: 3.4 }, serial: ['Current Flow Rate: 3.40 L/min'] },
-      { ms: 2000, props: { flow: { flow: 6.2 } }, sensors: { flowRate: 6.2 }, serial: ['Current Flow Rate: 6.20 L/min'] },
       {
-        ms: 2000,
-        props: { flow: { flow: 9.1 } },
-        sensors: { flowRate: 9.1 },
-        serial: ['Current Flow Rate: 9.10 L/min', 'WARNING: High flow rate detected!'],
+        ms: 1000,
+        props: { flow: { flow: 0 } },
+        sensors: { flowRate: 0 },
+        serial: ['Flow Rate: 0.00 L/min', 'Total Volume: 0.00 L'],
       },
-      { ms: 2000, props: { flow: { flow: 7.5 } }, sensors: { flowRate: 7.5 }, serial: ['Current Flow Rate: 7.50 L/min'] },
-      { ms: 2000, props: { flow: { flow: 4.8 } }, sensors: { flowRate: 4.8 }, serial: ['Current Flow Rate: 4.80 L/min'] },
-      { ms: 2000, props: { flow: { flow: 0 } }, sensors: { flowRate: 0 }, serial: ['Current Flow Rate: 0.00 L/min'] },
+      {
+        ms: 1000,
+        props: { flow: { flow: 3.2 } },
+        sensors: { flowRate: 3.2 },
+        serial: ['Flow Rate: 3.20 L/min', 'Total Volume: 0.05 L'],
+      },
+      {
+        ms: 1000,
+        props: { flow: { flow: 6.4 } },
+        sensors: { flowRate: 6.4 },
+        serial: ['Flow Rate: 6.40 L/min', 'Total Volume: 0.16 L'],
+      },
+      {
+        ms: 1000,
+        props: { flow: { flow: 9.2 } },
+        sensors: { flowRate: 9.2 },
+        serial: ['Flow Rate: 9.20 L/min', 'Total Volume: 0.31 L'],
+      },
+      {
+        ms: 1000,
+        props: { flow: { flow: 7.2 } },
+        sensors: { flowRate: 7.2 },
+        serial: ['Flow Rate: 7.20 L/min', 'Total Volume: 0.43 L'],
+      },
+      {
+        ms: 1000,
+        props: { flow: { flow: 4.8 } },
+        sensors: { flowRate: 4.8 },
+        serial: ['Flow Rate: 4.80 L/min', 'Total Volume: 0.51 L'],
+      },
+      {
+        ms: 1000,
+        props: { flow: { flow: 0 } },
+        sensors: { flowRate: 0 },
+        // The tap is shut, so the rate falls to zero and the total stops
+        // climbing — it does not reset, which is the point of a volume.
+        serial: ['Flow Rate: 0.00 L/min', 'Total Volume: 0.51 L'],
+      },
     ],
   },
 
-  /* 5 — LED & push button on the Pico. The cap goes down and the LED lights.
-     The sketch polls every 100 ms and prints on every pass while the button is
-     held, so a press is written as a few short steps and the log repeats the
-     line — which is what the monitor really does. */
+  /* 5 — LED & push button on the Pico. THE SKETCH TOGGLES; IT DOES NOT FOLLOW.
+     `led_state = not led_state` on every sample that reads HIGH, then a 0.3 s
+     debounce sleep — so the lamp latches, and stays lit after the cap comes
+     back up. This used to play as a lamp that tracked the button, which is a
+     different program.
+
+     Four presses, so the loop ends where it began with the lamp dark and
+     `led_state` back to False, and the log alternates ON / OFF the way the
+     f-string does. */
   5: {
     stillStep: 1,
     steps: [
-      { ms: 1400, serial: ['Starting Raspberry Pi GPIO script...'] },
+      { ms: 1400, serial: ['Press button to toggle LED. Ctrl+C to exit.'] },
 
-      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['Button pressed -> LED ON'] },
-      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['Button pressed -> LED ON'] },
-      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['Button pressed -> LED ON'] },
+      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['LED ON'] },
+      // Cap up, lamp still on — the state is held in a variable, not in the
+      // switch.
+      { ms: 1200, leds: { led: LIT } },
 
-      { ms: 600 },
+      { ms: 300, props: { btn: { pressed: 1 } }, serial: ['LED OFF'] },
+      { ms: 1200 },
 
-      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['Button pressed -> LED ON'] },
-      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['Button pressed -> LED ON'] },
+      { ms: 300, leds: { led: LIT }, props: { btn: { pressed: 1 } }, serial: ['LED ON'] },
+      { ms: 1200, leds: { led: LIT } },
 
-      { ms: 1600 },
+      { ms: 300, props: { btn: { pressed: 1 } }, serial: ['LED OFF'] },
+      { ms: 1200 },
     ],
   },
 
-  /* 6 — PIR alarm. Quiet, then motion: the sketch chirps the buzzer 200 ms on,
-     200 ms off for as long as the PIR output stays HIGH, and the cone keeps its
-     alert amber through the whole burst.
+  /* 6 — PIR alarm, and it has its lamps now. `setup()` drives GREEN_LED HIGH
+     and prints "PIR Alarm Ready", so idle is a lit green lamp; motion drives
+     GREEN low and RED high, chirps the buzzer ten times at 200 ms on / 200 ms
+     off — four seconds, blocking — and then restores green.
+
+     THE FOUR-SECOND BURST IS FOUR STEPS, not one, because the person is still
+     walking through the cone while the sketch is stuck in its `for` loop. The
+     cone's own report is what the module is seeing; the program's belief is
+     frozen for the duration, which is exactly what a blocking alarm does and
+     is worth being able to watch.
      The chirp itself is in the serial log and not on the board: our buzzer has
      no drawn "sounding" state, so what the canvas shows is the detection that
      causes it. */
   6: {
-    stillStep: 1,
+    stillStep: 3,
     steps: [
-      { ms: 2000, ...watch(300, false), serial: ['Alarm System Activated'] },
+      {
+        ms: 500,
+        leds: { led_green: LIT },
+        ...watch(300, false),
+        serial: ['PIR Alarm Ready — Waiting...', 'No motion — System Idle'],
+      },
+      { ms: 500, leds: { led_green: LIT }, ...watch(300, false), serial: ['No motion — System Idle'] },
 
-      { ms: 200, ...watch(180, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(170, true) },
-      { ms: 200, ...watch(160, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(150, true) },
-      { ms: 200, ...watch(140, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(130, true) },
-      { ms: 200, ...watch(120, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(110, true) },
+      // Someone comes in. Red on, green off, buzzer for four seconds.
+      {
+        ms: 1000,
+        leds: { led_red: LIT },
+        ...watch(180, true),
+        serial: ['⚠ MOTION DETECTED — ALARM!'],
+      },
+      { ms: 1000, leds: { led_red: LIT }, ...watch(150, true) },
+      { ms: 1000, leds: { led_red: LIT }, ...watch(125, true) },
+      { ms: 1000, leds: { led_red: LIT }, ...watch(110, true) },
 
-      { ms: 1000, ...watch(110, false) },
+      // The burst ends, green comes back, and the next pass finds them still.
+      { ms: 500, leds: { led_green: LIT }, ...watch(110, false), serial: ['No motion — System Idle'] },
 
-      { ms: 200, ...watch(140, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(170, true) },
-      { ms: 200, ...watch(200, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(230, true) },
-      { ms: 200, ...watch(260, true), serial: ['ALERT! Motion detected! Sounding Buzzer!'] },
-      { ms: 200, ...watch(290, true) },
+      // And again on the way out.
+      {
+        ms: 1000,
+        leds: { led_red: LIT },
+        ...watch(160, true),
+        serial: ['⚠ MOTION DETECTED — ALARM!'],
+      },
+      { ms: 1000, leds: { led_red: LIT }, ...watch(200, true) },
+      { ms: 1000, leds: { led_red: LIT }, ...watch(250, true) },
+      { ms: 1000, leds: { led_red: LIT }, ...watch(290, true) },
 
-      { ms: 2000, ...watch(300, false) },
+      { ms: 500, leds: { led_green: LIT }, ...watch(300, false), serial: ['No motion — System Idle'] },
+      { ms: 500, leds: { led_green: LIT }, ...watch(300, false), serial: ['No motion — System Idle'] },
     ],
   },
 
-  /* 7 — DHT11 on the Pico. time.sleep(2.0) between reads; the room warms past
-     the sketch's 30 °C line and cools back down. */
+  /* 7 — DHT11 on the Raspberry Pi. `time.sleep(2)` between reads, and one
+     f-string per reading: `Temp={t:.1f}°C  Humidity={h:.1f}%`, one decimal
+     each and two spaces between the fields.
+
+     No threshold. The "CRITICAL: Hot room! Turn on AC." this used to print at
+     30 °C was never in the lab sheet's program — that one reads the sensor,
+     prints it, appends a CSV row and sleeps. The room still warms and cools,
+     because that is what makes the reading worth watching; nothing calls it
+     an alarm. */
   7: {
     stillStep: 3,
     steps: [
@@ -409,86 +512,188 @@ export const SHOWREEL_TIMELINES: Readonly<Record<number, ShowreelTimeline>> = {
         ms: 2000,
         props: { dht: { temperature: 22, humidity: 55 } },
         sensors: { temperature: 22, humidity: 55 },
-        serial: ['Initializing DHT11 Sensor on GP4...', 'Temp: 22°C, Humidity: 55%'],
+        serial: ['DHT11 on Raspberry Pi — Reading sensor...', 'Temp=22.0°C  Humidity=55.0%'],
       },
-      { ms: 2000, props: { dht: { temperature: 25, humidity: 52 } }, sensors: { temperature: 25, humidity: 52 }, serial: ['Temp: 25°C, Humidity: 52%'] },
-      { ms: 2000, props: { dht: { temperature: 28, humidity: 49 } }, sensors: { temperature: 28, humidity: 49 }, serial: ['Temp: 28°C, Humidity: 49%'] },
+      {
+        ms: 2000,
+        props: { dht: { temperature: 25, humidity: 52 } },
+        sensors: { temperature: 25, humidity: 52 },
+        serial: ['Temp=25.0°C  Humidity=52.0%'],
+      },
+      {
+        ms: 2000,
+        props: { dht: { temperature: 28, humidity: 49 } },
+        sensors: { temperature: 28, humidity: 49 },
+        serial: ['Temp=28.0°C  Humidity=49.0%'],
+      },
       {
         ms: 2000,
         props: { dht: { temperature: 31, humidity: 45 } },
         sensors: { temperature: 31, humidity: 45 },
-        serial: ['Temp: 31°C, Humidity: 45%', 'CRITICAL: Hot room! Turn on AC.'],
+        serial: ['Temp=31.0°C  Humidity=45.0%'],
       },
-      { ms: 2000, props: { dht: { temperature: 29, humidity: 47 } }, sensors: { temperature: 29, humidity: 47 }, serial: ['Temp: 29°C, Humidity: 47%'] },
-      { ms: 2000, props: { dht: { temperature: 25, humidity: 52 } }, sensors: { temperature: 25, humidity: 52 }, serial: ['Temp: 25°C, Humidity: 52%'] },
+      {
+        ms: 2000,
+        props: { dht: { temperature: 29, humidity: 47 } },
+        sensors: { temperature: 29, humidity: 47 },
+        serial: ['Temp=29.0°C  Humidity=47.0%'],
+      },
+      {
+        ms: 2000,
+        props: { dht: { temperature: 25, humidity: 52 } },
+        sensors: { temperature: 25, humidity: 52 },
+        serial: ['Temp=25.0°C  Humidity=52.0%'],
+      },
     ],
   },
 
-  /* 8 — DS18B20 on the Pico. 750 ms conversion plus a 1 s sleep is 1.75 s a
-     reading. A probe in water brought up to hand-hot and left to cool; the
-     sketch's 40 °C warning trips at the top. */
+  /* 8 — DS18B20 on the Raspberry Pi. `time.sleep(1)` a reading, and the line
+     is `Temperature: {t:.3f}°C  |  {t*9/5+32:.3f}°F` — THREE decimals and a
+     Fahrenheit column, both of which this log was missing.
+
+     Three decimals is not decoration: the sysfs `t=` value is millidegrees, so
+     `float(...) / 1000` really does carry them, and a 12-bit DS18B20 steps in
+     1/16 °C. A probe in water brought up to hand-hot and left to cool. The
+     40 °C "HIGH TEMP WARNING: Liquid boiling!" is gone with the sketch that
+     invented it — nothing in the lab sheet's program compares the reading to
+     anything. */
   8: {
     stillStep: 4,
     steps: [
       {
-        ms: 1750,
+        ms: 1000,
         props: { ds: { temperature: 24.5 } },
         sensors: { tempProbe: 24.5 },
-        serial: [
-          '[Simulation Started on Raspberry Pi]',
-          'Searching for 1-Wire devices...',
-          "Found DS18B20 device with address: bytearray(b'(\\xaa\\x1b\\x1f\\x0e\\x00\\x00\\x00\\xbc')",
-          'DS18B20 Temperature: 24.5 °C',
-        ],
+        serial: ['Temperature: 24.500°C  |  76.100°F'],
       },
-      { ms: 1750, props: { ds: { temperature: 28 } }, sensors: { tempProbe: 28 }, serial: ['DS18B20 Temperature: 28.0 °C'] },
-      { ms: 1750, props: { ds: { temperature: 33.5 } }, sensors: { tempProbe: 33.5 }, serial: ['DS18B20 Temperature: 33.5 °C'] },
-      { ms: 1750, props: { ds: { temperature: 39 } }, sensors: { tempProbe: 39 }, serial: ['DS18B20 Temperature: 39.0 °C'] },
       {
-        ms: 1750,
+        ms: 1000,
+        props: { ds: { temperature: 28 } },
+        sensors: { tempProbe: 28 },
+        serial: ['Temperature: 28.000°C  |  82.400°F'],
+      },
+      {
+        ms: 1000,
+        props: { ds: { temperature: 33.5 } },
+        sensors: { tempProbe: 33.5 },
+        serial: ['Temperature: 33.500°C  |  92.300°F'],
+      },
+      {
+        ms: 1000,
+        props: { ds: { temperature: 39 } },
+        sensors: { tempProbe: 39 },
+        serial: ['Temperature: 39.000°C  |  102.200°F'],
+      },
+      {
+        ms: 1000,
         props: { ds: { temperature: 42.5 } },
         sensors: { tempProbe: 42.5 },
-        serial: ['DS18B20 Temperature: 42.5 °C', 'HIGH TEMP WARNING: Liquid boiling!'],
+        serial: ['Temperature: 42.500°C  |  108.500°F'],
       },
-      { ms: 1750, props: { ds: { temperature: 37 } }, sensors: { tempProbe: 37 }, serial: ['DS18B20 Temperature: 37.0 °C'] },
-      { ms: 1750, props: { ds: { temperature: 30.5 } }, sensors: { tempProbe: 30.5 }, serial: ['DS18B20 Temperature: 30.5 °C'] },
-      { ms: 1750, props: { ds: { temperature: 26 } }, sensors: { tempProbe: 26 }, serial: ['DS18B20 Temperature: 26.0 °C'] },
+      {
+        ms: 1000,
+        props: { ds: { temperature: 37 } },
+        sensors: { tempProbe: 37 },
+        serial: ['Temperature: 37.000°C  |  98.600°F'],
+      },
+      {
+        ms: 1000,
+        props: { ds: { temperature: 30.5 } },
+        sensors: { tempProbe: 30.5 },
+        serial: ['Temperature: 30.500°C  |  86.900°F'],
+      },
+      {
+        ms: 1000,
+        props: { ds: { temperature: 26 } },
+        sensors: { tempProbe: 26 },
+        serial: ['Temperature: 26.000°C  |  78.800°F'],
+      },
     ],
   },
 
-  /* 9 — DC motor through the L298N. Clockwise, brake, counter-clockwise, at
-     the sketch's own 2 s / 1 s / 2 s. The plate on the motor's case is what
-     shows it: `rpm` and `direction` are exactly the two fields our engine's
-     own motor readout reads. 2450 rpm is HOBBY_MOTOR_6V at the ~2.45 V an
-     L298N passes through from a 5 V rail. */
+  /* 9 — DC motor AND stepper, through the L298N and the ULN2003. The listing
+     beside this is `MOTOR_CONTROL_RPI_SCRIPT` (lib/simulator/pico/
+     experiments.ts) and every line below is one of its `print`s, in its own
+     order and at its own `time.sleep`s.
+
+     THE DUTY CYCLE IS THE POINT of the first half, so the plate has to show
+     it: `rpmFor` gives HOBBY_MOTOR_6V 1000 rpm per terminal volt, an L298N
+     passes about 2.45 V of a 5 V rail, and PWM scales that — so 40 % is
+     980 rpm, 70 % is 1715 and 100 % is 2450, with the current scaling with
+     them. Reverse is the same magnitudes with the sign flipped, which is what
+     `direction` and a negative `amps` say.
+
+     THE STEPPER TURNS AND NOTHING DRAWS IT. `rotate(1024)` is 2048 ms of real
+     motion at the script's 2 ms per half-step, and it is in the log because
+     the script prints it — but a `stepper` has no canvas readout the way a
+     `motor` does (CircuitCanvas draws a plate for `kind === 'motor'` only), so
+     those two steps show a still shaft. Better a silent truth than a spinning
+     picture of a measurement nothing took. */
   9: {
-    stillStep: 0,
+    stillStep: 2,
     steps: [
       {
-        ms: 2000,
-        devices: { motor: { rpm: 2450, direction: 'forward', amps: 0.0286, load: 0, stalled: false } },
+        ms: 1000,
+        devices: { motor: { rpm: 980, direction: 'forward', amps: 0.0114, load: 0, stalled: false } },
         serial: [
-          '[Simulation Started on Raspberry Pi]',
-          'Initializing Motor Controller...',
-          'Spinning DC Motor Clockwise...',
+          'L298N: ENA=GP18 IN1=GP19 IN2=GP20   ULN2003: IN1-IN4 = GP17, GP27, GP22, GP5',
+          'DC motor: forward, ENA duty 40% at 1 kHz',
         ],
       },
       {
         ms: 1000,
+        devices: { motor: { rpm: 1715, direction: 'forward', amps: 0.02, load: 0, stalled: false } },
+        serial: ['DC motor: forward, ENA duty 70% at 1 kHz'],
+      },
+      {
+        ms: 1000,
+        devices: { motor: { rpm: 2450, direction: 'forward', amps: 0.0286, load: 0, stalled: false } },
+        serial: ['DC motor: forward, ENA duty 100% at 1 kHz'],
+      },
+      {
+        ms: 1000,
         devices: { motor: { rpm: 0, direction: 'stopped', amps: 0, load: 0, stalled: false } },
-        serial: ['Braking DC Motor...'],
+        serial: ['DC motor: stopped'],
       },
       {
         ms: 2000,
-        devices: { motor: { rpm: 2450, direction: 'reverse', amps: -0.0286, load: 0, stalled: false } },
-        serial: ['Spinning DC Motor Counter-Clockwise...'],
+        devices: { motor: { rpm: 1715, direction: 'reverse', amps: -0.02, load: 0, stalled: false } },
+        serial: ['DC motor: reverse, ENA duty 70% at 1 kHz'],
+      },
+
+      // The motor stops and the stepper takes over, a quarter turn each way.
+      // 1024 half-steps at 2 ms is 2048 ms, which is what these two hold for.
+      {
+        ms: 2048,
+        devices: { motor: { rpm: 0, direction: 'stopped', amps: 0, load: 0, stalled: false } },
+        serial: ['DC motor: stopped', 'Stepper: 1024 half-steps forward = 90.0 degrees'],
+      },
+      {
+        ms: 2048,
+        devices: { motor: { rpm: 0, direction: 'stopped', amps: 0, load: 0, stalled: false } },
+        serial: ['Stepper: 1024 half-steps back to zero'],
+      },
+      {
+        ms: 1000,
+        devices: { motor: { rpm: 0, direction: 'stopped', amps: 0, load: 0, stalled: false } },
+        serial: ['Stepper: coils off, shaft free'],
       },
     ],
   },
 
-  /* 10 — Home automation. GP15 high pulls the armature in, channel 1's contacts
-     close and the appliance on NO1 lights. 2 s each way, per the sketch's
-     asyncio.sleep. The appliance is an LED — see ../circuits.ts on why. */
+  /* 10 — Home automation, four relay channels. The listing beside this is
+     `HOME_AUTOMATION_RPI_SCRIPT`, whose loop calls the Flask route's own
+     `toggle()` body on each of Light, Fan, AC and TV in turn with two seconds
+     between — so a full ON pass and a full OFF pass is eight steps.
+
+     THE BOARD IS ACTIVE LOW, which is why "LOW" reads as ON: the module's opto
+     LED sits between VCC and IN, so the coil is energised by pulling the pin
+     DOWN. A log claiming HIGH meant ON would teach the bug this experiment is
+     most likely to produce.
+
+     Only channel 1 has a load drawn on it — see ../circuits.ts on why one lamp
+     rather than four — so the LED lights when Light goes on and stays lit
+     through the other three channels' turns, until Light's next toggle. */
   10: {
     stillStep: 0,
     steps: [
@@ -496,22 +701,29 @@ export const SHOWREEL_TIMELINES: Readonly<Record<number, ShowreelTimeline>> = {
         ms: 2000,
         leds: { led: LIT },
         serial: [
-          '[Simulation Started on Raspberry Pi]',
-          'Initializing Relay on GP15...',
-          'Initialization successful. Starting loop...',
-          'Relay Triggered: [ON] -> Appliance Powered',
+          'Home Automation ready - 4 relay channels on GPIO 17, 27, 22, 16.',
+          'GPIO17 (Light): LOW - ON  | HTTP GET /toggle/Light',
         ],
       },
-      { ms: 2000, serial: ['Relay Triggered: [OFF] -> Appliance Off'] },
+      { ms: 2000, leds: { led: LIT }, serial: ['GPIO27 (Fan): LOW - ON  | HTTP GET /toggle/Fan'] },
+      { ms: 2000, leds: { led: LIT }, serial: ['GPIO22 (AC): LOW - ON  | HTTP GET /toggle/AC'] },
+      { ms: 2000, leds: { led: LIT }, serial: ['GPIO16 (TV): LOW - ON  | HTTP GET /toggle/TV'] },
+
+      { ms: 2000, serial: ['GPIO17 (Light): HIGH - OFF  | HTTP GET /toggle/Light'] },
+      { ms: 2000, serial: ['GPIO27 (Fan): HIGH - OFF  | HTTP GET /toggle/Fan'] },
+      { ms: 2000, serial: ['GPIO22 (AC): HIGH - OFF  | HTTP GET /toggle/AC'] },
+      { ms: 2000, serial: ['GPIO16 (TV): HIGH - OFF  | HTTP GET /toggle/TV'] },
     ],
   },
 
   /* 11 — Smart traffic, four lanes. One pass of the timeline is one call to
-     `loop()`: the sketch's own `for (i=0;i<4;i++)` visits every lane once,
+     `loop()`: the sketch's own `for(int i=0;i<4;i++)` visits every lane once,
      each for `3000 + density*7` ms of green and a fixed 2 s of yellow, before
-     `loop()` returns and the runtime calls it again — which is why "Smart
-     Traffic Controller Active" (the `setup()` line) sits on step 0, exactly
-     as every other experiment's setup message does.
+     `loop()` returns and the runtime calls it again.
+
+     NO SETUP LINE. `setup()` here ends `allRed(); Serial.begin(9600);` and
+     prints nothing — the "Smart Traffic Controller Active" this used to open
+     with was added by the rewrite, not by the lab sheet.
 
      The four densities — 100, 300, 500, 200 — are the raw `analogRead()`
      counts the pots in circuits.ts are posed to give: `POT_POSITIONS_11`
@@ -522,11 +734,7 @@ export const SHOWREEL_TIMELINES: Readonly<Record<number, ShowreelTimeline>> = {
     stillStep: 1,
     steps: [
       // Lane 1 — density 100 -> green for 3000 + 100*7 = 3700 ms.
-      {
-        ms: 200,
-        leds: grid11(0, 'green'),
-        serial: ['Smart Traffic Controller Active', 'Lane 1 Green: 3700ms'],
-      },
+      { ms: 200, leds: grid11(0, 'green'), serial: ['Lane 1 Green: 3700ms'] },
       { ms: 3500, leds: grid11(0, 'green') },
       { ms: 2000, leds: grid11(0, 'yellow') },
 
