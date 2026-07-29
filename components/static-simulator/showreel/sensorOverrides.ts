@@ -322,17 +322,26 @@ export function restingSensors(
  * The base frame, with sliders resolved to override-or-resting and any active
  * toggle override layered on top.
  *
- * A SLIDER FIELD IS ALWAYS RESOLVED, even with no active drag — to
- * `overrides[field] ?? resting[field]`, never to the live scripted value.
- * That is what stops the "why is the slider moving by itself" symptom: the
- * timeline still varies that field internally (the serial log still narrates
- * its own sweep — a known, disclosed gap, not silently patched over), but
- * nothing this panel actually SHOWS for a slider's own field is allowed to
- * come from that sweep any more. A TOGGLE field (motion) keeps the old
- * behaviour — pass through the live scripted boolean until the student flips
- * it — because a binary alarm-style reading flipping on the timeline's own
- * schedule is the demo, not a bug report waiting to happen the way a
- * continuously drifting slider thumb is.
+ * A SLIDER FIELD FOLLOWS THE TIMELINE UNTIL IT IS TOUCHED, THEN PINS.
+ * `overrides[field] ?? live ?? resting[field]`.
+ *
+ * This is the second correction to the same question, and the reasoning for
+ * the first was incomplete. Pinning an UNTOUCHED slider to its authored value
+ * did stop the thumb drifting on its own, but it left the panel showing two
+ * different numbers for one sensor: the slider read 24 °C while the serial
+ * log, which replays pre-baked strings, narrated the timeline's own sweep
+ * through 30, 27, 25. A control that disagrees with the log beside it is a
+ * worse bug than a thumb that moves, because it makes the reading itself
+ * untrustworthy.
+ *
+ * So before first touch the slider tracks the sweep and the two agree by
+ * construction. After first touch the student owns the value and the sweep
+ * stops being shown at all — see `frozenAt` in useSensorOverride.ts for the
+ * other half, which stops the log narrating readings the student has
+ * overridden.
+ *
+ * A TOGGLE field (motion) has always worked this way — pass through the live
+ * scripted boolean until the student flips it — and is unchanged.
  *
  * Same discipline as StaticCircuit's `withOverrides` otherwise: a fresh object
  * only when there is something to resolve, everything the timeline did not
@@ -357,7 +366,13 @@ export function applySensorOverrides(
   for (const spec of specs) {
     if (spec.kind === 'slider') {
       const override = overrides[spec.field]
-      const value = typeof override === 'number' ? override : resting[spec.field]
+      const live = frame.sensors[spec.field]
+      const value =
+        typeof override === 'number'
+          ? override
+          : typeof live === 'number'
+            ? live
+            : resting[spec.field]
       if (value === undefined) continue
 
       sensors[spec.field] = value

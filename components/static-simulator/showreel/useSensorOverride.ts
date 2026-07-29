@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CircuitDoc } from '@/lib/simulator/model/document'
 import type { ShowreelFrame } from './useShowreel'
 import type { ShowreelSensors } from './timelines'
@@ -27,21 +27,69 @@ import {
  * is layered on top of whatever frame is current, every frame, by
  * `applySensorOverrides` — not by freezing one frame and editing it.
  *
- * THE OTHER HALF OF THE SAME FIX: a field with a slider no longer shows the
- * timeline's own live sweep of that field EVER, dragged or not — it shows
- * `overrides[field] ?? restingSensors(doc)[field]`. Without this, removing
- * the pause-on-drag would have made the "why is the slider moving on its
- * own" complaint WORSE, not better: the thumb would drift continuously in
- * the background instead of only between drags. See sensorOverrides.ts's
- * own header on `applySensorOverrides` for the full reasoning.
+ * FOLLOW UNTIL TOUCHED, THEN PIN. A slider tracks the timeline's own sweep
+ * until the student moves it, and holds their value from then on.
+ *
+ * This replaces an earlier attempt that pinned the slider to its authored
+ * value from the start. That did stop the thumb drifting, but it left the
+ * panel showing two different numbers for one sensor — the slider read 24 °C
+ * while the serial log, whose lines are pre-baked, narrated the timeline's
+ * sweep through 30, 27, 25. Following the sweep makes the two agree by
+ * construction before first touch; `frozenAt` below makes them agree after it,
+ * by stopping the log where the student took over.
  */
-export function useSensorOverride(experimentId: number | undefined, frame: ShowreelFrame, doc: CircuitDoc | undefined) {
+export function useSensorOverride(
+  experimentId: number | undefined,
+  frame: ShowreelFrame,
+  doc: CircuitDoc | undefined,
+  /** How many scripted lines the log has printed so far — see `frozenAt`. */
+  serialCount = 0,
+) {
   const controls = controlsFor(experimentId)
   const [overrides, setOverrides] = useState<Partial<Record<SensorField, number | boolean>>>({})
   const resting = useMemo(() => restingSensors(doc, experimentId), [doc, experimentId])
+  /**
+   * How long the scripted log was when the student first took manual control,
+   * or null while they have not.
+   *
+   * THE LOG STOPS THERE. The timeline's serial lines are pre-baked strings
+   * narrating its own sensor sweep, so the moment a student pins a slider the
+   * script starts printing readings that contradict the control they are
+   * holding — 30.00 °C in the log against 24 °C on the slider was the bug this
+   * closes. Lines printed BEFORE that moment are kept: they are a true record
+   * of the run up to the point it was taken over, and deleting them would
+   * throw away the demo the student just watched.
+   *
+   * STATE, not a ref, because the render reads it — the panel slices its log
+   * with it. A ref would be the natural reach here (it is written once, from
+   * an event handler) but `react-hooks/refs` correctly rejects reading one
+   * during render: the value a render sees would be whatever the PREVIOUS
+   * render left behind.
+   */
+  const [frozenAt, setFrozenAt] = useState<number | null>(null)
+  /**
+   * Synced in an effect rather than assigned during render — `react-hooks/refs`
+   * rejects the latter, and rightly: a ref written while rendering is invisible
+   * to the render that wrote it. An effect is exactly right here anyway, since
+   * the only reader is the event handler below, which cannot run before the
+   * effect has flushed.
+   */
+  const liveCount = useRef(serialCount)
+  useEffect(() => {
+    liveCount.current = serialCount
+  }, [serialCount])
 
   const setValue = useCallback((field: SensorField, value: number | boolean) => {
+    // `?? current` rather than an if: only the FIRST touch marks the cut, and
+    // the functional form makes that true even under batched updates.
+    setFrozenAt((prev) => prev ?? liveCount.current)
     setOverrides((prev) => ({ ...prev, [field]: value }))
+  }, [])
+
+  /** Hand the sweep back — the panel resumes its scripted run. */
+  const release = useCallback(() => {
+    setFrozenAt(null)
+    setOverrides({})
   }, [])
 
   const overriddenFrame = useMemo(
@@ -64,7 +112,17 @@ export function useSensorOverride(experimentId: number | undefined, frame: Showr
     [touched, experimentId, overriddenFrame.sensors],
   )
 
-  return { frame: overriddenFrame, controls, overrides, setValue, liveSerial }
+  return {
+    frame: overriddenFrame,
+    controls,
+    overrides,
+    setValue,
+    liveSerial,
+    /** Truncate the scripted log here, or show all of it when null. */
+    frozenAt: touched ? frozenAt : null,
+    manual: touched,
+    release,
+  }
 }
 
 export type { ShowreelSensors }

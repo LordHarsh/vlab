@@ -144,7 +144,24 @@ export function StaticSimulator({
    * or the circuit's authored default, never to the timeline's live sweep of
    * it. See showreel/useSensorOverride.ts and ./showreel/sensorOverrides.ts.
    */
-  const sensorOverride = useSensorOverride(experiment?.id, showreel.frame, doc)
+  const sensorOverride = useSensorOverride(
+    experiment?.id,
+    showreel.frame,
+    doc,
+    showreel.serialLines.length,
+  )
+  /**
+   * The scripted log, cut off where the student took manual control.
+   *
+   * Everything printed before that stands — it is a true record of the run
+   * they watched. After it the script would be narrating its own sensor sweep
+   * against a slider the student is now holding, which is where "log says
+   * 30.00 °C, slider says 24 °C" came from.
+   */
+  const shownSerial =
+    sensorOverride.frozenAt === null
+      ? showreel.serialLines
+      : showreel.serialLines.slice(0, sensorOverride.frozenAt)
   /**
    * Re-stick on the LIVE lines too, not just the scripted ones.
    *
@@ -155,7 +172,7 @@ export function StaticSimulator({
    * CONTENT changing without its length changing (45 °C to 46 °C) does not
    * move the scroll height, so there is nothing to chase there.
    */
-  const logRef = useStickToBottom(showreel.serialLines.length + sensorOverride.liveSerial.length)
+  const logRef = useStickToBottom(shownSerial.length + sensorOverride.liveSerial.length)
   const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
   /**
    * The panel's OWN width, not the viewport's — see useContainerWidth.ts for
@@ -417,6 +434,8 @@ export function StaticSimulator({
             experimentId={experiment.id}
             controls={sensorOverride.controls}
             onSensorChange={sensorOverride.setValue}
+            manual={sensorOverride.manual}
+            onRelease={sensorOverride.release}
           />
         </div>
 
@@ -472,7 +491,7 @@ export function StaticSimulator({
                   </h3>
                 </div>
                 <SerialLog
-                  lines={showreel.serialLines}
+                  lines={shownSerial}
                   liveLines={sensorOverride.liveSerial}
                   scrollRef={logRef}
                 />
