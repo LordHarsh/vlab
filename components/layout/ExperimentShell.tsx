@@ -129,11 +129,13 @@ export function ExperimentShell({
             The fixed experiment sequence. Flat list, words not icons, "Home"
             at the top exactly as the reference has it.
 
-            Sticky offset is 64px (institutional header) + 61px (this shell's
-            sub-header: 36px content + 24px padding + 5px rule) = 125px. Written
-            with underscores because Tailwind arbitrary values may not contain
-            literal spaces, and `calc(a-b)` without them is invalid CSS. */}
-        <aside className="sticky top-[125px] hidden h-[calc(100vh_-_125px)] w-52 shrink-0 overflow-y-auto border-r border-vlab-rule bg-white py-4 lg:block">
+            Sticky offset is 64px (institutional header) + 55px (this shell's
+            sub-header: 26px content + 24px padding + the 5px rule) = 119px,
+            measured off the rendered page rather than assumed. Written with
+            underscores because a Tailwind arbitrary value may not contain a
+            literal space, and `calc(a-b)` without spaces is invalid CSS — the
+            declaration would be dropped silently rather than erroring. */}
+        <aside className="sticky top-[119px] hidden h-[calc(100vh_-_119px)] w-52 shrink-0 overflow-y-auto border-r border-vlab-rule bg-white py-4 lg:block">
           <p className="vlab-eyebrow px-4 pb-2">Experiment</p>
           <nav>
             <Link href="/dashboard" className="vlab-nav-link">

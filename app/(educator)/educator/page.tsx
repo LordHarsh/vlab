@@ -2,17 +2,21 @@ import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { Plus, Users, FlaskConical, BookOpen } from 'lucide-react'
+import { Plus, BookOpen } from 'lucide-react'
+import { PageHeader } from '@/components/layout/PageHeader'
 
+/** Squared status tag rather than a pill — institutional chrome, not a badge. */
 function StatusBadge({ status }: { status: string }) {
   const styles = {
-    active: 'bg-green-100 text-green-700',
-    completed: 'bg-blue-100 text-blue-700',
-    archived: 'bg-vlab-surface text-vlab-muted',
+    active: 'border-vlab-green text-vlab-green-ink',
+    completed: 'border-vlab-300 text-vlab-700',
+    archived: 'border-vlab-rule-strong text-vlab-muted',
   }
   const style = styles[status as keyof typeof styles] ?? styles.archived
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${style}`}>
+    <span
+      className={`inline-flex items-center border px-2 py-0.5 font-chrome text-[12px] font-bold capitalize ${style}`}
+    >
       {status}
     </span>
   )
@@ -45,100 +49,95 @@ export default async function EducatorPage() {
   const classList = classes ?? []
 
   return (
-    <div className="max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-vlab-ink">My Classes</h1>
-          <p className="text-vlab-muted mt-1">Manage your classes and student progress</p>
-        </div>
-        <Link
-          href="/educator/classes/new"
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-vlab-600 text-white rounded-lg text-sm font-medium hover:bg-vlab-700 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Create New Class
-        </Link>
-      </div>
-
-      {classList.length === 0 ? (
-        <div className="bg-white rounded-lg border border-vlab-rule-strong p-12 text-center" style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}>
-          <div className="w-16 h-16 bg-vlab-surface rounded-lg flex items-center justify-center mx-auto mb-4">
-            <BookOpen className="w-8 h-8 text-vlab-muted" />
-          </div>
-          <h2 className="text-lg font-semibold text-vlab-ink mb-2">No classes yet</h2>
-          <p className="text-vlab-muted mb-6">Create your first class to start managing students and labs.</p>
+    <div className="max-w-6xl">
+      <PageHeader
+        eyebrow="Educator Console"
+        title="My Classes"
+        description="Classes you run. Open one to enrol students, assign laboratories and read the gradebook."
+        actions={
           <Link
             href="/educator/classes/new"
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-vlab-600 text-white rounded-lg text-sm font-medium hover:bg-vlab-700 transition-colors"
+            className="inline-flex items-center gap-2 border border-vlab-600 bg-vlab-600 px-4 py-2 font-chrome text-[13px] font-semibold text-white transition-colors hover:border-vlab-700 hover:bg-vlab-700"
           >
-            <Plus className="w-4 h-4" />
-            Create New Class
+            <Plus className="h-4 w-4" />
+            New class
+          </Link>
+        }
+      />
+
+      {classList.length === 0 ? (
+        <div className="border border-vlab-rule-strong bg-vlab-surface-alt px-6 py-16 text-center">
+          <BookOpen className="mx-auto mb-3 h-8 w-8 text-vlab-300" />
+          <p className="font-chrome text-base font-bold text-vlab-800">No classes yet</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-vlab-muted">
+            Create a class to enrol students and assign laboratories to them.
+          </p>
+          <Link
+            href="/educator/classes/new"
+            className="mt-5 inline-flex items-center gap-2 border border-vlab-600 bg-vlab-600 px-4 py-2 font-chrome text-[13px] font-semibold text-white transition-colors hover:border-vlab-700 hover:bg-vlab-700"
+          >
+            <Plus className="h-4 w-4" />
+            New class
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {classList.map((cls) => {
-            const enrollments = (cls.enrollments as { id: string; status: string }[]) ?? []
-            const activeStudents = enrollments.filter((e) => e.status === 'active').length
-            const labCount = (cls.class_labs as { id: string }[])?.length ?? 0
+        <div className="overflow-x-auto border border-vlab-rule-strong">
+          <table className="vlab-table">
+            <thead>
+              <tr>
+                <th scope="col">S.No</th>
+                <th scope="col">Class</th>
+                <th scope="col">Term</th>
+                <th scope="col">Students</th>
+                <th scope="col">Laboratories</th>
+                <th scope="col">Join code</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {classList.map((cls, idx) => {
+                const enrollments = (cls.enrollments as { id: string; status: string }[]) ?? []
+                const activeStudents = enrollments.filter((e) => e.status === 'active').length
+                const labCount = (cls.class_labs as { id: string }[])?.length ?? 0
 
-            return (
-              <Link
-                key={cls.id}
-                href={`/educator/classes/${cls.id}`}
-                className="group bg-white rounded-lg border border-vlab-rule-strong p-6 hover:shadow-lg transition-all"
-                style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-10 h-10 bg-vlab-600/10 rounded-lg flex items-center justify-center">
-                    <GraduationCapIcon />
-                  </div>
-                  <StatusBadge status={cls.status} />
-                </div>
-
-                <h3 className="font-semibold text-vlab-ink text-base mb-1 group-hover:text-vlab-600 transition-colors">
-                  {cls.name}
-                </h3>
-                {cls.description && (
-                  <p className="text-vlab-muted text-sm mb-3 line-clamp-2">{cls.description}</p>
-                )}
-                {(cls.academic_year || cls.semester) && (
-                  <p className="text-xs text-vlab-muted mb-4">
-                    {[cls.academic_year, cls.semester].filter(Boolean).join(' · ')}
-                  </p>
-                )}
-
-                <div className="flex items-center gap-4 pt-4 border-t border-vlab-surface">
-                  <div className="flex items-center gap-1.5 text-sm text-vlab-muted">
-                    <Users className="w-3.5 h-3.5" />
-                    <span>{activeStudents} students</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-sm text-vlab-muted">
-                    <FlaskConical className="w-3.5 h-3.5" />
-                    <span>{labCount} labs</span>
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <span className="text-xs font-mono text-vlab-muted bg-vlab-surface px-2 py-1 rounded-lg">
-                    {cls.join_code}
-                  </span>
-                </div>
-              </Link>
-            )
-          })}
+                return (
+                  <tr key={cls.id}>
+                    <th scope="row">{idx + 1}</th>
+                    <td>
+                      <Link
+                        href={`/educator/classes/${cls.id}`}
+                        className="font-chrome font-bold text-vlab-600 hover:text-vlab-800 hover:underline"
+                      >
+                        {cls.name}
+                      </Link>
+                      {cls.description && (
+                        <p className="mt-0.5 max-w-md text-[13px] leading-relaxed text-vlab-muted">
+                          {cls.description}
+                        </p>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap text-vlab-muted">
+                      {[cls.academic_year, cls.semester].filter(Boolean).join(' · ') || '—'}
+                    </td>
+                    <td className="whitespace-nowrap tabular-nums text-vlab-ink">
+                      {activeStudents}
+                    </td>
+                    <td className="whitespace-nowrap tabular-nums text-vlab-ink">{labCount}</td>
+                    <td className="whitespace-nowrap">
+                      <span className="border border-vlab-rule bg-vlab-surface px-2 py-0.5 font-mono text-[13px] tracking-wider text-vlab-ink">
+                        {cls.join_code}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap">
+                      <StatusBadge status={cls.status} />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
-  )
-}
-
-function GraduationCapIcon() {
-  return (
-    <svg className="w-5 h-5 text-vlab-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
-      <path d="M6 12v5c3 3 9 3 12 0v-5" />
-    </svg>
   )
 }
