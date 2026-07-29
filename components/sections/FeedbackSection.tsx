@@ -6,7 +6,6 @@ import { useUser } from '@clerk/nextjs'
 import { submitFeedback, type FeedbackAnswer } from '@/lib/actions/feedback'
 import {
   Loader2,
-  MessageSquare,
   CheckCircle2,
   AlertCircle,
   Star,
@@ -234,44 +233,40 @@ export function FeedbackSection({
 
   if (alreadySubmitted || submitted) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-center gap-4">
-        <div className="w-16 h-16 rounded-lg bg-green-100 flex items-center justify-center">
-          <CheckCircle2 className="w-8 h-8 text-green-600" />
-        </div>
-        <div>
-          <p className="font-semibold text-vlab-ink mb-1">Thank you for your feedback!</p>
-          <p className="text-sm text-vlab-muted">Your response has been recorded.</p>
-        </div>
+      <div className="border-l-4 border-vlab-green border-y border-r border-y-vlab-rule-strong border-r-vlab-rule-strong bg-white px-5 py-6">
+        <p className="flex items-center gap-2 font-chrome text-[15px] font-bold text-vlab-800">
+          <CheckCircle2 className="h-4 w-4 text-vlab-green-ink" />
+          Feedback recorded
+        </p>
+        <p className="mt-1 text-sm text-vlab-muted">
+          Your response has been returned to the department. One response is recorded per
+          student per experiment.
+        </p>
       </div>
     )
   }
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-lg bg-vlab-600/10 flex items-center justify-center shrink-0">
-          <MessageSquare className="w-5 h-5 text-vlab-600" />
-        </div>
-        <div>
-          <h2 className="text-base font-semibold text-vlab-ink">{form.title}</h2>
-          {form.description && (
-            <p className="text-xs text-vlab-muted mt-0.5">{form.description}</p>
-          )}
-        </div>
+      {/* Titled panel rather than an icon tile — the reference states what a
+          page is in words and leaves it at that. */}
+      <div className="border border-vlab-rule-strong">
+        <div className="vlab-panel-header">{form.title}</div>
+        {form.description && (
+          <p className="px-4 py-3 text-sm leading-relaxed text-vlab-muted">{form.description}</p>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {questions.map((q, idx) => (
           <div
             key={q.id}
-            className="bg-white rounded-lg border border-vlab-rule-strong p-5"
-            style={{
-              boxShadow:
-                'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px',
-            }}
+            className="border border-vlab-rule-strong bg-white p-4"
           >
-            <p id={`fq-label-${q.id}`} className="text-sm font-semibold text-vlab-ink mb-3">
+            <p
+              id={`fq-label-${q.id}`}
+              className="mb-3 font-chrome text-[15px] font-extrabold leading-snug text-vlab-ink"
+            >
               <span className="text-vlab-600 mr-1">{idx + 1}.</span>
               {q.question_text}
               {q.is_required && <span className="text-red-500 ml-0.5">*</span>}
@@ -302,7 +297,7 @@ export function FeedbackSection({
                 onChange={(e) => setAnswer(q.id, e.target.value)}
                 placeholder="Type your answer here..."
                 aria-labelledby={`fq-label-${q.id}`}
-                className="w-full px-3 py-2.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-2 focus:ring-vlab-600/20 resize-none transition-colors"
+                className="w-full px-3 py-2.5 border border-vlab-rule-strong rounded-sm text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-2 focus:ring-vlab-600/20 resize-none transition-colors"
               />
             )}
 
@@ -313,7 +308,7 @@ export function FeedbackSection({
                   return (
                     <label
                       key={option.id}
-                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      className={`flex cursor-pointer items-center gap-3 border px-3 py-2 transition-colors ${
                         selected
                           ? 'border-vlab-600 bg-vlab-600/5'
                           : 'border-vlab-surface hover:border-vlab-rule-strong hover:bg-vlab-surface/50'
@@ -337,7 +332,7 @@ export function FeedbackSection({
         ))}
 
         {error && (
-          <div className="flex items-start gap-2.5 p-3.5 bg-red-50 rounded-lg border border-red-200">
+          <div className="flex items-start gap-2.5 border border-red-300 bg-red-50 p-3.5">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
             <p className="text-sm text-red-700">{error}</p>
           </div>
@@ -346,7 +341,7 @@ export function FeedbackSection({
         <button
           type="submit"
           disabled={isPending}
-          className="w-full py-3 bg-vlab-600 text-white rounded-lg text-sm font-semibold hover:bg-vlab-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="w-full border border-vlab-600 bg-vlab-600 py-2.5 font-chrome text-sm font-semibold text-white hover:border-vlab-700 hover:bg-vlab-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isPending ? (
             <span className="flex items-center justify-center gap-2">

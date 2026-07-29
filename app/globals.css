@@ -482,6 +482,25 @@
     background-repeat: repeat;
   }
 
+  /* Horizontal section rail below lg. Keeps a scroll affordance — the rail
+   * genuinely overflows and a student needs to know the sequence continues —
+   * but as a thin muted bar rather than the full-height OS scrollbar, which
+   * reads as a rendering artifact under a row of tabs. */
+  .vlab-rail-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--vlab-rule-strong) transparent;
+  }
+  .vlab-rail-scroll::-webkit-scrollbar {
+    height: 4px;
+  }
+  .vlab-rail-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .vlab-rail-scroll::-webkit-scrollbar-thumb {
+    background: var(--vlab-rule-strong);
+    border-radius: 2px;
+  }
+
   .font-display {
     font-family: var(--font-roboto-slab), 'Roboto Slab', Georgia, serif;
   }

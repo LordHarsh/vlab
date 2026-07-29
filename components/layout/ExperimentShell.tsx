@@ -178,7 +178,7 @@ export function ExperimentShell({
             {/* Section rail for narrow viewports, where the sidebar is gone.
                 Horizontally scrollable rather than folded behind a hamburger —
                 the sequence IS the content model, so it stays visible. */}
-            <nav className="-mx-5 mb-7 flex gap-1 overflow-x-auto border-b border-vlab-rule px-5 sm:-mx-8 sm:px-8 lg:hidden">
+            <nav className="vlab-rail-scroll -mx-5 mb-7 flex gap-1 overflow-x-auto border-b border-vlab-rule px-5 sm:-mx-8 sm:px-8 lg:hidden">
               {sections.map((section) => {
                 const isActive = section.id === activeSectionId
                 return (

@@ -302,7 +302,7 @@ export function FullscreenGate({
         >
           <div className="w-full max-w-md rounded-[5px] border border-[#dfe3e8] bg-white px-6 py-7 text-center shadow-[0_2px_10px_rgba(52,73,94,0.08)]">
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-[5px] border border-[#dfe3e8] bg-[#f4f5f6]">
-              <Maximize2 className="h-5 w-5 text-[#1477d1]" aria-hidden="true" />
+              <Maximize2 className="h-5 w-5 text-[#337ab7]" aria-hidden="true" />
             </div>
 
             <h2 id={headingId} className="text-sm font-semibold text-[#34495e]">
@@ -324,7 +324,7 @@ export function FullscreenGate({
               type="button"
               data-testid="enter-fullscreen"
               onClick={enter}
-              className="mt-5 inline-flex h-10 items-center justify-center gap-2 rounded-[3px] bg-[#1477d1] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#1166b8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-2"
+              className="mt-5 inline-flex h-10 items-center justify-center gap-2 rounded-[3px] bg-[#337ab7] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#1166b8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-2"
             >
               <Maximize2 className="h-4 w-4" aria-hidden="true" />
               {supported ? 'Open simulator in fullscreen' : 'Open simulator'}
