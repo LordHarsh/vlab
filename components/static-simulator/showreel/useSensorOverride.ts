@@ -4,7 +4,13 @@ import { useCallback, useMemo, useState } from 'react'
 import type { CircuitDoc } from '@/lib/simulator/model/document'
 import type { ShowreelFrame } from './useShowreel'
 import type { ShowreelSensors } from './timelines'
-import { applySensorOverrides, controlsFor, restingSensors, type SensorField } from './sensorOverrides'
+import {
+  applySensorOverrides,
+  controlsFor,
+  liveSerialFor,
+  restingSensors,
+  type SensorField,
+} from './sensorOverrides'
 
 /**
  * Local, in-memory state for the sliders and toggles in the status strip.
@@ -43,7 +49,22 @@ export function useSensorOverride(experimentId: number | undefined, frame: Showr
     [frame, experimentId, overrides, resting],
   )
 
-  return { frame: overriddenFrame, controls, overrides, setValue }
+  /**
+   * The lines the sketch would print for the reading now on the controls.
+   *
+   * Only once a student has actually MOVED something. Before that the panel is
+   * showing its own scripted run and has nothing of the student's to report;
+   * offering a live line for the resting value would duplicate whatever the
+   * timeline is printing anyway and make the log read as though it had run
+   * twice.
+   */
+  const touched = Object.keys(overrides).length > 0
+  const liveSerial = useMemo(
+    () => (touched ? liveSerialFor(experimentId, overriddenFrame.sensors) : []),
+    [touched, experimentId, overriddenFrame.sensors],
+  )
+
+  return { frame: overriddenFrame, controls, overrides, setValue, liveSerial }
 }
 
 export type { ShowreelSensors }

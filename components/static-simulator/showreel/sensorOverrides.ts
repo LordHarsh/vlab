@@ -199,6 +199,90 @@ export function isSensorWarn(experimentId: number | undefined, sensors: Showreel
 }
 
 /**
+ * WHAT THE SKETCH WOULD PRINT FOR THE READING A STUDENT HAS DIALLED IN.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ THE GAP THIS CLOSES.                                                    │
+ * │                                                                         │
+ * │ In four of the six experiments with a slider (4, 7, 8 and 12) the       │
+ * │ sketch's ONLY output is a `Serial.print`/`print`. The serial monitor    │
+ * │ beside the circuit replays pre-baked lines from timelines.ts, so        │
+ * │ dragging the temperature to 45 °C in experiment 7 changed a number and  │
+ * │ its colour and nothing else — the sketch's own `CRITICAL: Hot room!`    │
+ * │ never appeared. The slider looked connected to nothing, because for     │
+ * │ those four it WAS connected to nothing.                                 │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * Every format string below is transcribed from the same `defaultCode` the
+ * thresholds above were, so a live line is byte-identical in shape to the
+ * scripted ones it appears beneath — same decimals, same separators, same
+ * wording. Experiment 1 prints `24.00 *C` with two spaces around the pipe
+ * because its sketch does; experiment 7 prints `Temp: 31°C, Humidity: 45%`
+ * because its sketch does. If these drifted from the listing on screen the
+ * feature would be worse than not having it.
+ *
+ * These are NOT written into the showreel's own log buffer. They are derived
+ * from the current reading and rendered as a distinct trailing line — see
+ * StaticSimulator.tsx — because the scripted log is a record of what the
+ * PLAYBACK showed, and appending to it would make a student's slider look
+ * like part of a run that never happened.
+ */
+const LIVE_SERIAL: Readonly<Record<number, (s: ShowreelSensors) => string[]>> = {
+  1: (s) => {
+    if (typeof s.temperature !== 'number' || typeof s.humidity !== 'number') return []
+    const line = `Temperature: ${s.temperature.toFixed(2)} *C  |  Humidity: ${s.humidity.toFixed(2)} %`
+    return s.temperature > EXP1_LED_THRESHOLD ? [line, 'ALERT: High Temperature! LED ON'] : [line]
+  },
+  2: (s) => {
+    if (typeof s.distance !== 'number') return []
+    const motion = s.motion === true
+    const out = [`Motion: ${motion ? 1 : 0} | Range: ${Math.round(s.distance)} cm`]
+    if (motion && s.distance < EXP2_CLOSE_THRESHOLD_CM) out.push('WARNING: Intruder Detected close by!')
+    else if (motion) out.push('Notice: Motion detected at safe distance.')
+    return out
+  },
+  4: (s) => {
+    if (typeof s.flowRate !== 'number') return []
+    const out = [`Current Flow Rate: ${s.flowRate.toFixed(2)} L/min`]
+    if (s.flowRate > EXP4_FLOW_THRESHOLD) out.push('WARNING: High flow rate detected!')
+    return out
+  },
+  7: (s) => {
+    if (typeof s.temperature !== 'number' || typeof s.humidity !== 'number') return []
+    const out = [`Temp: ${Math.round(s.temperature)}°C, Humidity: ${Math.round(s.humidity)}%`]
+    if (s.temperature > EXP7_TEMP_THRESHOLD) out.push('CRITICAL: Hot room! Turn on AC.')
+    return out
+  },
+  8: (s) => {
+    if (typeof s.tempProbe !== 'number') return []
+    const out = [`DS18B20 Temperature: ${s.tempProbe.toFixed(1)} °C`]
+    if (s.tempProbe > EXP8_TEMP_THRESHOLD) out.push('HIGH TEMP WARNING: Liquid boiling!')
+    return out
+  },
+  12: (s) => {
+    if (typeof s.bpm !== 'number') return []
+    const temp = typeof s.tempProbe === 'number' ? s.tempProbe : 36.5
+    const bpmLow = s.bpm < EXP12_BPM_LOW
+    const bpmHigh = s.bpm > EXP12_BPM_HIGH
+    // The sketch's own wording: NORMAL, or ALERT with the offending half named.
+    const status = bpmHigh
+      ? 'ALERT BPM HIGH (Tachycardia)'
+      : bpmLow
+        ? 'ALERT BPM LOW (Bradycardia)'
+        : 'NORMAL'
+    return [`Temp: ${temp.toFixed(1)}C  BPM: ${Math.round(s.bpm)}  Status: ${status} -> ThingSpeak updated`]
+  },
+}
+
+export function liveSerialFor(
+  experimentId: number | undefined,
+  sensors: ShowreelSensors,
+): string[] {
+  const build = experimentId === undefined ? undefined : LIVE_SERIAL[experimentId]
+  return build ? build(sensors) : []
+}
+
+/**
  * The AUTHORED value a slider's own part/prop was placed with, in
  * `circuits.ts` — the number a real bench would read before anyone touched
  * anything, e.g. the 24 °C `dht.props.temperature` experiment 1's circuit was

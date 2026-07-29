@@ -145,7 +145,17 @@ export function StaticSimulator({
    * it. See showreel/useSensorOverride.ts and ./showreel/sensorOverrides.ts.
    */
   const sensorOverride = useSensorOverride(experiment?.id, showreel.frame, doc)
-  const logRef = useStickToBottom(showreel.serialLines.length)
+  /**
+   * Re-stick on the LIVE lines too, not just the scripted ones.
+   *
+   * They are appended under the run, so a log that only re-scrolled when the
+   * playback printed something left a student's own reading below the fold —
+   * the feature worked and was invisible. Summing the two counts is enough:
+   * the live block changes length when a threshold is crossed, and its
+   * CONTENT changing without its length changing (45 °C to 46 °C) does not
+   * move the scroll height, so there is nothing to chase there.
+   */
+  const logRef = useStickToBottom(showreel.serialLines.length + sensorOverride.liveSerial.length)
   const [fullscreenRef, fullscreen] = useFullscreenToggle<HTMLDivElement>()
   /**
    * The panel's OWN width, not the viewport's — see useContainerWidth.ts for
@@ -461,7 +471,11 @@ export function StaticSimulator({
                     Serial monitor
                   </h3>
                 </div>
-                <SerialLog lines={showreel.serialLines} scrollRef={logRef} />
+                <SerialLog
+                  lines={showreel.serialLines}
+                  liveLines={sensorOverride.liveSerial}
+                  scrollRef={logRef}
+                />
               </div>
             )}
           </div>
@@ -572,9 +586,23 @@ function boardNameOf(doc: CircuitDoc, experiment: Experiment): string {
  */
 function SerialLog({
   lines,
+  liveLines,
   scrollRef,
 }: {
   lines: SerialLine[]
+  /**
+   * What the sketch would print for the reading the student has dialled in —
+   * see sensorOverrides.ts's `LIVE_SERIAL`.
+   *
+   * Kept OUT of `lines` on purpose. That list is a record of what the scripted
+   * playback actually showed, timestamped as it went; these are derived from
+   * the controls this instant and change as fast as a slider moves. Merging
+   * them would put a hundred entries a second into a log that is supposed to
+   * read like a run, and would make a student's own input indistinguishable
+   * from the canned sequence. So they sit under it, marked as live, with no
+   * timestamp — because nothing happened at a time.
+   */
+  liveLines: string[]
   scrollRef: React.RefObject<HTMLDivElement | null>
 }) {
   return (
@@ -585,7 +613,7 @@ function SerialLog({
       aria-live="off"
       aria-label="Serial monitor output"
     >
-      {lines.length === 0 ? (
+      {lines.length === 0 && liveLines.length === 0 ? (
         <span className="text-[#566573]">Waiting for data…</span>
       ) : (
         lines.map((line) => (
@@ -593,6 +621,21 @@ function SerialLog({
             <span className="text-[#566573]">[{line.ts}]</span> {line.msg}
           </div>
         ))
+      )}
+
+      {/* The student's own reading, under the run and visibly not part of it.
+          A left rule and the accent colour rather than a timestamp: these
+          lines are what the sketch WOULD print for the value now on the
+          slider, which is a different kind of claim from "this was printed at
+          12:04:11" and should not be dressed as one. */}
+      {liveLines.length > 0 && (
+        <div className="mt-1.5 border-l-2 border-[#1477d1] pl-2">
+          {liveLines.map((msg) => (
+            <div key={msg} className="break-words text-[#1477d1]">
+              {msg}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

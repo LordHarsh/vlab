@@ -24,6 +24,13 @@ const eslintConfig = defineConfig([
     // own eslint config and dependencies we do not install. Linting it reported
     // 199 errors and 1,770 warnings against code we must not edit.
     "vendor/**",
+    // Git worktrees for background agents live inside the repo, so a bare
+    // `eslint .` walks into a SECOND full checkout — including the `vendor/**`
+    // above, whose ignore pattern is relative to the root and does not match
+    // it there. That reported 142 errors against a copy of code this config
+    // already declares out of scope, which makes the gate useless exactly
+    // while an agent is running. Nothing here is ever built or shipped.
+    ".claude/worktrees/**",
   ]),
   {
     /**
