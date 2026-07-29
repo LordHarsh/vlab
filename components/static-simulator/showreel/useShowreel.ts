@@ -143,8 +143,14 @@ export function useShowreel(experimentId: number | undefined) {
    * a dependency of it — depending on it would tear the whole loop down and
    * rebuild it on every click, which is also where `elapsed`/`serialLines`
    * live, and a rebuild for a pause would show as a jump back to t = 0.
+   *
+   * STARTS PAUSED, on the owner's instruction. A panel that is already playing
+   * the moment the page loads has answered a question the student never asked,
+   * and twelve of them on the harness page all animating at once is noise. The
+   * button reads "Start simulation" until they press it, which is also what
+   * the tool this borrows its shape from does.
    */
-  const [manualPause, setManualPause] = useState(false)
+  const [manualPause, setManualPause] = useState(true)
   const pausedRef = useRef(manualPause)
   pausedRef.current = manualPause
   /** Holds the main effect's current `apply`, so the click handler below can

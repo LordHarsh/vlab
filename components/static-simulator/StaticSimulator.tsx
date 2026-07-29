@@ -16,6 +16,7 @@ import {
   WorkspaceToolbar,
 } from './features/WorkspaceChrome'
 import type { ColourSelection } from './features/colours'
+import { useInertToast } from './features/useInertToast'
 import { docBounds } from './features/fit'
 import { useContainerWidth } from './useContainerWidth'
 import { languageForPlatform } from './utils/highlight'
@@ -153,6 +154,12 @@ export function StaticSimulator({
    */
   const panelWidth = useContainerWidth(fullscreenRef)
   /**
+   * Why a control that cannot act did not act. Rendered INSIDE this panel, not
+   * portalled to the body — see useInertToast.ts for why that matters to a
+   * component with a fullscreen mode.
+   */
+  const toast = useInertToast()
+  /**
    * Defaults OPEN, matching what every lesson page has shown since this
    * panel shipped — closing it is a new option, not a new default a student
    * would have to discover before seeing the code at all.
@@ -268,8 +275,35 @@ export function StaticSimulator({
     <div
       ref={fullscreenRef}
       data-fullscreen={fullscreen.active ? 'on' : 'off'}
-      className="static-sim w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-white"
+      className="static-sim relative w-full max-w-full overflow-hidden rounded-[5px] border border-[#dfe3e8] bg-white"
     >
+      {/* The explaining toast. `relative` on the panel root above is what
+          anchors it, and keeping it inside this subtree is what keeps it
+          visible in fullscreen — a body-level portal is not painted while a
+          fullscreen element is up. `aria-live="polite"` so a screen reader
+          hears the same explanation a sighted student reads, without it
+          interrupting whatever is being read at the time.
+
+          NEAR THE TOP, not the bottom. This panel is around a thousand pixels
+          tall once the code and the serial log are under the canvas, so a
+          toast pinned to its bottom edge appeared a screenful below the button
+          that raised it — which is the same as not appearing. Every control
+          that raises one lives in the toolbar, so it belongs just under it. */}
+      {/* Inline `top`, not an arbitrary Tailwind class: `top-[84px]` came out
+          of the build as `top: 0` and put the message over the panel's title.
+          One number that has to be right is not worth a JIT round trip. */}
+      <div
+        aria-live="polite"
+        style={{ top: TOAST_TOP }}
+        className="pointer-events-none absolute inset-x-0 z-[60] flex justify-center px-3"
+      >
+        {toast.message && (
+          <p className="max-w-[min(30rem,100%)] rounded-[6px] bg-[#34495e] px-3 py-2 text-center text-[12px] leading-snug text-white shadow-lg">
+            {toast.message}
+          </p>
+        )}
+      </div>
+
       {/* The document bar, above the toolbar, where the product puts the design
           name. It carries the two facts a lesson page needs and the toolbar
           cannot: which experiment this is, and that it is a reference build. */}
@@ -319,6 +353,7 @@ export function StaticSimulator({
         onToggleCode={() => setCodeOpen((open) => !open)}
         selection={selection}
         onPickColour={handlePickColour}
+        onNotify={toast.show}
         wide={layout.wide}
       />
 
@@ -435,6 +470,7 @@ export function StaticSimulator({
             doc={coloredDoc ?? doc}
             frame={sensorOverride.frame}
             wide={layout.wide}
+            onNotify={toast.show}
           />
         )}
       </div>
@@ -451,6 +487,15 @@ export function StaticSimulator({
  * prevented is specifically the fit bottoming out at that floor and clipping
  * the drawing instead of shrinking it.
  */
+
+/**
+ * Where the explaining toast sits, measured down from the panel's top edge.
+ *
+ * Clears the document bar and the toolbar — every control that raises a toast
+ * is in one of those two — so the message lands on the canvas just below the
+ * button that was pressed, rather than over the panel's own title.
+ */
+const TOAST_TOP = 88
 
 /** The code/rail column's width when the panel is wide enough for one. */
 const SIDE_PANEL_W = 380

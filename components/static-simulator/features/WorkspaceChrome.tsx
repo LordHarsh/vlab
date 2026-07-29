@@ -84,20 +84,59 @@ import { LED_OPTIONS, WIRE_OPTIONS, type ColourSelection } from './colours'
  * the artwork is not showing. See showreel/useShowreel.ts.
  */
 
-/* ── Shared inert chrome ──────────────────────────────────────────────────
+/* ── The unavailable tools ────────────────────────────────────────────────
  *
- * `cursor-default` and `select-none` are load-bearing, not tidiness: without
- * them a bordered box the size of a button gets a text caret on hover, which
- * is the one hover state that reads as "this is dead" rather than "this is
- * clickable". Muted foreground on the app's own greys.
+ * THEY ARE REAL BUTTONS NOW, AND THEY SAY WHY THEY CANNOT WORK.
+ *
+ * They used to be `<span>`s with `aria-hidden` and a `cursor-default`, on the
+ * reasoning that a control which can never work should not pretend to be one.
+ * The owner's judgement, looking at it, was that a row of dead grey glyphs
+ * reads as FAKE rather than as honest — and that a student who presses Delete
+ * deserves a sentence, not silence. Both are fair: the old version could not
+ * be mistaken for working, but it also could not explain itself.
+ *
+ * So each one is a `<button>` that does exactly one thing — say what it would
+ * have done and why it will not. That is a real answer to a real press, it is
+ * reachable by keyboard, and it still cannot touch the circuit.
  */
 
 const ICON_SLOT =
-  'flex h-7 w-7 shrink-0 cursor-default select-none items-center justify-center rounded-[3px] text-[#9aa3ab]'
+  'flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-[3px] text-[#9aa3ab] ' +
+  'transition-colors hover:bg-[#f1f1f3] hover:text-[#566573] focus:outline-none ' +
+  'focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1'
 
-const CHIP =
-  'flex h-8 shrink-0 cursor-default select-none items-center gap-1.5 rounded-[3px] ' +
-  'border border-[#dfe3e8] bg-white px-2.5 text-[11px] font-medium text-[#9aa3ab]'
+/**
+ * One reason, reused wherever the answer is the same: this circuit's wiring is
+ * the lab sheet's, and the panel exists to show it rather than to change it.
+ */
+const LOCKED_REASON = 'The reference circuit is fixed — its wiring and code match the lab sheet.'
+
+function InertTool({
+  label,
+  reason,
+  onNotify,
+  children,
+  className = '',
+}: {
+  /** The accessible name — what this control WOULD do. */
+  label: string
+  reason: string
+  onNotify: (message: string) => void
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={() => onNotify(reason)}
+      className={`${ICON_SLOT} ${className}`}
+    >
+      {children}
+    </button>
+  )
+}
 
 function Divider() {
   return <span className="mx-0.5 hidden h-5 w-px shrink-0 bg-[#dfe3e8] sm:block" />
@@ -124,6 +163,7 @@ export function WorkspaceToolbar({
   onToggleCode,
   selection,
   onPickColour,
+  onNotify,
   wide,
 }: {
   boardLabel: string
@@ -135,9 +175,11 @@ export function WorkspaceToolbar({
   onToggleRun?: () => void
   codeOpen: boolean
   onToggleCode: () => void
-  /** The wire/LED selected on the canvas right now, if any — see ColourPickerOverlay.tsx. */
+  /** The wire/LED selected on the canvas right now, if any. */
   selection: ColourSelection | null
   onPickColour: (value: string) => void
+  /** Says why a control that cannot act did not act — see useInertToast.ts. */
+  onNotify: (message: string) => void
   /**
    * Whether the PANEL has room for the decorative left cluster. Measured, not
    * a `sm:` — on a lesson page the window is wide while the panel is ~720 px,
@@ -148,57 +190,100 @@ export function WorkspaceToolbar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-[#dfe3e8] bg-white px-2 py-1.5 sm:px-3">
-      {/* Edit tools. Decoration, and announced as such — `aria-hidden` keeps a
-          screen reader out of eleven controls that do nothing. */}
-      <div className={`${wide ? 'flex' : 'hidden'} items-center gap-0.5`} aria-hidden="true">
-        <span className={ICON_SLOT}>
+      {/* The tools this panel does not have. Real buttons that explain
+          themselves — see InertTool above for why they stopped being
+          `aria-hidden` spans. */}
+      <div className={`${wide ? 'flex' : 'hidden'} items-center gap-0.5`}>
+        <InertTool label="Copy" reason={LOCKED_REASON} onNotify={onNotify}>
           <Copy className="h-4 w-4" />
-        </span>
-        <span className={ICON_SLOT}>
+        </InertTool>
+        <InertTool label="Paste" reason={LOCKED_REASON} onNotify={onNotify}>
           <ClipboardPaste className="h-4 w-4" />
-        </span>
-        <span className={ICON_SLOT}>
+        </InertTool>
+        <InertTool
+          label="Delete"
+          reason="Nothing can be deleted here — the parts and wiring are the lab sheet's."
+          onNotify={onNotify}
+        >
           <Trash2 className="h-4 w-4" />
-        </span>
+        </InertTool>
 
         <Divider />
 
-        <span className={ICON_SLOT}>
+        <InertTool
+          label="Undo"
+          reason="There is nothing to undo — this circuit cannot be changed."
+          onNotify={onNotify}
+        >
           <Undo2 className="h-4 w-4" />
-        </span>
-        <span className={ICON_SLOT}>
+        </InertTool>
+        <InertTool
+          label="Redo"
+          reason="There is nothing to redo — this circuit cannot be changed."
+          onNotify={onNotify}
+        >
           <Redo2 className="h-4 w-4" />
-        </span>
-        <span className={ICON_SLOT}>
+        </InertTool>
+        <InertTool
+          label="Notes"
+          reason="Notes are not part of the reference circuit."
+          onNotify={onNotify}
+        >
           <MessageSquare className="h-4 w-4" />
-        </span>
-        <span className={ICON_SLOT}>
+        </InertTool>
+        <InertTool
+          label="Show or hide parts"
+          reason="Every part in this circuit is shown — none can be hidden."
+          onNotify={onNotify}
+        >
           <Eye className="h-4 w-4" />
-        </span>
+        </InertTool>
 
         <Divider />
+      </div>
 
-        {/* Wire colour swatch and wire-routing style, the two dropdowns that sit
-            here in the product. Drawn flat rather than as `<select>`s: a real
-            select is focusable and openable however little it changes. */}
-        <span className="ml-0.5 hidden h-7 shrink-0 cursor-default select-none items-center gap-1 rounded-[3px] border border-[#dfe3e8] px-1.5 md:flex">
-          <span className="h-3.5 w-3.5 rounded-[2px] bg-[#4caf50]" />
-          <ChevronDown className="h-3 w-3 text-[#9aa3ab]" />
-        </span>
-        <span className="hidden h-7 shrink-0 cursor-default select-none items-center gap-1 rounded-[3px] border border-[#dfe3e8] px-1.5 md:flex">
+      {/* THE COLOUR DROPDOWN, in the slot the decorative one used to occupy.
+          It is the same control the product puts here and it is now the real
+          one — the panel's only way to recolour a wire or an LED. Outside the
+          cluster above so it survives at narrow widths, where it drops its
+          label and keeps the swatch. */}
+      <ColourSwatchControl
+        selection={selection}
+        onPick={onPickColour}
+        onNotify={onNotify}
+        showLabel={wide}
+      />
+
+      <span className={`${wide ? 'flex' : 'hidden'} items-center gap-0.5`}>
+        <InertTool
+          label="Wire routing style"
+          reason="Wire routing is fixed — the leads are drawn as the lab sheet runs them."
+          onNotify={onNotify}
+          className="h-7 w-auto gap-1 rounded-[3px] border border-[#dfe3e8] px-1.5"
+        >
           <span className="h-[3px] w-5 rounded-full bg-[#9aa3ab]" />
           <ChevronDown className="h-3 w-3 text-[#9aa3ab]" />
-        </span>
+        </InertTool>
 
         <Divider />
 
-        <span className={`${ICON_SLOT} hidden md:flex`}>
+        <InertTool
+          label="Bend wire"
+          reason="Wire routing is fixed — the leads are drawn as the lab sheet runs them."
+          onNotify={onNotify}
+          className="hidden md:flex"
+        >
           <Spline className="h-4 w-4" />
-        </span>
-        <span className={`${ICON_SLOT} hidden md:flex`}>
+        </InertTool>
+        <InertTool
+          label="Flip part"
+          reason="Parts cannot be moved or flipped — their pins are the lab sheet's."
+          onNotify={onNotify}
+          className="hidden md:flex"
+        >
           <FlipHorizontal className="h-4 w-4" />
-        </span>
-      </div>
+        </InertTool>
+      </span>
 
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
         {/* The Code marker is now a real toggle — see the file header for why
@@ -220,13 +305,6 @@ export function WorkspaceToolbar({
           Code
         </button>
 
-        {/* THE REAL COLOUR CONTROL — see the file header. Rendered only once
-            something is selected on the canvas; there is nothing to swatch
-            or recolour otherwise, and a permanently-visible but disabled
-            button would be exactly the "live-looking but dead" control this
-            toolbar is built to avoid everywhere else. */}
-        {selection && <ColourSwatchControl selection={selection} onPick={onPickColour} />}
-
         {hasTimeline && (
           <RunState
             isRunning={isRunning}
@@ -236,12 +314,12 @@ export function WorkspaceToolbar({
           />
         )}
 
+        {/* No "Send To" here any more. It was the one piece of furniture that
+            named a capability this app does not have at all — there is no
+            board to send a sketch to — so it was the least honest thing in the
+            bar and the easiest to simply not draw. */}
         <span className="hidden shrink-0 select-none font-mono text-[10px] uppercase tracking-[0.08em] text-[#566573] lg:inline">
           {boardLabel}
-        </span>
-
-        <span aria-hidden="true" className={`${CHIP} hidden sm:flex`}>
-          Send To
         </span>
       </div>
     </div>
@@ -371,28 +449,41 @@ const RunState = React.memo(function RunState({
  * a fresh shape on the canvas, which is a new `selection.id`/`kind` pair.
  *
  * CLOSES WITHOUT CLEARING on outside-click, so dismissing the dropdown still
- * leaves the highlight ring on the canvas and the swatch in the toolbar —
- * clicking the swatch button again reopens the same palette. Escape/clicking
- * blank canvas clears the selection entirely, and with it this control —
- * that listener lives in ColourPickerOverlay.tsx, since the selection state
- * itself lives above both this control and that overlay, in
- * StaticSimulator.tsx.
+ * leaves the selection outline on the canvas and the swatch in the toolbar —
+ * clicking the swatch button again reopens the same palette. Clicking blank
+ * canvas clears the selection, and this control falls back to its empty state.
+ *
+ * IT IS ALWAYS PRESENT, even with nothing selected. It used to render only
+ * once a wire or an LED had been picked, which meant the control a student is
+ * being asked to use appeared out of nowhere AFTER they had already worked out
+ * what to click. It now sits permanently where the product puts it, and
+ * pressing it with nothing selected says what to select. That is the same
+ * bargain the tools around it make: present, honest, and it explains itself.
  */
 function ColourSwatchControl({
   selection,
   onPick,
+  onNotify,
+  showLabel,
 }: {
-  selection: ColourSelection
+  selection: ColourSelection | null
   onPick: (value: string) => void
+  onNotify: (message: string) => void
+  /** Drops to swatch-and-chevron when the panel is too narrow for the words. */
+  showLabel: boolean
 }) {
-  const [open, setOpen] = React.useState(true)
+  const [open, setOpen] = React.useState(false)
   const wrapRef = React.useRef<HTMLDivElement>(null)
-  const options = selection.kind === 'part' ? LED_OPTIONS : WIRE_OPTIONS
-  const swatch = options.find((o) => o.value === selection.current)?.swatch ?? '#9aa3ab'
+  const options = selection?.kind === 'part' ? LED_OPTIONS : WIRE_OPTIONS
+  const swatch = selection
+    ? (options.find((o) => o.value === selection.current)?.swatch ?? '#9aa3ab')
+    : '#c7ccd1'
 
+  const selectionKey = selection ? `${selection.kind}:${selection.id}` : null
   React.useEffect(() => {
-    setOpen(true)
-  }, [selection.kind, selection.id])
+    if (selectionKey) setOpen(true)
+    else setOpen(false)
+  }, [selectionKey])
 
   React.useEffect(() => {
     if (!open) return
@@ -403,30 +494,42 @@ function ColourSwatchControl({
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [open])
 
+  const label = selection?.label ?? 'Colour'
+
   return (
     <div ref={wrapRef} className="relative flex shrink-0">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-haspopup="true"
-        title={selection.label}
-        className="flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border border-[#dfe3e8] bg-white px-2 text-[11px] font-medium text-[#34495e] transition-colors hover:border-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+        onClick={() => {
+          if (!selection) {
+            onNotify('Click a wire or an LED on the board first, then pick its colour here.')
+            return
+          }
+          setOpen((o) => !o)
+        }}
+        aria-expanded={selection ? open : undefined}
+        aria-haspopup={selection ? 'true' : undefined}
+        title={selection ? label : 'Wire and LED colour — select one on the board first'}
+        className={`flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border bg-white px-2 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+          selection
+            ? 'border-[#dfe3e8] text-[#34495e] hover:border-[#1477d1]'
+            : 'border-[#e6e9ec] text-[#9aa3ab] hover:border-[#dfe3e8]'
+        }`}
       >
         <span
           className="h-3.5 w-3.5 shrink-0 rounded-[2px] border border-black/10"
           style={{ background: swatch }}
           aria-hidden="true"
         />
-        <span className="hidden sm:inline">{selection.label}</span>
+        {showLabel && <span>{label}</span>}
         <ChevronDown className="h-3 w-3 shrink-0 text-[#9aa3ab]" aria-hidden="true" />
       </button>
 
-      {open && (
+      {open && selection && (
         <div
           role="menu"
-          aria-label={selection.label}
-          className="absolute right-0 top-[calc(100%+4px)] z-50 grid w-[176px] grid-cols-4 gap-1 rounded-[6px] border border-[#dfe3e8] bg-white p-2 shadow-lg"
+          aria-label={label}
+          className="absolute left-0 top-[calc(100%+4px)] z-50 grid w-[176px] grid-cols-4 gap-1 rounded-[6px] border border-[#dfe3e8] bg-white p-2 shadow-lg"
         >
           {options.map((opt) => {
             const isCurrent = opt.value === selection.current
@@ -554,9 +657,12 @@ export function ComponentsRail({
   doc,
   frame,
   wide,
+  onNotify,
 }: {
   doc: CircuitDoc
   frame: ShowreelFrame
+  /** Same explaining-toast the toolbar uses. */
+  onNotify: (message: string) => void
   /**
    * Whether the PANEL (not the window) has room for this to sit beside the
    * canvas — see StaticSimulator.tsx's `panelLayout` and useContainerWidth.ts.
@@ -593,10 +699,16 @@ export function ComponentsRail({
       }`}
       style={wide ? { width: RAIL_W } : undefined}
     >
-      {/* The rail head: category dropdown, view switch, search. All three are
-          drawn, none are wired. */}
+      {/* The rail head: category dropdown, view switch, search. None of the
+          three can act, and each says so when pressed. */}
       <div className="flex items-start gap-2 border-b border-[#dfe3e8] px-3 py-2.5">
-        <div className="min-w-0 flex-1 cursor-default select-none rounded-[3px] border border-[#dfe3e8] px-2.5 py-1">
+        <button
+          type="button"
+          onClick={() =>
+            onNotify('This list is fixed — it is the parts this circuit is built from.')
+          }
+          className="min-w-0 flex-1 select-none rounded-[3px] border border-[#dfe3e8] px-2.5 py-1 text-left transition-colors hover:border-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+        >
           <div className="text-[9px] uppercase leading-tight tracking-[0.08em] text-[#9aa3ab]">
             Components
           </div>
@@ -606,21 +718,28 @@ export function ComponentsRail({
             </span>
             <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9aa3ab]" aria-hidden="true" />
           </div>
-        </div>
-        <span aria-hidden="true" className={`${ICON_SLOT} mt-1.5 border border-[#dfe3e8]`}>
+        </button>
+        <InertTool
+          label="Change view"
+          reason="There is one view of this list — every part in the circuit."
+          onNotify={onNotify}
+          className="mt-1.5 border border-[#dfe3e8]"
+        >
           <LayoutGrid className="h-3.5 w-3.5" />
-        </span>
+        </InertTool>
       </div>
 
-      {/* A search field in the product's position, drawn in its disabled state:
-          grey field, grey glyph, no caret, no focus ring, out of the tab order
-          and out of the accessibility tree. There is nothing to search — the
-          whole list is eight tiles and all of them are visible. */}
-      <div className="px-3 pb-2.5 pt-2.5" aria-hidden="true">
-        <div className="flex h-8 cursor-default select-none items-center gap-2 rounded-[3px] border border-[#e6e9ec] bg-[#f4f5f6] px-2.5">
-          <Search className="h-3.5 w-3.5 shrink-0 text-[#b6bdc4]" />
+      {/* A search field in the product's position. Pressing it explains that
+          there is nothing to search — the whole list is on screen. */}
+      <div className="px-3 pb-2.5 pt-2.5">
+        <button
+          type="button"
+          onClick={() => onNotify('Nothing to search — every part in this circuit is listed below.')}
+          className="flex h-8 w-full select-none items-center gap-2 rounded-[3px] border border-[#e6e9ec] bg-[#f4f5f6] px-2.5 text-left transition-colors hover:border-[#dfe3e8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+        >
+          <Search className="h-3.5 w-3.5 shrink-0 text-[#b6bdc4]" aria-hidden="true" />
           <span className="text-[12px] text-[#b6bdc4]">Search</span>
-        </div>
+        </button>
       </div>
 
       <ul className="grid grid-cols-3 gap-2 px-3 pb-3">
