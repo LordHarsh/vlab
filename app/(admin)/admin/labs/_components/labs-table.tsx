@@ -42,36 +42,36 @@ export function LabsTable({ labs }: { labs: Lab[] }) {
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-[#f2f2f2]">
-          <th className="px-6 py-3 text-left font-medium text-[#6a6a6a]">Title</th>
-          <th className="px-6 py-3 text-left font-medium text-[#6a6a6a]">Slug</th>
-          <th className="px-6 py-3 text-left font-medium text-[#6a6a6a]">Difficulty</th>
-          <th className="px-6 py-3 text-left font-medium text-[#6a6a6a]">Experiments</th>
-          <th className="px-6 py-3 text-left font-medium text-[#6a6a6a]">Published</th>
-          <th className="px-6 py-3 text-left font-medium text-[#6a6a6a]">Actions</th>
+        <tr className="border-b border-vlab-surface">
+          <th className="px-6 py-3 text-left font-medium text-vlab-muted">Title</th>
+          <th className="px-6 py-3 text-left font-medium text-vlab-muted">Slug</th>
+          <th className="px-6 py-3 text-left font-medium text-vlab-muted">Difficulty</th>
+          <th className="px-6 py-3 text-left font-medium text-vlab-muted">Experiments</th>
+          <th className="px-6 py-3 text-left font-medium text-vlab-muted">Published</th>
+          <th className="px-6 py-3 text-left font-medium text-vlab-muted">Actions</th>
         </tr>
       </thead>
       <tbody>
         {labs.map((lab) => (
-          <tr key={lab.id} className="border-b border-[#f2f2f2] last:border-0 hover:bg-[#fafafa] transition-colors">
-            <td className="px-6 py-3 font-medium text-[#222222]">{lab.title}</td>
-            <td className="px-6 py-3 text-[#6a6a6a] font-mono text-xs">{lab.slug}</td>
+          <tr key={lab.id} className="border-b border-vlab-surface last:border-0 hover:bg-vlab-surface-alt transition-colors">
+            <td className="px-6 py-3 font-medium text-vlab-ink">{lab.title}</td>
+            <td className="px-6 py-3 text-vlab-muted font-mono text-xs">{lab.slug}</td>
             <td className="px-6 py-3">
               {lab.difficulty ? (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#f2f2f2] text-[#6a6a6a] capitalize">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-vlab-surface text-vlab-muted capitalize">
                   {lab.difficulty}
                 </span>
               ) : (
-                <span className="text-[#c1c1c1]">—</span>
+                <span className="text-vlab-300">—</span>
               )}
             </td>
-            <td className="px-6 py-3 text-[#6a6a6a]">{lab.experimentCount}</td>
+            <td className="px-6 py-3 text-vlab-muted">{lab.experimentCount}</td>
             <td className="px-6 py-3">
               <button
                 onClick={() => handlePublishToggle(lab)}
                 disabled={pending && pendingId === lab.id}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-                  lab.published ? 'bg-[#ff385c]' : 'bg-[#c1c1c1]'
+                  lab.published ? 'bg-vlab-600' : 'bg-vlab-rule-strong'
                 }`}
               >
                 <span
@@ -85,7 +85,7 @@ export function LabsTable({ labs }: { labs: Lab[] }) {
               <div className="flex items-center gap-2">
                 <Link
                   href={`/admin/labs/${lab.slug}`}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#6a6a6a] bg-[#f2f2f2] hover:bg-[#e8e8e8] transition-colors"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-vlab-muted bg-vlab-surface hover:bg-vlab-rule transition-colors"
                 >
                   <Pencil className="w-3 h-3" />
                   Edit
@@ -93,7 +93,7 @@ export function LabsTable({ labs }: { labs: Lab[] }) {
                 <button
                   onClick={() => handleDelete(lab)}
                   disabled={pending && pendingId === lab.id}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#ff385c] bg-[#fff0f2] hover:bg-[#ffe0e5] transition-colors disabled:opacity-50"
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-vlab-600 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
                 >
                   <Trash2 className="w-3 h-3" />
                   Delete

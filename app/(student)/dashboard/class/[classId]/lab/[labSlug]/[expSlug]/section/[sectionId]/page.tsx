@@ -178,7 +178,7 @@ export default async function SectionPage({
         const quizId: string | undefined = c?.quiz_id
         if (!quizId) {
           return (
-            <div className="py-8 text-center text-[#6a6a6a]">Quiz not configured.</div>
+            <div className="py-8 text-center text-vlab-muted">Quiz not configured.</div>
           )
         }
         return <QuizSection quizId={quizId} classId={classId} />
@@ -187,7 +187,7 @@ export default async function SectionPage({
         const formId: string | undefined = c?.form_id
         if (!formId) {
           return (
-            <div className="py-8 text-center text-[#6a6a6a]">
+            <div className="py-8 text-center text-vlab-muted">
               Feedback form not configured.
             </div>
           )
@@ -208,19 +208,40 @@ export default async function SectionPage({
         return <VideoSection content={c} />
       default:
         return (
-          <div className="py-8 text-center text-[#6a6a6a]">
+          <div className="py-8 text-center text-vlab-muted">
             Unknown section type: {section!.type}
           </div>
         )
     }
   }
 
+  /* The reference titles every sub-page with a bare `h3.page-name` in blue —
+     "Aim", "Theory", "Procedure" — never omitting it, so a printed or shared
+     page always says which part of the experiment it is. Sections with no
+     stored title fall back to the canonical step name rather than rendering
+     headless. */
+  const pageName = section.title ?? SECTION_PAGE_NAME[section.type] ?? section.type
+
   return (
     <div>
-      {section.title && (
-        <h1 className="text-xl font-bold text-[#222222] mb-6">{section.title}</h1>
-      )}
+      <h1 className="vlab-page-title mb-5 border-b border-vlab-rule pb-3">{pageName}</h1>
       {renderSection()}
     </div>
   )
+}
+
+/** Canonical step names, matching the reference's fixed sidebar sequence. */
+const SECTION_PAGE_NAME: Record<string, string> = {
+  aim: 'Aim',
+  theory: 'Theory',
+  components: 'Components',
+  circuit: 'Circuit',
+  procedure: 'Procedure',
+  code: 'Code',
+  simulation: 'Simulation',
+  quiz: 'Pre Test',
+  feedback: 'Feedback',
+  references: 'References',
+  text: 'Reading',
+  video: 'Video',
 }

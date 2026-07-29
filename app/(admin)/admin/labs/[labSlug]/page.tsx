@@ -54,7 +54,7 @@ export default async function LabDetailPage({ params }: { params: Promise<{ labS
     <div className="p-8">
       <Link
         href="/admin/labs"
-        className="inline-flex items-center gap-1.5 text-sm text-[#6a6a6a] hover:text-[#222222] mb-6 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-vlab-muted hover:text-vlab-ink mb-6 transition-colors"
       >
         <ChevronLeft className="w-4 h-4" />
         Back to Labs
@@ -62,12 +62,12 @@ export default async function LabDetailPage({ params }: { params: Promise<{ labS
 
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-[#222222]">{lab.title}</h1>
-          <p className="text-sm text-[#6a6a6a] mt-1 font-mono">{lab.slug}</p>
+          <h1 className="text-2xl font-semibold text-vlab-ink">{lab.title}</h1>
+          <p className="text-sm text-vlab-muted mt-1 font-mono">{lab.slug}</p>
         </div>
         <span
           className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-            lab.published ? 'bg-[#e6f9f5] text-[#00a699]' : 'bg-[#f2f2f2] text-[#6a6a6a]'
+            lab.published ? 'bg-green-50 text-vlab-green-ink' : 'bg-vlab-surface text-vlab-muted'
           }`}
         >
           {lab.published ? 'Published' : 'Draft'}
@@ -78,10 +78,10 @@ export default async function LabDetailPage({ params }: { params: Promise<{ labS
         {/* Left: Lab info editor */}
         <div className="lg:col-span-1">
           <div
-            className="bg-white rounded-2xl p-6"
-            style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+            className="bg-white rounded-lg p-6"
+            style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
           >
-            <h2 className="text-base font-semibold text-[#222222] mb-4">Lab Settings</h2>
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">Lab Settings</h2>
             <LabInfoEditor lab={lab} />
           </div>
         </div>
@@ -89,11 +89,11 @@ export default async function LabDetailPage({ params }: { params: Promise<{ labS
         {/* Right: Experiments */}
         <div className="lg:col-span-2 space-y-4">
           <div
-            className="bg-white rounded-2xl p-6"
-            style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+            className="bg-white rounded-lg p-6"
+            style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
           >
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-semibold text-[#222222]">
+              <h2 className="text-base font-semibold text-vlab-ink">
                 Experiments ({experiments.length})
               </h2>
             </div>
@@ -102,12 +102,12 @@ export default async function LabDetailPage({ params }: { params: Promise<{ labS
 
           {/* Add experiment */}
           <div
-            className="bg-white rounded-2xl p-6"
-            style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+            className="bg-white rounded-lg p-6"
+            style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
           >
             <div className="flex items-center gap-2 mb-4">
-              <Plus className="w-4 h-4 text-[#ff385c]" />
-              <h2 className="text-base font-semibold text-[#222222]">Add Experiment</h2>
+              <Plus className="w-4 h-4 text-vlab-600" />
+              <h2 className="text-base font-semibold text-vlab-ink">Add Experiment</h2>
             </div>
             <AddExperimentForm labId={lab.id} labSlug={labSlug} />
           </div>

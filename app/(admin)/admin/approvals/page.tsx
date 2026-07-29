@@ -36,8 +36,8 @@ export default async function AdminApprovalsPage() {
     <div className="p-8 max-w-4xl">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-[#222222] mb-1">Educator Approvals</h1>
-        <p className="text-[#6a6a6a] text-sm">
+        <h1 className="text-2xl font-bold text-vlab-ink mb-1">Educator Approvals</h1>
+        <p className="text-vlab-muted text-sm">
           Review and approve educator sign-up requests.
         </p>
       </div>
@@ -49,27 +49,27 @@ export default async function AdminApprovalsPage() {
           { label: 'Approved', value: approvedCount, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
           { label: 'Rejected', value: rejected.length, icon: XCircle, color: 'text-red-500', bg: 'bg-red-50' },
         ].map(({ label, value, icon: Icon, color, bg }) => (
-          <div key={label} className="bg-white rounded-xl p-5 border border-[#e8e8e8]">
+          <div key={label} className="bg-white rounded-lg p-5 border border-vlab-rule">
             <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center mb-3`}>
               <Icon className={`w-5 h-5 ${color}`} />
             </div>
-            <p className="text-2xl font-bold text-[#222222]">{value}</p>
-            <p className="text-xs text-[#6a6a6a] mt-0.5">{label}</p>
+            <p className="text-2xl font-bold text-vlab-ink">{value}</p>
+            <p className="text-xs text-vlab-muted mt-0.5">{label}</p>
           </div>
         ))}
       </div>
 
       {/* Pending section */}
       <section className="mb-8">
-        <h2 className="text-base font-semibold text-[#222222] mb-4 flex items-center gap-2">
+        <h2 className="text-base font-semibold text-vlab-ink mb-4 flex items-center gap-2">
           <Clock className="w-4 h-4 text-amber-500" />
           Pending ({pending.length})
         </h2>
 
         {pending.length === 0 ? (
-          <div className="bg-white rounded-xl border border-[#e8e8e8] p-8 text-center">
-            <Users className="w-8 h-8 text-[#c1c1c1] mx-auto mb-2" />
-            <p className="text-sm text-[#6a6a6a]">No pending approvals</p>
+          <div className="bg-white rounded-lg border border-vlab-rule p-8 text-center">
+            <Users className="w-8 h-8 text-vlab-300 mx-auto mb-2" />
+            <p className="text-sm text-vlab-muted">No pending approvals</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -83,7 +83,7 @@ export default async function AdminApprovalsPage() {
       {/* Rejected section */}
       {rejected.length > 0 && (
         <section>
-          <h2 className="text-base font-semibold text-[#222222] mb-4 flex items-center gap-2">
+          <h2 className="text-base font-semibold text-vlab-ink mb-4 flex items-center gap-2">
             <XCircle className="w-4 h-4 text-red-500" />
             Rejected ({rejected.length})
           </h2>
@@ -125,29 +125,29 @@ function EducatorCard({
     : '—'
 
   return (
-    <div className="bg-white rounded-xl border border-[#e8e8e8] p-5 flex items-start gap-4">
+    <div className="bg-white rounded-lg border border-vlab-rule p-5 flex items-start gap-4">
       {/* Avatar placeholder */}
-      <div className="w-10 h-10 rounded-full bg-[#f2f2f2] flex items-center justify-center shrink-0">
-        <span className="text-sm font-semibold text-[#6a6a6a]">
+      <div className="w-10 h-10 rounded-full bg-vlab-surface flex items-center justify-center shrink-0">
+        <span className="text-sm font-semibold text-vlab-muted">
           {name.charAt(0).toUpperCase()}
         </span>
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <p className="font-semibold text-[#222222] text-sm">{name}</p>
-        <p className="text-xs text-[#6a6a6a]">{educator.email}</p>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-[#6a6a6a]">
+        <p className="font-semibold text-vlab-ink text-sm">{name}</p>
+        <p className="text-xs text-vlab-muted">{educator.email}</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-vlab-muted">
           {educator.employee_no && (
-            <span>Employee: <span className="text-[#222222]">{educator.employee_no}</span></span>
+            <span>Employee: <span className="text-vlab-ink">{educator.employee_no}</span></span>
           )}
           {educator.department && (
-            <span>Dept: <span className="text-[#222222]">{educator.department}</span></span>
+            <span>Dept: <span className="text-vlab-ink">{educator.department}</span></span>
           )}
           {educator.phone && (
-            <span>Phone: <span className="text-[#222222]">{educator.phone}</span></span>
+            <span>Phone: <span className="text-vlab-ink">{educator.phone}</span></span>
           )}
-          <span>Applied: <span className="text-[#222222]">{date}</span></span>
+          <span>Applied: <span className="text-vlab-ink">{date}</span></span>
         </div>
       </div>
 

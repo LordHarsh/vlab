@@ -31,7 +31,7 @@ export function ApprovalActions({
   if (isPending) {
     return (
       <div className="flex items-center justify-center w-16">
-        <Loader2 className="w-4 h-4 animate-spin text-[#6a6a6a]" />
+        <Loader2 className="w-4 h-4 animate-spin text-vlab-muted" />
       </div>
     )
   }

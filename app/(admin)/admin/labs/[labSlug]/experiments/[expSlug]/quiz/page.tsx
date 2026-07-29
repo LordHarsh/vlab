@@ -47,44 +47,44 @@ export default async function QuizEditorPage({
 
   return (
     <div className="p-8">
-      <div className="flex items-center gap-2 mb-6 text-sm text-[#6a6a6a]">
-        <Link href="/admin/labs" className="hover:text-[#222222] transition-colors">Labs</Link>
+      <div className="flex items-center gap-2 mb-6 text-sm text-vlab-muted">
+        <Link href="/admin/labs" className="hover:text-vlab-ink transition-colors">Labs</Link>
         <span>/</span>
-        <Link href={`/admin/labs/${labSlug}`} className="hover:text-[#222222] transition-colors">{lab.title}</Link>
+        <Link href={`/admin/labs/${labSlug}`} className="hover:text-vlab-ink transition-colors">{lab.title}</Link>
         <span>/</span>
-        <Link href={`/admin/labs/${labSlug}/experiments/${expSlug}`} className="hover:text-[#222222] transition-colors">{experiment.title}</Link>
+        <Link href={`/admin/labs/${labSlug}/experiments/${expSlug}`} className="hover:text-vlab-ink transition-colors">{experiment.title}</Link>
         <span>/</span>
-        <span className="text-[#222222]">{TYPE_LABEL[quiz.type] ?? quiz.type} Quiz</span>
+        <span className="text-vlab-ink">{TYPE_LABEL[quiz.type] ?? quiz.type} Quiz</span>
       </div>
 
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-[#222222]">{quiz.title}</h1>
+          <h1 className="text-2xl font-semibold text-vlab-ink">{quiz.title}</h1>
           <span className="inline-flex items-center mt-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-pink-50 text-pink-700">
             {TYPE_LABEL[quiz.type] ?? quiz.type}
           </span>
         </div>
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-[#f2f2f2] text-[#6a6a6a]">
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-vlab-surface text-vlab-muted">
           {(questions ?? []).length} question{(questions ?? []).length !== 1 ? 's' : ''}
         </span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1">
-          <div className="bg-white rounded-2xl p-6" style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}>
-            <h2 className="text-base font-semibold text-[#222222] mb-4">Quiz Settings</h2>
+          <div className="bg-white rounded-lg p-6" style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}>
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">Quiz Settings</h2>
             <QuizSettingsForm quiz={quiz} />
           </div>
         </div>
         <div className="lg:col-span-2 space-y-4">
-          <div className="bg-white rounded-2xl p-6" style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}>
-            <h2 className="text-base font-semibold text-[#222222] mb-4">
+          <div className="bg-white rounded-lg p-6" style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}>
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">
               Active Questions ({(questions ?? []).length})
             </h2>
             <QuestionsList questions={questions ?? []} />
           </div>
-          <div className="bg-white rounded-2xl p-6" style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}>
-            <h2 className="text-base font-semibold text-[#222222] mb-4">Add Question</h2>
+          <div className="bg-white rounded-lg p-6" style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}>
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">Add Question</h2>
             <AddQuestionForm quizId={quiz.id} />
           </div>
         </div>

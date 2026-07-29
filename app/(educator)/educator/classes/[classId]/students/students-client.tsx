@@ -70,7 +70,7 @@ function StatusBadge({ status }: { status: string }) {
     completed: 'bg-blue-100 text-blue-700',
   }
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${styles[status] ?? 'bg-[#f2f2f2] text-[#6a6a6a]'}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${styles[status] ?? 'bg-vlab-surface text-vlab-muted'}`}>
       {status}
     </span>
   )
@@ -86,9 +86,9 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#f2f2f2] border border-[#c1c1c1] rounded-lg hover:bg-[#e8e8e8] transition-colors"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-vlab-surface border border-vlab-rule-strong rounded-lg hover:bg-vlab-rule transition-colors"
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5 text-[#6a6a6a]" />}
+      {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5 text-vlab-muted" />}
       {label ?? (copied ? 'Copied!' : 'Copy')}
     </button>
   )
@@ -170,8 +170,8 @@ export function StudentsClient({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-[#222222]">Students</h1>
-          <p className="text-[#6a6a6a] text-sm mt-0.5">
+          <h1 className="text-xl font-semibold text-vlab-ink">Students</h1>
+          <p className="text-vlab-muted text-sm mt-0.5">
             {activeCount} active
             {maxStudents ? ` / ${maxStudents} max` : ''}
           </p>
@@ -180,24 +180,24 @@ export function StudentsClient({
 
       {/* Invite section */}
       <div
-        className="bg-white rounded-2xl border border-[#c1c1c1] p-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg border border-vlab-rule-strong p-6"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
-        <h2 className="text-base font-semibold text-[#222222] mb-4">Invite Students</h2>
+        <h2 className="text-base font-semibold text-vlab-ink mb-4">Invite Students</h2>
 
         {/* Join code */}
         <div className="mb-5">
-          <p className="text-sm text-[#6a6a6a] mb-2">Share this join code with your students:</p>
+          <p className="text-sm text-vlab-muted mb-2">Share this join code with your students:</p>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-4 py-2.5 bg-[#f2f2f2] rounded-xl border border-[#c1c1c1]">
-              <span className="font-mono font-bold text-[#222222] text-xl tracking-[0.2em]">
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-vlab-surface rounded-lg border border-vlab-rule-strong">
+              <span className="font-mono font-bold text-vlab-ink text-xl tracking-[0.2em]">
                 {joinCode}
               </span>
             </div>
             <CopyButton text={joinCode} label="Copy Code" />
           </div>
           {joinCodeExpiresAt && (
-            <p className="text-xs text-[#6a6a6a] mt-1.5 flex items-center gap-1">
+            <p className="text-xs text-vlab-muted mt-1.5 flex items-center gap-1">
               <Clock className="w-3 h-3" />
               Expires {new Date(joinCodeExpiresAt).toLocaleDateString()}
             </p>
@@ -205,13 +205,13 @@ export function StudentsClient({
         </div>
 
         {/* Generate invite link */}
-        <div className="border-t border-[#f2f2f2] pt-4 mb-4">
-          <p className="text-sm font-medium text-[#222222] mb-2">Generate Invite Link</p>
+        <div className="border-t border-vlab-surface pt-4 mb-4">
+          <p className="text-sm font-medium text-vlab-ink mb-2">Generate Invite Link</p>
           <div className="flex items-center gap-2 mb-2">
             <select
               value={expiryDays}
               onChange={(e) => setExpiryDays(Number(e.target.value))}
-              className="px-3 py-2 border border-[#c1c1c1] rounded-xl text-sm text-[#222222] bg-white focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+              className="px-3 py-2 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink bg-white focus:outline-none focus:ring-2 focus:ring-vlab-600"
             >
               <option value={1}>Expires in 1 day</option>
               <option value={3}>Expires in 3 days</option>
@@ -222,7 +222,7 @@ export function StudentsClient({
             <button
               onClick={handleGenerateLink}
               disabled={isPending}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#222222] text-white rounded-xl text-sm font-medium hover:bg-[#333] disabled:opacity-60 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-vlab-ink text-white rounded-lg text-sm font-medium hover:bg-[#333] disabled:opacity-60 transition-colors"
             >
               {isPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -233,7 +233,7 @@ export function StudentsClient({
             </button>
           </div>
           {generatedLink && (
-            <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-xl">
+            <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
               <span className="text-xs text-green-700 flex-1 truncate">{generatedLink}</span>
               <CopyButton text={generatedLink} />
             </div>
@@ -241,21 +241,21 @@ export function StudentsClient({
         </div>
 
         {/* Add manually */}
-        <div className="border-t border-[#f2f2f2] pt-4">
-          <p className="text-sm font-medium text-[#222222] mb-2">Add Student by Email</p>
+        <div className="border-t border-vlab-surface pt-4">
+          <p className="text-sm font-medium text-vlab-ink mb-2">Add Student by Email</p>
           <div className="flex items-center gap-2">
             <input
               type="email"
               value={manualEmail}
               onChange={(e) => setManualEmail(e.target.value)}
               placeholder="student@example.com"
-              className="flex-1 px-3 py-2 border border-[#c1c1c1] rounded-xl text-sm text-[#222222] placeholder-[#6a6a6a] focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+              className="flex-1 px-3 py-2 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink placeholder-vlab-muted focus:outline-none focus:ring-2 focus:ring-vlab-600"
               onKeyDown={(e) => e.key === 'Enter' && handleAddManual()}
             />
             <button
               onClick={handleAddManual}
               disabled={isPending || !manualEmail.trim()}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#ff385c] text-white rounded-xl text-sm font-medium hover:bg-[#e0314f] disabled:opacity-60 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-vlab-600 text-white rounded-lg text-sm font-medium hover:bg-vlab-700 disabled:opacity-60 transition-colors"
             >
               {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
               Add
@@ -273,10 +273,10 @@ export function StudentsClient({
       {/* Pending invites */}
       {invites.some((inv) => inv.invite_emails.some((e) => e.status === 'pending')) && (
         <div
-          className="bg-white rounded-2xl border border-[#c1c1c1] p-6"
-          style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+          className="bg-white rounded-lg border border-vlab-rule-strong p-6"
+          style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
         >
-          <h2 className="text-base font-semibold text-[#222222] mb-4">Pending Invitations</h2>
+          <h2 className="text-base font-semibold text-vlab-ink mb-4">Pending Invitations</h2>
           <div className="space-y-2">
             {invites
               .flatMap((inv) =>
@@ -287,13 +287,13 @@ export function StudentsClient({
               .map((ie) => (
                 <div
                   key={ie.id}
-                  className="flex items-center justify-between py-2 px-3 rounded-xl bg-[#f2f2f2]"
+                  className="flex items-center justify-between py-2 px-3 rounded-lg bg-vlab-surface"
                 >
                   <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-[#6a6a6a]" />
-                    <span className="text-sm text-[#222222]">{ie.email}</span>
+                    <Mail className="w-4 h-4 text-vlab-muted" />
+                    <span className="text-sm text-vlab-ink">{ie.email}</span>
                   </div>
-                  <span className="text-xs text-[#6a6a6a] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                  <span className="text-xs text-vlab-muted bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
                     Pending
                   </span>
                 </div>
@@ -304,18 +304,18 @@ export function StudentsClient({
 
       {/* Students table */}
       <div
-        className="bg-white rounded-2xl border border-[#c1c1c1] overflow-hidden"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg border border-vlab-rule-strong overflow-hidden"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
-        <div className="flex items-center justify-between p-5 border-b border-[#f2f2f2]">
-          <h2 className="text-base font-semibold text-[#222222]">
+        <div className="flex items-center justify-between p-5 border-b border-vlab-surface">
+          <h2 className="text-base font-semibold text-vlab-ink">
             Enrolled Students ({filtered.length})
           </h2>
           <div className="flex items-center gap-2">
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-1.5 border border-[#c1c1c1] rounded-lg text-sm text-[#222222] bg-white focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+              className="px-3 py-1.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink bg-white focus:outline-none focus:ring-2 focus:ring-vlab-600"
             >
               <option value="all">All Status</option>
               <option value="active">Active</option>
@@ -327,23 +327,23 @@ export function StudentsClient({
 
         {filtered.length === 0 ? (
           <div className="p-12 text-center">
-            <p className="text-[#6a6a6a] text-sm">No students found.</p>
+            <p className="text-vlab-muted text-sm">No students found.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-[#f2f2f2] bg-[#f9f9f9]">
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-5 py-3">Name</th>
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-5 py-3">Email</th>
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-5 py-3">Reg. No</th>
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-5 py-3">Section</th>
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-5 py-3">Enrolled</th>
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-5 py-3">Status</th>
-                  <th className="text-right text-xs font-medium text-[#6a6a6a] px-5 py-3">Actions</th>
+                <tr className="border-b border-vlab-surface bg-vlab-surface-alt">
+                  <th className="text-left text-xs font-medium text-vlab-muted px-5 py-3">Name</th>
+                  <th className="text-left text-xs font-medium text-vlab-muted px-5 py-3">Email</th>
+                  <th className="text-left text-xs font-medium text-vlab-muted px-5 py-3">Reg. No</th>
+                  <th className="text-left text-xs font-medium text-vlab-muted px-5 py-3">Section</th>
+                  <th className="text-left text-xs font-medium text-vlab-muted px-5 py-3">Enrolled</th>
+                  <th className="text-left text-xs font-medium text-vlab-muted px-5 py-3">Status</th>
+                  <th className="text-right text-xs font-medium text-vlab-muted px-5 py-3">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#f2f2f2]">
+              <tbody className="divide-y divide-vlab-surface">
                 {filtered.map((enrollment) => {
                   const s = enrollment.student
                   const name =
@@ -351,12 +351,12 @@ export function StudentsClient({
                       ? `${s?.first_name ?? ''} ${s?.last_name ?? ''}`.trim()
                       : s?.email ?? '—'
                   return (
-                    <tr key={enrollment.id} className="hover:bg-[#fafafa] transition-colors">
-                      <td className="px-5 py-3.5 text-sm font-medium text-[#222222]">{name}</td>
-                      <td className="px-5 py-3.5 text-sm text-[#6a6a6a]">{s?.email ?? '—'}</td>
-                      <td className="px-5 py-3.5 text-sm text-[#6a6a6a]">{s?.registration_no ?? '—'}</td>
-                      <td className="px-5 py-3.5 text-sm text-[#6a6a6a]">{s?.class_section ?? '—'}</td>
-                      <td className="px-5 py-3.5 text-sm text-[#6a6a6a]">
+                    <tr key={enrollment.id} className="hover:bg-vlab-surface-alt transition-colors">
+                      <td className="px-5 py-3.5 text-sm font-medium text-vlab-ink">{name}</td>
+                      <td className="px-5 py-3.5 text-sm text-vlab-muted">{s?.email ?? '—'}</td>
+                      <td className="px-5 py-3.5 text-sm text-vlab-muted">{s?.registration_no ?? '—'}</td>
+                      <td className="px-5 py-3.5 text-sm text-vlab-muted">{s?.class_section ?? '—'}</td>
+                      <td className="px-5 py-3.5 text-sm text-vlab-muted">
                         {enrollment.enrolled_at
                           ? new Date(enrollment.enrolled_at).toLocaleDateString()
                           : '—'}
@@ -366,7 +366,7 @@ export function StudentsClient({
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         {actionLoading === enrollment.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-[#6a6a6a] ml-auto" />
+                          <Loader2 className="w-4 h-4 animate-spin text-vlab-muted ml-auto" />
                         ) : (
                           <div className="relative inline-block">
                             <select
@@ -376,14 +376,14 @@ export function StudentsClient({
                                 if (val) handleStatusChange(enrollment.id, val)
                                 e.target.value = ''
                               }}
-                              className="appearance-none pl-3 pr-8 py-1.5 border border-[#c1c1c1] rounded-lg text-xs text-[#222222] bg-white focus:outline-none focus:ring-2 focus:ring-[#ff385c] cursor-pointer"
+                              className="appearance-none pl-3 pr-8 py-1.5 border border-vlab-rule-strong rounded-lg text-xs text-vlab-ink bg-white focus:outline-none focus:ring-2 focus:ring-vlab-600 cursor-pointer"
                             >
                               <option value="" disabled>Actions</option>
                               {enrollment.status !== 'active' && <option value="active">Set Active</option>}
                               {enrollment.status !== 'dropped' && <option value="dropped">Drop Student</option>}
                               {enrollment.status !== 'completed' && <option value="completed">Mark Completed</option>}
                             </select>
-                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#6a6a6a] pointer-events-none" />
+                            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-vlab-muted pointer-events-none" />
                           </div>
                         )}
                       </td>

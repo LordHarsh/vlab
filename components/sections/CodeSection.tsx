@@ -4,39 +4,35 @@ type CodeContent = {
   code?: string
 }
 
+/**
+ * The published listing for an experiment.
+ *
+ * Chrome is a titled panel header — language and target board stated as facts —
+ * rather than the three fake macOS traffic-light dots the previous treatment
+ * drew. A listing in a lab sheet is a listing, not a screenshot of an editor.
+ */
 export function CodeSection({ content }: { content: CodeContent | null }) {
   if (!content || !content.code) {
-    return <p className="text-[#6a6a6a]">No code content available.</p>
+    return <p className="text-vlab-muted">No code content available.</p>
   }
 
   const language = content.language ?? 'text'
   const platform = content.platform
+  const lineCount = content.code.replace(/\n$/, '').split('\n').length
 
   return (
-    <div>
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-[#1a1a2e] rounded-t-xl border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-white/80 uppercase tracking-wide">
-            {language}
-          </span>
-          {platform && (
-            <>
-              <span className="text-white/30">·</span>
-              <span className="text-xs text-white/60">{platform}</span>
-            </>
-          )}
-        </div>
-        <div className="flex gap-1.5">
-          <div className="w-3 h-3 rounded-full bg-red-500/70" />
-          <div className="w-3 h-3 rounded-full bg-yellow-500/70" />
-          <div className="w-3 h-3 rounded-full bg-green-500/70" />
-        </div>
+    <div className="border border-vlab-rule-strong">
+      <div className="vlab-panel-header justify-between">
+        <span>
+          {language.replace(/_/g, ' ')}
+          {platform ? ` · ${platform}` : ''}
+        </span>
+        <span className="font-normal normal-case tracking-normal text-vlab-faint">
+          {lineCount} {lineCount === 1 ? 'line' : 'lines'}
+        </span>
       </div>
-
-      {/* Code block */}
-      <div className="bg-[#1a1a2e] rounded-b-xl overflow-x-auto">
-        <pre className="p-4 text-sm text-green-300 font-mono leading-relaxed">
+      <div className="overflow-x-auto bg-vlab-900">
+        <pre className="p-4 font-mono text-[13px] leading-relaxed text-[#e2e8f0]">
           <code>{content.code}</code>
         </pre>
       </div>

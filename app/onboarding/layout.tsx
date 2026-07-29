@@ -6,13 +6,13 @@ export default function OnboardingLayout({
   children: React.ReactNode
 }) {
   return (
-    <div className="min-h-screen bg-[#f7f7f7] flex flex-col">
+    <div className="min-h-screen bg-vlab-surface-alt flex flex-col">
       {/* Minimal header — just the logo */}
-      <header className="w-full bg-white border-b border-[#ebebeb]">
+      <header className="w-full bg-white border-b border-vlab-rule">
         <div className="container mx-auto px-4 sm:px-6 h-16 flex items-center">
           <Link
             href="/"
-            className="text-xl font-bold text-[#ff385c] tracking-tight hover:opacity-90 transition-opacity"
+            className="text-xl font-bold text-vlab-600 tracking-tight hover:opacity-90 transition-opacity"
           >
             VLab
           </Link>

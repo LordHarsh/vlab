@@ -56,9 +56,9 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <Label className="text-sm font-medium text-[#222222]">
+      <Label className="text-sm font-medium text-vlab-ink">
         {label}
-        {required && <span className="text-[#ff385c] ml-0.5">*</span>}
+        {required && <span className="text-vlab-600 ml-0.5">*</span>}
       </Label>
       {children}
       {error && (
@@ -169,7 +169,7 @@ function StudentForm({
       <Button
         type="submit"
         disabled={isPending}
-        className="w-full bg-[#ff385c] hover:bg-[#e0334f] text-white rounded-lg font-semibold h-11 mt-2"
+        className="w-full bg-vlab-600 hover:bg-vlab-700 text-white rounded-lg font-semibold h-11 mt-2"
       >
         {isPending ? 'Saving…' : 'Complete Setup'}
       </Button>
@@ -251,7 +251,7 @@ function EducatorForm({
       <Button
         type="submit"
         disabled={isPending}
-        className="w-full bg-[#ff385c] hover:bg-[#e0334f] text-white rounded-lg font-semibold h-11 mt-2"
+        className="w-full bg-vlab-600 hover:bg-vlab-700 text-white rounded-lg font-semibold h-11 mt-2"
       >
         {isPending ? 'Saving…' : 'Complete Setup'}
       </Button>
@@ -325,22 +325,22 @@ export default function OnboardingPage() {
         <div
           className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-semibold ${
             step >= 1
-              ? 'bg-[#ff385c] text-white'
-              : 'bg-[#ebebeb] text-[#6a6a6a]'
+              ? 'bg-vlab-600 text-white'
+              : 'bg-vlab-rule text-vlab-muted'
           }`}
         >
           1
         </div>
         <div
           className={`h-0.5 w-16 rounded-full transition-colors ${
-            step === 2 ? 'bg-[#ff385c]' : 'bg-[#ebebeb]'
+            step === 2 ? 'bg-vlab-600' : 'bg-vlab-rule'
           }`}
         />
         <div
           className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-semibold ${
             step === 2
-              ? 'bg-[#ff385c] text-white'
-              : 'bg-[#ebebeb] text-[#6a6a6a]'
+              ? 'bg-vlab-600 text-white'
+              : 'bg-vlab-rule text-vlab-muted'
           }`}
         >
           2
@@ -348,18 +348,18 @@ export default function OnboardingPage() {
       </div>
 
       <div
-        className="bg-white rounded-2xl p-8"
+        className="bg-white rounded-lg p-8"
         style={{
           boxShadow:
-            'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
+            '0 1px 2px rgba(15,48,80,0.05)',
         }}
       >
         {step === 1 && (
           <>
-            <h1 className="text-2xl font-bold text-[#222222] mb-2">
+            <h1 className="text-2xl font-bold text-vlab-ink mb-2">
               Welcome to VLab
             </h1>
-            <p className="text-[#6a6a6a] mb-8">
+            <p className="text-vlab-muted mb-8">
               Tell us a bit about yourself to get started.
             </p>
 
@@ -367,31 +367,31 @@ export default function OnboardingPage() {
               {/* Student card */}
               <button
                 onClick={() => handleRoleSelect('student')}
-                className="group rounded-xl border-2 border-[#ebebeb] p-6 text-left hover:border-[#ff385c] hover:bg-[#fff0f3] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff385c]"
+                className="group rounded-lg border-2 border-vlab-rule p-6 text-left hover:border-vlab-600 hover:bg-vlab-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-vlab-600"
               >
-                <div className="w-10 h-10 rounded-lg bg-[#f2f2f2] group-hover:bg-[#ffd6de] flex items-center justify-center mb-4 transition-colors">
-                  <GraduationCap className="h-5 w-5 text-[#6a6a6a] group-hover:text-[#ff385c] transition-colors" />
+                <div className="w-10 h-10 rounded-lg bg-vlab-surface group-hover:bg-red-100 flex items-center justify-center mb-4 transition-colors">
+                  <GraduationCap className="h-5 w-5 text-vlab-muted group-hover:text-vlab-600 transition-colors" />
                 </div>
-                <p className="font-semibold text-[#222222] mb-1">Student</p>
-                <p className="text-xs text-[#6a6a6a]">
+                <p className="font-semibold text-vlab-ink mb-1">Student</p>
+                <p className="text-xs text-vlab-muted">
                   Access labs, submit experiments, and track your progress.
                 </p>
-                <ChevronRight className="mt-3 h-4 w-4 text-[#6a6a6a] group-hover:text-[#ff385c] transition-colors" />
+                <ChevronRight className="mt-3 h-4 w-4 text-vlab-muted group-hover:text-vlab-600 transition-colors" />
               </button>
 
               {/* Educator card */}
               <button
                 onClick={() => handleRoleSelect('educator')}
-                className="group rounded-xl border-2 border-[#ebebeb] p-6 text-left hover:border-[#ff385c] hover:bg-[#fff0f3] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff385c]"
+                className="group rounded-lg border-2 border-vlab-rule p-6 text-left hover:border-vlab-600 hover:bg-vlab-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-vlab-600"
               >
-                <div className="w-10 h-10 rounded-lg bg-[#f2f2f2] group-hover:bg-[#ffd6de] flex items-center justify-center mb-4 transition-colors">
-                  <BookOpen className="h-5 w-5 text-[#6a6a6a] group-hover:text-[#ff385c] transition-colors" />
+                <div className="w-10 h-10 rounded-lg bg-vlab-surface group-hover:bg-red-100 flex items-center justify-center mb-4 transition-colors">
+                  <BookOpen className="h-5 w-5 text-vlab-muted group-hover:text-vlab-600 transition-colors" />
                 </div>
-                <p className="font-semibold text-[#222222] mb-1">Educator</p>
-                <p className="text-xs text-[#6a6a6a]">
+                <p className="font-semibold text-vlab-ink mb-1">Educator</p>
+                <p className="text-xs text-vlab-muted">
                   Create classes, manage students, and assign experiments.
                 </p>
-                <ChevronRight className="mt-3 h-4 w-4 text-[#6a6a6a] group-hover:text-[#ff385c] transition-colors" />
+                <ChevronRight className="mt-3 h-4 w-4 text-vlab-muted group-hover:text-vlab-600 transition-colors" />
               </button>
             </div>
           </>
@@ -402,20 +402,20 @@ export default function OnboardingPage() {
             <div className="flex items-center gap-3 mb-6">
               <button
                 onClick={() => setStep(1)}
-                className="text-sm text-[#6a6a6a] hover:text-[#222222] transition-colors"
+                className="text-sm text-vlab-muted hover:text-vlab-ink transition-colors"
               >
                 ← Back
               </button>
-              <div className="h-4 w-px bg-[#ebebeb]" />
-              <span className="flex items-center gap-1.5 text-sm font-medium text-[#ff385c]">
+              <div className="h-4 w-px bg-vlab-rule" />
+              <span className="flex items-center gap-1.5 text-sm font-medium text-vlab-600">
                 <GraduationCap className="h-4 w-4" />
                 Student
               </span>
             </div>
-            <h2 className="text-xl font-bold text-[#222222] mb-1">
+            <h2 className="text-xl font-bold text-vlab-ink mb-1">
               Your details
             </h2>
-            <p className="text-[#6a6a6a] text-sm mb-6">
+            <p className="text-vlab-muted text-sm mb-6">
               Fill in your academic information to complete setup.
             </p>
             <StudentForm
@@ -431,20 +431,20 @@ export default function OnboardingPage() {
             <div className="flex items-center gap-3 mb-6">
               <button
                 onClick={() => setStep(1)}
-                className="text-sm text-[#6a6a6a] hover:text-[#222222] transition-colors"
+                className="text-sm text-vlab-muted hover:text-vlab-ink transition-colors"
               >
                 ← Back
               </button>
-              <div className="h-4 w-px bg-[#ebebeb]" />
-              <span className="flex items-center gap-1.5 text-sm font-medium text-[#ff385c]">
+              <div className="h-4 w-px bg-vlab-rule" />
+              <span className="flex items-center gap-1.5 text-sm font-medium text-vlab-600">
                 <BookOpen className="h-4 w-4" />
                 Educator
               </span>
             </div>
-            <h2 className="text-xl font-bold text-[#222222] mb-1">
+            <h2 className="text-xl font-bold text-vlab-ink mb-1">
               Your details
             </h2>
-            <p className="text-[#6a6a6a] text-sm mb-6">
+            <p className="text-vlab-muted text-sm mb-6">
               Fill in your faculty information to complete setup.
             </p>
             <EducatorForm

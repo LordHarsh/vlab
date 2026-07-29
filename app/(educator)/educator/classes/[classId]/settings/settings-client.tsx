@@ -54,9 +54,9 @@ function CopyButton({ text }: { text: string }) {
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       }}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#f2f2f2] border border-[#c1c1c1] rounded-lg hover:bg-[#e8e8e8] transition-colors"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-vlab-surface border border-vlab-rule-strong rounded-lg hover:bg-vlab-rule transition-colors"
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5 text-[#6a6a6a]" />}
+      {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5 text-vlab-muted" />}
       {copied ? 'Copied' : 'Copy'}
     </button>
   )
@@ -152,61 +152,61 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold text-[#222222]">Class Settings</h1>
+      <h1 className="text-xl font-semibold text-vlab-ink">Class Settings</h1>
 
       {/* General settings */}
       <div
-        className="bg-white rounded-2xl border border-[#c1c1c1] p-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg border border-vlab-rule-strong p-6"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
-        <h2 className="text-base font-semibold text-[#222222] mb-5">General</h2>
+        <h2 className="text-base font-semibold text-vlab-ink mb-5">General</h2>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">
-              Class Name <span className="text-[#ff385c]">*</span>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">
+              Class Name <span className="text-vlab-600">*</span>
             </label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-[#222222] text-sm focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+              className="w-full px-4 py-2.5 border border-vlab-rule-strong rounded-lg text-vlab-ink text-sm focus:outline-none focus:ring-2 focus:ring-vlab-600"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">Description</label>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-[#222222] text-sm focus:outline-none focus:ring-2 focus:ring-[#ff385c] resize-none"
+              className="w-full px-4 py-2.5 border border-vlab-rule-strong rounded-lg text-vlab-ink text-sm focus:outline-none focus:ring-2 focus:ring-vlab-600 resize-none"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-[#222222] mb-1.5">Max Students</label>
+              <label className="block text-sm font-medium text-vlab-ink mb-1.5">Max Students</label>
               <input
                 type="number"
                 min={1}
                 value={maxStudents}
                 onChange={(e) => setMaxStudents(e.target.value)}
                 placeholder="Unlimited"
-                className="w-full px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-[#222222] text-sm focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+                className="w-full px-4 py-2.5 border border-vlab-rule-strong rounded-lg text-vlab-ink text-sm focus:outline-none focus:ring-2 focus:ring-vlab-600"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#222222] mb-1.5">
+              <label className="block text-sm font-medium text-vlab-ink mb-1.5">
                 Join Code Expiry
               </label>
               <input
                 type="date"
                 value={expiresAt}
                 onChange={(e) => setExpiresAt(e.target.value)}
-                className="w-full px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-[#222222] text-sm focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+                className="w-full px-4 py-2.5 border border-vlab-rule-strong rounded-lg text-vlab-ink text-sm focus:outline-none focus:ring-2 focus:ring-vlab-600"
               />
             </div>
           </div>
 
           {generalError && (
-            <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-xl border border-red-200">
+            <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg border border-red-200">
               {generalError}
             </p>
           )}
@@ -220,7 +220,7 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
             <button
               onClick={handleSaveGeneral}
               disabled={isPending}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#ff385c] text-white rounded-xl text-sm font-medium hover:bg-[#e0314f] disabled:opacity-60 transition-colors"
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-vlab-600 text-white rounded-lg text-sm font-medium hover:bg-vlab-700 disabled:opacity-60 transition-colors"
             >
               {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Save Changes
@@ -231,13 +231,13 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
 
       {/* Join code management */}
       <div
-        className="bg-white rounded-2xl border border-[#c1c1c1] p-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg border border-vlab-rule-strong p-6"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
-        <h2 className="text-base font-semibold text-[#222222] mb-4">Join Code</h2>
+        <h2 className="text-base font-semibold text-vlab-ink mb-4">Join Code</h2>
         <div className="flex items-center gap-3 mb-3">
-          <div className="flex-1 px-4 py-2.5 bg-[#f2f2f2] border border-[#c1c1c1] rounded-xl">
-            <span className="font-mono font-bold text-[#222222] text-xl tracking-[0.2em]">
+          <div className="flex-1 px-4 py-2.5 bg-vlab-surface border border-vlab-rule-strong rounded-lg">
+            <span className="font-mono font-bold text-vlab-ink text-xl tracking-[0.2em]">
               {joinCode}
             </span>
           </div>
@@ -245,7 +245,7 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
           <button
             onClick={handleRegenerateCode}
             disabled={isPending}
-            className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-sm font-medium text-[#222222] hover:bg-[#f2f2f2] disabled:opacity-60 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 border border-vlab-rule-strong rounded-lg text-sm font-medium text-vlab-ink hover:bg-vlab-surface disabled:opacity-60 transition-colors"
           >
             {isPending ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -255,7 +255,7 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
             Regenerate
           </button>
         </div>
-        <p className="text-xs text-[#6a6a6a]">
+        <p className="text-xs text-vlab-muted">
           Students use this code to join your class. Regenerating will invalidate the old code.
         </p>
       </div>
@@ -263,16 +263,16 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
       {/* Quiz settings */}
       {quizRows.length > 0 && (
         <div
-          className="bg-white rounded-2xl border border-[#c1c1c1] overflow-hidden"
-          style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+          className="bg-white rounded-lg border border-vlab-rule-strong overflow-hidden"
+          style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
         >
-          <div className="px-6 py-4 border-b border-[#f2f2f2]">
-            <h2 className="text-base font-semibold text-[#222222]">Quiz Settings</h2>
-            <p className="text-sm text-[#6a6a6a] mt-0.5">
+          <div className="px-6 py-4 border-b border-vlab-surface">
+            <h2 className="text-base font-semibold text-vlab-ink">Quiz Settings</h2>
+            <p className="text-sm text-vlab-muted mt-0.5">
               Configure per-quiz settings for this class
             </p>
           </div>
-          <div className="divide-y divide-[#f2f2f2]">
+          <div className="divide-y divide-vlab-surface">
             {quizRows.map((q) => {
               const s = quizSettings[q.quizId]
               const saving = quizSaving === q.quizId
@@ -283,12 +283,12 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                 <div key={q.quizId} className="px-6 py-5">
                   <div className="flex items-start justify-between gap-4 mb-3">
                     <div>
-                      <p className="text-xs text-[#6a6a6a]">
+                      <p className="text-xs text-vlab-muted">
                         {q.labTitle} › {q.experimentTitle}
                       </p>
-                      <p className="text-sm font-semibold text-[#222222]">
+                      <p className="text-sm font-semibold text-vlab-ink">
                         {q.quizTitle}
-                        <span className="ml-2 text-xs font-normal text-[#6a6a6a]">({q.quizType})</span>
+                        <span className="ml-2 text-xs font-normal text-vlab-muted">({q.quizType})</span>
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -300,7 +300,7 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                       <button
                         onClick={() => handleSaveQuizSettings(q.quizId)}
                         disabled={saving}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#222222] text-white rounded-lg text-xs font-medium hover:bg-[#333] disabled:opacity-60 transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-vlab-ink text-white rounded-lg text-xs font-medium hover:bg-[#333] disabled:opacity-60 transition-colors"
                       >
                         {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                         Save
@@ -315,9 +315,9 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                         type="checkbox"
                         checked={s.is_graded}
                         onChange={(e) => updateQuizSetting(q.quizId, 'is_graded', e.target.checked)}
-                        className="w-4 h-4 rounded border-[#c1c1c1] accent-[#ff385c]"
+                        className="w-4 h-4 rounded border-vlab-rule-strong accent-vlab-600"
                       />
-                      <span className="text-sm text-[#222222]">Graded</span>
+                      <span className="text-sm text-vlab-ink">Graded</span>
                     </label>
 
                     {/* Show Score */}
@@ -326,18 +326,18 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                         type="checkbox"
                         checked={s.show_score ?? false}
                         onChange={(e) => updateQuizSetting(q.quizId, 'show_score', e.target.checked)}
-                        className="w-4 h-4 rounded border-[#c1c1c1] accent-[#ff385c]"
+                        className="w-4 h-4 rounded border-vlab-rule-strong accent-vlab-600"
                       />
-                      <span className="text-sm text-[#222222]">Show Score</span>
+                      <span className="text-sm text-vlab-ink">Show Score</span>
                     </label>
 
                     {/* Show Answers */}
                     <div>
-                      <label className="block text-xs text-[#6a6a6a] mb-1">Show Answers</label>
+                      <label className="block text-xs text-vlab-muted mb-1">Show Answers</label>
                       <select
                         value={s.show_answers ?? 'never'}
                         onChange={(e) => updateQuizSetting(q.quizId, 'show_answers', e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-[#c1c1c1] rounded-lg text-sm text-[#222222] bg-white focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+                        className="w-full px-2.5 py-1.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink bg-white focus:outline-none focus:ring-2 focus:ring-vlab-600"
                       >
                         <option value="never">Never</option>
                         <option value="after_submit">After Submit</option>
@@ -348,7 +348,7 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
 
                     {/* Passing % */}
                     <div>
-                      <label className="block text-xs text-[#6a6a6a] mb-1">Passing %</label>
+                      <label className="block text-xs text-vlab-muted mb-1">Passing %</label>
                       <input
                         type="number"
                         min={0}
@@ -362,13 +362,13 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                           )
                         }
                         placeholder="60"
-                        className="w-full px-2.5 py-1.5 border border-[#c1c1c1] rounded-lg text-sm text-[#222222] focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+                        className="w-full px-2.5 py-1.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink focus:outline-none focus:ring-2 focus:ring-vlab-600"
                       />
                     </div>
 
                     {/* Max Attempts */}
                     <div>
-                      <label className="block text-xs text-[#6a6a6a] mb-1">Max Attempts</label>
+                      <label className="block text-xs text-vlab-muted mb-1">Max Attempts</label>
                       <input
                         type="number"
                         min={1}
@@ -381,13 +381,13 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                           )
                         }
                         placeholder="Unlimited"
-                        className="w-full px-2.5 py-1.5 border border-[#c1c1c1] rounded-lg text-sm text-[#222222] focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+                        className="w-full px-2.5 py-1.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink focus:outline-none focus:ring-2 focus:ring-vlab-600"
                       />
                     </div>
 
                     {/* Due Date */}
                     <div>
-                      <label className="block text-xs text-[#6a6a6a] mb-1">Due Date</label>
+                      <label className="block text-xs text-vlab-muted mb-1">Due Date</label>
                       <input
                         type="date"
                         value={s.due_date ? s.due_date.slice(0, 10) : ''}
@@ -398,7 +398,7 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
                             e.target.value ? e.target.value : null,
                           )
                         }
-                        className="w-full px-2.5 py-1.5 border border-[#c1c1c1] rounded-lg text-sm text-[#222222] focus:outline-none focus:ring-2 focus:ring-[#ff385c]"
+                        className="w-full px-2.5 py-1.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink focus:outline-none focus:ring-2 focus:ring-vlab-600"
                       />
                     </div>
                   </div>
@@ -415,14 +415,14 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
 
       {/* Danger zone */}
       <div
-        className="bg-white rounded-2xl border border-red-200 p-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg border border-red-200 p-6"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
         <h2 className="text-base font-semibold text-red-700 mb-2 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" />
           Danger Zone
         </h2>
-        <p className="text-sm text-[#6a6a6a] mb-4">
+        <p className="text-sm text-vlab-muted mb-4">
           Archiving a class hides it from active view. This action can be undone by changing the status back.
         </p>
 
@@ -434,14 +434,14 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
               })
             }
             disabled={isPending}
-            className="inline-flex items-center gap-2 px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-sm font-medium text-[#222222] hover:bg-[#f2f2f2] disabled:opacity-60 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 border border-vlab-rule-strong rounded-lg text-sm font-medium text-vlab-ink hover:bg-vlab-surface disabled:opacity-60 transition-colors"
           >
             Restore Class
           </button>
         ) : !archiveConfirm ? (
           <button
             onClick={() => setArchiveConfirm(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 border border-red-200 rounded-xl text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 border border-red-200 rounded-lg text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
           >
             Archive Class
           </button>
@@ -451,14 +451,14 @@ export function SettingsClient({ classId, classData, quizRows }: Props) {
             <button
               onClick={handleArchive}
               disabled={isPending}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 disabled:opacity-60 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-60 transition-colors"
             >
               {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Yes, Archive
             </button>
             <button
               onClick={() => setArchiveConfirm(false)}
-              className="px-4 py-2 text-sm text-[#6a6a6a] hover:text-[#222222] transition-colors"
+              className="px-4 py-2 text-sm text-vlab-muted hover:text-vlab-ink transition-colors"
             >
               Cancel
             </button>

@@ -1,178 +1,138 @@
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { FlaskConical, BookOpen, BarChart3, ArrowRight } from 'lucide-react'
+import { INSTITUTION } from '@/lib/institution'
+
+/**
+ * Front door.
+ *
+ * The reference department's landing page carries almost no copy: a nav bar, a
+ * one-line description of who runs it, and a grid of labs. Everything of
+ * substance lives inside a lab. This page follows that — terse on the
+ * navigational surface, no CTA gradients, no testimonials, no "powerful" or
+ * "seamless", no pricing. The one decorative move is the tiled circuit-board
+ * background over the sage/cream dashboard palette, lifted from their
+ * default.css, because it says "electronics department" for free.
+ */
+
+/** The fixed pedagogical sequence, stated plainly. This is the product. */
+const EXPERIMENT_STRUCTURE = [
+  ['Aim', 'The objective of the experiment and its sub-objectives.'],
+  ['Theory', 'The underlying principle, written up with citations to the reference texts.'],
+  ['Pre Test', 'A short assessment taken before the simulation, to establish preparedness.'],
+  ['Procedure', 'Numbered steps to be followed on the simulator, each annotated.'],
+  ['Simulation', 'The interactive circuit, run in the browser against a real solver.'],
+  ['Post Test', 'The same assessment taken after, to measure what the experiment taught.'],
+  ['References', 'The textbooks and standards the theory is drawn from, cited in full.'],
+  ['Feedback', 'Remarks recorded against the experiment and returned to the department.'],
+] as const
 
 export default function LandingPage() {
   return (
     <div className="bg-white">
-      {/* Hero Section */}
-      <section className="relative overflow-hidden">
-        <div className="container mx-auto px-4 sm:px-6 py-20 md:py-32">
-          <div className="max-w-3xl mx-auto text-center">
-            <span className="inline-block mb-4 text-sm font-semibold text-[#ff385c] tracking-wide uppercase">
-              Virtual Laboratory Platform
-            </span>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-[#222222] leading-tight mb-6">
-              Learn Electronics &amp; IoT Through{' '}
-              <span className="text-[#ff385c]">Interactive Simulations</span>
+      {/* ── Banner ────────────────────────────────────────────────────────
+          Sage body, cream plaque, tiled circuit board — the reference
+          dashboard's `body { background-color: #5F7161 }`, `nav {
+          background-color: #EFEAD8 }` and `background-image:
+          url(/images/circuit-board.svg)`, kept verbatim. */}
+      <section className="vlab-circuit-bg bg-vlab-sage">
+        <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 md:py-20">
+          <div className="max-w-3xl border-l-8 border-vlab-orange bg-vlab-cream px-6 py-7 shadow-card sm:px-9 sm:py-9">
+            <p className="vlab-eyebrow text-vlab-muted">{INSTITUTION.department}</p>
+            <h1 className="mt-2 font-display text-2xl leading-tight text-vlab-800 sm:text-3xl md:text-[2.15rem]">
+              {INSTITUTION.tagline}
             </h1>
-            <p className="text-lg md:text-xl text-[#6a6a6a] mb-10 max-w-2xl mx-auto leading-relaxed">
-              Explore circuits, sensors, and IoT concepts through hands-on
-              virtual experiments — no hardware required. Learn at your own
-              pace, anywhere.
+            <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-vlab-ink">
+              The objective of this virtual laboratory is to let students study and analyse the
+              behaviour of electronic circuits and embedded systems in a simulated environment,
+              and to make the practical component of the curriculum available without access to
+              physical hardware. Each experiment is presented in the same order as it would be
+              conducted in the laboratory.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button
-                size="lg"
-                variant="outline"
-                className="rounded-lg font-semibold border-[#222222] text-[#222222] hover:bg-[#f2f2f2] px-8"
-                asChild
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Link
+                href="/labs"
+                className="border border-vlab-600 bg-vlab-600 px-5 py-2.5 font-chrome text-sm font-semibold text-white transition-colors hover:border-vlab-700 hover:bg-vlab-700"
               >
-                <Link href="/labs">
-                  Browse Labs
-                </Link>
-              </Button>
-              <Button
-                size="lg"
-                className="rounded-lg font-semibold bg-[#ff385c] hover:bg-[#e0334f] text-white px-8"
-                asChild
+                List of Laboratories
+              </Link>
+              <Link
+                href="/sign-in"
+                className="border border-vlab-steel bg-transparent px-5 py-2.5 font-chrome text-sm font-semibold text-vlab-steel transition-colors hover:bg-white/50"
               >
-                <Link href="/sign-up">
-                  Get Started
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* Decorative background */}
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 -z-10 overflow-hidden"
-        >
-          <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[800px] rounded-full bg-[#ff385c]/5 blur-3xl" />
-        </div>
-      </section>
-
-      {/* Stats strip */}
-      <section className="border-y border-[#ebebeb] bg-[#f7f7f7]">
-        <div className="container mx-auto px-4 sm:px-6 py-8">
-          <div className="grid grid-cols-3 gap-6 max-w-2xl mx-auto text-center">
-            <div>
-              <p className="text-3xl font-bold text-[#222222]">12</p>
-              <p className="text-sm text-[#6a6a6a] mt-1">Experiments</p>
-            </div>
-            <div>
-              <p className="text-3xl font-bold text-[#222222]">1</p>
-              <p className="text-sm text-[#6a6a6a] mt-1">Lab</p>
-            </div>
-            <div>
-              <p className="text-3xl font-bold text-[#222222]">100%</p>
-              <p className="text-sm text-[#6a6a6a] mt-1">Free Access</p>
+                Sign in to your class
+              </Link>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-20 md:py-28">
-        <div className="container mx-auto px-4 sm:px-6">
-          <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-4xl font-bold text-[#222222] mb-4">
-              Everything you need to learn
-            </h2>
-            <p className="text-lg text-[#6a6a6a] max-w-xl mx-auto">
-              A complete virtual lab environment designed for modern engineering education.
+      {/* ── Structure of an experiment ────────────────────────────────────
+          A syllabus table, not a three-up feature grid. The numbered rows are
+          the point: this is a curriculum unit with a fixed shape. */}
+      <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6 md:py-16">
+        <div className="grid gap-10 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+          <div>
+            <h2 className="vlab-page-title">Structure of an experiment</h2>
+            <p className="mt-3 text-[15px] leading-relaxed text-vlab-muted">
+              Every experiment in every laboratory runs the same eight steps, in the same
+              order. The sequence is fixed so that a student moving between laboratories
+              already knows where everything is.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {/* Feature 1 */}
-            <div
-              className="bg-white rounded-2xl p-8 transition-shadow hover:shadow-[var(--shadow-hover)]"
-              style={{
-                boxShadow:
-                  'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
-              }}
-            >
-              <div className="w-12 h-12 rounded-xl bg-[#fff0f3] flex items-center justify-center mb-5">
-                <FlaskConical className="h-6 w-6 text-[#ff385c]" />
-              </div>
-              <h3 className="text-lg font-semibold text-[#222222] mb-3">
-                Interactive Simulations
-              </h3>
-              <p className="text-[#6a6a6a] text-sm leading-relaxed">
-                Interact with real-time circuit and IoT simulations. Adjust
-                parameters, observe results instantly, and build genuine
-                understanding without touching physical hardware.
-              </p>
-            </div>
-
-            {/* Feature 2 */}
-            <div
-              className="bg-white rounded-2xl p-8 transition-shadow hover:shadow-[var(--shadow-hover)]"
-              style={{
-                boxShadow:
-                  'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
-              }}
-            >
-              <div className="w-12 h-12 rounded-xl bg-[#fff0f3] flex items-center justify-center mb-5">
-                <BookOpen className="h-6 w-6 text-[#ff385c]" />
-              </div>
-              <h3 className="text-lg font-semibold text-[#222222] mb-3">
-                Guided Experiments
-              </h3>
-              <p className="text-[#6a6a6a] text-sm leading-relaxed">
-                Step-by-step experiment walkthroughs with theory, procedure,
-                pre-test and post-test quizzes. Every experiment follows
-                a structured learning path designed by educators.
-              </p>
-            </div>
-
-            {/* Feature 3 */}
-            <div
-              className="bg-white rounded-2xl p-8 transition-shadow hover:shadow-[var(--shadow-hover)]"
-              style={{
-                boxShadow:
-                  'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
-              }}
-            >
-              <div className="w-12 h-12 rounded-xl bg-[#fff0f3] flex items-center justify-center mb-5">
-                <BarChart3 className="h-6 w-6 text-[#ff385c]" />
-              </div>
-              <h3 className="text-lg font-semibold text-[#222222] mb-3">
-                Track Progress
-              </h3>
-              <p className="text-[#6a6a6a] text-sm leading-relaxed">
-                See your progress across all experiments, quiz scores, and
-                completion status at a glance. Educators can monitor class
-                performance in real-time.
-              </p>
-            </div>
+          <div className="overflow-x-auto">
+            <table className="vlab-table">
+              <thead>
+                <tr>
+                  <th scope="col">S.No</th>
+                  <th scope="col">Step</th>
+                  <th scope="col">Contents</th>
+                </tr>
+              </thead>
+              <tbody>
+                {EXPERIMENT_STRUCTURE.map(([step, detail], i) => (
+                  <tr key={step}>
+                    <th scope="row">{i + 1}</th>
+                    <td className="whitespace-nowrap font-chrome font-bold text-vlab-800">
+                      {step}
+                    </td>
+                    <td className="text-vlab-ink">{detail}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 bg-[#f2f2f2]">
-        <div className="container mx-auto px-4 sm:px-6 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-[#222222] mb-4">
-            Ready to start learning?
-          </h2>
-          <p className="text-lg text-[#6a6a6a] mb-8 max-w-xl mx-auto">
-            Create a free account and dive into your first experiment in minutes.
-          </p>
-          <Button
-            size="lg"
-            className="rounded-lg font-semibold bg-[#ff385c] hover:bg-[#e0334f] text-white px-10"
-            asChild
-          >
-            <Link href="/sign-up">
-              Get Started — it&apos;s free
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
+      {/* ── Facilities ────────────────────────────────────────────────────
+          Three short factual statements about what the simulator actually is.
+          Specific claims (MNA, AVR, RP2040) rather than adjectives — precision
+          reads as credible in an engineering context in a way "powerful" does
+          not. */}
+      <section className="border-t border-vlab-rule bg-vlab-surface-alt">
+        <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 md:py-14">
+          <h2 className="vlab-page-title mb-6">Simulation facilities</h2>
+          <div className="grid gap-px overflow-hidden border border-vlab-rule-strong bg-vlab-rule-strong sm:grid-cols-3">
+            {[
+              [
+                'Circuit solution',
+                'Nodal analysis over the assembled netlist, solved on every step rather than replayed from a recording. Component values, sources and loads are the student’s to set.',
+              ],
+              [
+                'Device emulation',
+                'ATmega328P and RP2040 cores are emulated instruction by instruction, so the sketch a student writes is the sketch that runs — timers, interrupts and serial output included.',
+              ],
+              [
+                'Assessment',
+                'Pre-test and post-test are recorded per student per experiment, along with section completion, and returned to the class educator as a gradebook.',
+              ],
+            ].map(([title, body]) => (
+              <div key={title} className="bg-white p-6">
+                <h3 className="font-chrome text-[15px] font-bold text-vlab-800">{title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-vlab-muted">{body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
     </div>

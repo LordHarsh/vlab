@@ -43,7 +43,7 @@ export default async function ExperimentIndexPage({
   if (!firstSection) {
     // No sections yet — show placeholder
     return (
-      <div className="py-16 text-center text-[#6a6a6a]">
+      <div className="py-16 text-center text-vlab-muted">
         <p>This experiment has no sections yet.</p>
       </div>
     )

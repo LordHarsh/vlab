@@ -32,12 +32,12 @@ export default async function AdminLabsPage() {
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-[#222222]">Labs</h1>
-          <p className="text-sm text-[#6a6a6a] mt-1">{labs.length} lab{labs.length !== 1 ? 's' : ''} total</p>
+          <h1 className="text-2xl font-semibold text-vlab-ink">Labs</h1>
+          <p className="text-sm text-vlab-muted mt-1">{labs.length} lab{labs.length !== 1 ? 's' : ''} total</p>
         </div>
         <Link
           href="/admin/labs/new"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors"
         >
           <Plus className="w-4 h-4" />
           Create New Lab
@@ -45,12 +45,12 @@ export default async function AdminLabsPage() {
       </div>
 
       <div
-        className="bg-white rounded-2xl overflow-hidden"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg overflow-hidden"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
         {labs.length === 0 ? (
           <div className="px-6 py-16 text-center">
-            <p className="text-[#6a6a6a] text-sm">No labs yet. Create your first lab to get started.</p>
+            <p className="text-vlab-muted text-sm">No labs yet. Create your first lab to get started.</p>
           </div>
         ) : (
           <LabsTable labs={labs} />

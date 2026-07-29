@@ -45,32 +45,32 @@ export function ExperimentInfoEditor({ experiment }: { experiment: Experiment })
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Title</label>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">Title</label>
         <input
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           required
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
         />
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Description</label>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">Description</label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition resize-none"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition resize-none"
         />
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Difficulty</label>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">Difficulty</label>
         <select
           value={difficulty}
           onChange={(e) => setDifficulty(e.target.value)}
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition bg-white"
         >
           <option value="">None</option>
           <option value="beginner">Beginner</option>
@@ -80,24 +80,24 @@ export function ExperimentInfoEditor({ experiment }: { experiment: Experiment })
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Duration (minutes)</label>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">Duration (minutes)</label>
         <input
           type="number"
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
           placeholder="30"
           min={1}
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
         />
       </div>
 
       <div className="flex items-center justify-between">
-        <label className="text-xs font-medium text-[#6a6a6a]">Published</label>
+        <label className="text-xs font-medium text-vlab-muted">Published</label>
         <button
           type="button"
           onClick={() => setPublished(!published)}
           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-            published ? 'bg-[#ff385c]' : 'bg-[#c1c1c1]'
+            published ? 'bg-vlab-600' : 'bg-vlab-rule-strong'
           }`}
         >
           <span
@@ -109,12 +109,12 @@ export function ExperimentInfoEditor({ experiment }: { experiment: Experiment })
       </div>
 
       {error && (
-        <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
       {success && (
-        <p className="text-xs text-[#00a699] bg-[#e6f9f5] border border-[#b3ecde] rounded-lg px-3 py-2">
+        <p className="text-xs text-vlab-green-ink bg-green-50 border border-green-200 rounded-lg px-3 py-2">
           Saved successfully.
         </p>
       )}
@@ -122,7 +122,7 @@ export function ExperimentInfoEditor({ experiment }: { experiment: Experiment })
       <button
         type="submit"
         disabled={isPending}
-        className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50"
+        className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors disabled:opacity-50"
       >
         {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
         Save Changes

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 220 220">
+  <!--
+    Tiled circuit-board background.
+
+    The reference dashboard sets `background-image: url(/images/circuit-board.svg)`
+    on its page wrapper — a cheap, unmistakable "this is an electronics lab" cue
+    that costs nothing and reads more honestly than a commissioned illustration.
+    This is our own drawing rather than a copy of theirs, so the app carries no
+    third-party asset.
+
+    Tiling rule: every stroke that leaves the tile does so on an axis-aligned
+    line at a coordinate that has a matching partner on the opposite edge, so
+    the seams close. Everything else is fully inside the 220x220 box.
+  -->
+  <g fill="none" stroke="#1a4771" stroke-width="2" stroke-linecap="square" opacity="0.32">
+    <!-- Edge-to-edge bus lines: these are what make the tile read as a board. -->
+    <path d="M0 30 H220" />
+    <path d="M0 190 H220" />
+    <path d="M30 0 V220" />
+    <path d="M190 0 V220" />
+
+    <!-- Interior traces: right-angle runs, the way real routing looks. -->
+    <path d="M30 30 H80 V78" />
+    <path d="M190 30 H140 V70 H108" />
+    <path d="M30 190 H72 V142 H110" />
+    <path d="M190 190 H150 V150" />
+    <path d="M80 110 H110 V132" />
+    <path d="M140 110 H112 V90" />
+    <path d="M30 110 H58 V88 H74" />
+    <path d="M190 110 H164 V134 H148" />
+    <path d="M110 0 V22" />
+    <path d="M110 198 V220" />
+    <path d="M0 110 H22" />
+    <path d="M198 110 H220" />
+  </g>
+
+  <!-- Vias and pads. Filled dots at trace terminations, hollow rings for
+       through-holes — the two marks that make a trace grid read as a PCB. -->
+  <g fill="#1a4771" opacity="0.32">
+    <circle cx="30" cy="30" r="4.5" />
+    <circle cx="190" cy="30" r="4.5" />
+    <circle cx="30" cy="190" r="4.5" />
+    <circle cx="190" cy="190" r="4.5" />
+    <circle cx="110" cy="70" r="3.5" />
+    <circle cx="110" cy="150" r="3.5" />
+    <circle cx="150" cy="150" r="3" />
+    <circle cx="74" cy="88" r="3" />
+    <circle cx="148" cy="134" r="3" />
+    <circle cx="112" cy="90" r="3" />
+  </g>
+  <g fill="none" stroke="#1a4771" stroke-width="2" opacity="0.32">
+    <circle cx="80" cy="84" r="6" />
+    <circle cx="110" cy="110" r="9" />
+    <circle cx="110" cy="16" r="6" />
+    <circle cx="110" cy="204" r="6" />
+    <circle cx="16" cy="110" r="6" />
+    <circle cx="204" cy="110" r="6" />
+  </g>
+</svg>

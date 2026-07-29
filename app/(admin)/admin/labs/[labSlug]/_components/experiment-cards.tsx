@@ -41,7 +41,7 @@ export function ExperimentCards({
 
   if (experiments.length === 0) {
     return (
-      <p className="text-sm text-[#6a6a6a] text-center py-6">
+      <p className="text-sm text-vlab-muted text-center py-6">
         No experiments yet. Add one below.
       </p>
     )
@@ -52,33 +52,33 @@ export function ExperimentCards({
       {experiments.map((exp) => (
         <div
           key={exp.id}
-          className="flex items-center gap-4 p-4 rounded-xl border border-[#e8e8e8] hover:border-[#c1c1c1] transition-colors"
+          className="flex items-center gap-4 p-4 rounded-lg border border-vlab-rule hover:border-vlab-rule-strong transition-colors"
         >
-          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-[#f2f2f2] flex items-center justify-center text-xs font-bold text-[#6a6a6a]">
+          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-vlab-surface flex items-center justify-center text-xs font-bold text-vlab-muted">
             {exp.order_index}
           </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-sm text-[#222222] truncate">{exp.title}</span>
+              <span className="font-medium text-sm text-vlab-ink truncate">{exp.title}</span>
               <span
                 className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
-                  exp.published ? 'bg-[#e6f9f5] text-[#00a699]' : 'bg-[#f2f2f2] text-[#6a6a6a]'
+                  exp.published ? 'bg-green-50 text-vlab-green-ink' : 'bg-vlab-surface text-vlab-muted'
                 }`}
               >
                 {exp.published ? 'Live' : 'Draft'}
               </span>
             </div>
             <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-xs text-[#6a6a6a] flex items-center gap-1">
+              <span className="text-xs text-vlab-muted flex items-center gap-1">
                 <Layers className="w-3 h-3" />
                 {exp.sectionCount} section{exp.sectionCount !== 1 ? 's' : ''}
               </span>
               {exp.difficulty && (
-                <span className="text-xs text-[#6a6a6a] capitalize">{exp.difficulty}</span>
+                <span className="text-xs text-vlab-muted capitalize">{exp.difficulty}</span>
               )}
               {exp.estimated_duration && (
-                <span className="text-xs text-[#6a6a6a]">{exp.estimated_duration}min</span>
+                <span className="text-xs text-vlab-muted">{exp.estimated_duration}min</span>
               )}
             </div>
           </div>
@@ -86,7 +86,7 @@ export function ExperimentCards({
           <div className="flex items-center gap-2 shrink-0">
             <Link
               href={`/admin/labs/${labSlug}/experiments/${exp.slug}`}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#6a6a6a] bg-[#f2f2f2] hover:bg-[#e8e8e8] transition-colors"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-vlab-muted bg-vlab-surface hover:bg-vlab-rule transition-colors"
             >
               <Pencil className="w-3 h-3" />
               Edit
@@ -94,7 +94,7 @@ export function ExperimentCards({
             <button
               onClick={() => handleDelete(exp)}
               disabled={isPending && pendingId === exp.id}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#ff385c] bg-[#fff0f2] hover:bg-[#ffe0e5] transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-vlab-600 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
             >
               <Trash2 className="w-3 h-3" />
               Delete

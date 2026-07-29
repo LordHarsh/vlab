@@ -62,23 +62,23 @@ export default function NewLabPage() {
     <div className="p-8 max-w-2xl">
       <Link
         href="/admin/labs"
-        className="inline-flex items-center gap-1.5 text-sm text-[#6a6a6a] hover:text-[#222222] mb-6 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-vlab-muted hover:text-vlab-ink mb-6 transition-colors"
       >
         <ChevronLeft className="w-4 h-4" />
         Back to Labs
       </Link>
 
-      <h1 className="text-2xl font-semibold text-[#222222] mb-6">Create New Lab</h1>
+      <h1 className="text-2xl font-semibold text-vlab-ink mb-6">Create New Lab</h1>
 
       <div
-        className="bg-white rounded-2xl p-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg p-6"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Title */}
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">
-              Title <span className="text-[#ff385c]">*</span>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">
+              Title <span className="text-vlab-600">*</span>
             </label>
             <input
               type="text"
@@ -86,14 +86,14 @@ export default function NewLabPage() {
               onChange={(e) => handleTitleChange(e.target.value)}
               placeholder="e.g. Raspberry Pi Lab"
               required
-              className="w-full px-3 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+              className="w-full px-3 py-2.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
             />
           </div>
 
           {/* Slug */}
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">
-              Slug <span className="text-[#ff385c]">*</span>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">
+              Slug <span className="text-vlab-600">*</span>
             </label>
             <input
               type="text"
@@ -101,30 +101,30 @@ export default function NewLabPage() {
               onChange={(e) => handleSlugChange(e.target.value)}
               placeholder="raspberry-pi-lab"
               required
-              className="w-full px-3 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] font-mono placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+              className="w-full px-3 py-2.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink font-mono placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
             />
-            <p className="text-xs text-[#6a6a6a] mt-1">Auto-generated from title. Used in URLs.</p>
+            <p className="text-xs text-vlab-muted mt-1">Auto-generated from title. Used in URLs.</p>
           </div>
 
           {/* Description */}
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">Description</label>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">Description</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="A brief description of the lab..."
               rows={3}
-              className="w-full px-3 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition resize-none"
+              className="w-full px-3 py-2.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition resize-none"
             />
           </div>
 
           {/* Difficulty */}
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">Difficulty</label>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">Difficulty</label>
             <select
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
+              className="w-full px-3 py-2.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition bg-white"
             >
               <option value="">Select difficulty</option>
               <option value="beginner">Beginner</option>
@@ -135,19 +135,19 @@ export default function NewLabPage() {
 
           {/* Tags */}
           <div>
-            <label className="block text-sm font-medium text-[#222222] mb-1.5">Tags</label>
+            <label className="block text-sm font-medium text-vlab-ink mb-1.5">Tags</label>
             <input
               type="text"
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="IoT, Raspberry Pi, Python"
-              className="w-full px-3 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+              className="w-full px-3 py-2.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
             />
-            <p className="text-xs text-[#6a6a6a] mt-1">Comma-separated list of tags.</p>
+            <p className="text-xs text-vlab-muted mt-1">Comma-separated list of tags.</p>
           </div>
 
           {error && (
-            <p className="text-sm text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-xl px-3 py-2">
+            <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
               {error}
             </p>
           )}
@@ -156,14 +156,14 @@ export default function NewLabPage() {
             <button
               type="submit"
               disabled={isPending || !title.trim() || !slug.trim()}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
               Create Lab
             </button>
             <Link
               href="/admin/labs"
-              className="px-5 py-2.5 rounded-xl text-sm font-medium text-[#6a6a6a] hover:bg-[#f2f2f2] transition-colors"
+              className="px-5 py-2.5 rounded-lg text-sm font-medium text-vlab-muted hover:bg-vlab-surface transition-colors"
             >
               Cancel
             </Link>

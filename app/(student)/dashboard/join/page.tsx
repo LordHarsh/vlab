@@ -52,31 +52,31 @@ export default function JoinClassPage() {
         {/* Back */}
         <Link
           href="/dashboard"
-          className="inline-flex items-center gap-1.5 text-sm text-[#6a6a6a] hover:text-[#222222] transition-colors mb-8"
+          className="inline-flex items-center gap-1.5 text-sm text-vlab-muted hover:text-vlab-ink transition-colors mb-8"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to dashboard
         </Link>
 
         <div
-          className="bg-white rounded-2xl p-8"
+          className="bg-white rounded-lg p-8"
           style={{
             boxShadow:
-              'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
+              '0 1px 2px rgba(15,48,80,0.05)',
           }}
         >
           {/* Icon */}
-          <div className="w-12 h-12 rounded-2xl bg-[#ff385c]/10 flex items-center justify-center mb-5">
-            <Hash className="w-6 h-6 text-[#ff385c]" />
+          <div className="w-12 h-12 rounded-lg bg-vlab-600/10 flex items-center justify-center mb-5">
+            <Hash className="w-6 h-6 text-vlab-600" />
           </div>
 
-          <h1 className="text-xl font-bold text-[#222222] mb-1">Join a class</h1>
-          <p className="text-sm text-[#6a6a6a] mb-6">
+          <h1 className="text-xl font-bold text-vlab-ink mb-1">Join a class</h1>
+          <p className="text-sm text-vlab-muted mb-6">
             Enter the join code your educator shared with you.
           </p>
 
           {success ? (
-            <div className="flex items-center gap-3 p-4 bg-green-50 rounded-xl border border-green-200">
+            <div className="flex items-center gap-3 p-4 bg-green-50 rounded-lg border border-green-200">
               <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
               <div>
                 <p className="text-sm font-semibold text-green-800">Joined successfully!</p>
@@ -88,7 +88,7 @@ export default function JoinClassPage() {
               <div>
                 <label
                   htmlFor="join-code"
-                  className="block text-sm font-medium text-[#222222] mb-2"
+                  className="block text-sm font-medium text-vlab-ink mb-2"
                 >
                   Class join code
                 </label>
@@ -101,13 +101,13 @@ export default function JoinClassPage() {
                   maxLength={8}
                   autoFocus
                   autoComplete="off"
-                  className="w-full px-4 py-3 border border-[#c1c1c1] rounded-xl text-lg font-semibold text-center text-[#222222] placeholder:text-[#c1c1c1] placeholder:font-400 placeholder:text-base focus:outline-none focus:border-[#ff385c] focus:ring-2 focus:ring-[#ff385c]/20 tracking-widest transition-colors"
+                  className="w-full px-4 py-3 border border-vlab-rule-strong rounded-lg text-lg font-semibold text-center text-vlab-ink placeholder:text-vlab-300 placeholder:font-400 placeholder:text-base focus:outline-none focus:border-vlab-600 focus:ring-2 focus:ring-vlab-600/20 tracking-widest transition-colors"
                 />
-                <p className="text-xs text-[#6a6a6a] mt-1.5">Format: ABC-1234</p>
+                <p className="text-xs text-vlab-muted mt-1.5">Format: ABC-1234</p>
               </div>
 
               {error && (
-                <div className="flex items-start gap-2.5 p-3.5 bg-red-50 rounded-xl border border-red-200">
+                <div className="flex items-start gap-2.5 p-3.5 bg-red-50 rounded-lg border border-red-200">
                   <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                   <p className="text-sm text-red-700">{error}</p>
                 </div>
@@ -116,7 +116,7 @@ export default function JoinClassPage() {
               <button
                 type="submit"
                 disabled={isPending || code.length < 7}
-                className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="w-full py-3 bg-vlab-600 text-white rounded-lg text-sm font-semibold hover:bg-vlab-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isPending ? 'Joining...' : 'Join Class'}
               </button>

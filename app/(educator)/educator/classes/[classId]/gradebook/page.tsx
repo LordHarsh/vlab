@@ -153,51 +153,51 @@ export default async function GradebookPage({
   return (
     <div className="max-w-full">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-[#6a6a6a] mb-6">
-        <Link href="/educator" className="hover:text-[#222222] transition-colors">My Classes</Link>
+      <div className="flex items-center gap-2 text-sm text-vlab-muted mb-6">
+        <Link href="/educator" className="hover:text-vlab-ink transition-colors">My Classes</Link>
         <span>/</span>
-        <Link href={`/educator/classes/${classId}`} className="hover:text-[#222222] transition-colors">{cls.name}</Link>
+        <Link href={`/educator/classes/${classId}`} className="hover:text-vlab-ink transition-colors">{cls.name}</Link>
         <span>/</span>
-        <span className="text-[#222222]">Gradebook</span>
+        <span className="text-vlab-ink">Gradebook</span>
       </div>
 
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-[#222222]">Gradebook</h1>
-        <p className="text-[#6a6a6a] text-sm mt-0.5">
+        <h1 className="text-xl font-semibold text-vlab-ink">Gradebook</h1>
+        <p className="text-vlab-muted text-sm mt-0.5">
           {studentList.length} students · {experimentCols.length} quiz(zes)
         </p>
       </div>
 
       {experimentCols.length === 0 ? (
         <div
-          className="bg-white rounded-2xl border border-[#c1c1c1] p-12 text-center"
-          style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+          className="bg-white rounded-lg border border-vlab-rule-strong p-12 text-center"
+          style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
         >
-          <p className="text-[#6a6a6a]">No quizzes found in assigned labs.</p>
+          <p className="text-vlab-muted">No quizzes found in assigned labs.</p>
           <Link
             href={`/educator/classes/${classId}/labs`}
-            className="inline-block mt-3 text-sm text-[#ff385c] hover:underline"
+            className="inline-block mt-3 text-sm text-vlab-600 hover:underline"
           >
             Assign labs with quizzes
           </Link>
         </div>
       ) : studentList.length === 0 ? (
         <div
-          className="bg-white rounded-2xl border border-[#c1c1c1] p-12 text-center"
-          style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+          className="bg-white rounded-lg border border-vlab-rule-strong p-12 text-center"
+          style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
         >
-          <p className="text-[#6a6a6a]">No active students enrolled.</p>
+          <p className="text-vlab-muted">No active students enrolled.</p>
         </div>
       ) : (
         <div
-          className="bg-white rounded-2xl border border-[#c1c1c1] overflow-hidden"
-          style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+          className="bg-white rounded-lg border border-vlab-rule-strong overflow-hidden"
+          style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
         >
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-[#f9f9f9] border-b border-[#f2f2f2]">
-                  <th className="text-left text-xs font-medium text-[#6a6a6a] px-4 py-3 sticky left-0 bg-[#f9f9f9] z-10 whitespace-nowrap min-w-[180px]">
+                <tr className="bg-vlab-surface-alt border-b border-vlab-surface">
+                  <th className="text-left text-xs font-medium text-vlab-muted px-4 py-3 sticky left-0 bg-vlab-surface-alt z-10 whitespace-nowrap min-w-[180px]">
                     Student
                   </th>
                   {experimentCols.map((col) => {
@@ -206,10 +206,10 @@ export default async function GradebookPage({
                     return (
                       <th
                         key={col.quizId}
-                        className="text-center text-xs font-medium text-[#6a6a6a] px-3 py-3 whitespace-nowrap min-w-[100px]"
+                        className="text-center text-xs font-medium text-vlab-muted px-3 py-3 whitespace-nowrap min-w-[100px]"
                       >
                         <div>{col.experimentTitle}</div>
-                        <div className="text-[10px] text-[#6a6a6a] font-normal mt-0.5">
+                        <div className="text-[10px] text-vlab-muted font-normal mt-0.5">
                           {col.quizType} {isGraded && '• graded'}
                         </div>
                       </th>
@@ -217,19 +217,19 @@ export default async function GradebookPage({
                   })}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#f2f2f2]">
+              <tbody className="divide-y divide-vlab-surface">
                 {studentList.map((student) => (
-                  <tr key={student.studentId} className="hover:bg-[#fafafa] transition-colors">
-                    <td className="px-4 py-3 sticky left-0 bg-white hover:bg-[#fafafa] z-10">
+                  <tr key={student.studentId} className="hover:bg-vlab-surface-alt transition-colors">
+                    <td className="px-4 py-3 sticky left-0 bg-white hover:bg-vlab-surface-alt z-10">
                       <Link
                         href={`/educator/classes/${classId}/gradebook/${student.studentId}`}
                         className="group"
                       >
-                        <p className="text-sm font-medium text-[#222222] group-hover:text-[#ff385c] transition-colors">
+                        <p className="text-sm font-medium text-vlab-ink group-hover:text-vlab-600 transition-colors">
                           {student.name}
                         </p>
                         {student.registrationNo && (
-                          <p className="text-xs text-[#6a6a6a]">{student.registrationNo}</p>
+                          <p className="text-xs text-vlab-muted">{student.registrationNo}</p>
                         )}
                       </Link>
                     </td>
@@ -242,7 +242,7 @@ export default async function GradebookPage({
                       if (!sub) {
                         return (
                           <td key={col.quizId} className="px-3 py-3 text-center">
-                            <span className="text-xs text-[#c1c1c1]">—</span>
+                            <span className="text-xs text-vlab-300">—</span>
                           </td>
                         )
                       }
@@ -250,7 +250,7 @@ export default async function GradebookPage({
                       if (!isGraded) {
                         return (
                           <td key={col.quizId} className="px-3 py-3 text-center">
-                            <span className="inline-flex items-center justify-center w-12 h-7 rounded-lg bg-[#f2f2f2] text-xs font-medium text-[#6a6a6a]">
+                            <span className="inline-flex items-center justify-center w-12 h-7 rounded-lg bg-vlab-surface text-xs font-medium text-vlab-muted">
                               {sub.percentage.toFixed(0)}%
                             </span>
                           </td>
@@ -278,7 +278,7 @@ export default async function GradebookPage({
             </table>
           </div>
           {/* Legend */}
-          <div className="flex items-center gap-4 px-4 py-3 border-t border-[#f2f2f2] text-xs text-[#6a6a6a]">
+          <div className="flex items-center gap-4 px-4 py-3 border-t border-vlab-surface text-xs text-vlab-muted">
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-4 h-4 rounded bg-green-100"></span> Passed
             </span>
@@ -286,10 +286,10 @@ export default async function GradebookPage({
               <span className="inline-block w-4 h-4 rounded bg-red-100"></span> Failed
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-4 rounded bg-[#f2f2f2]"></span> Ungraded attempt
+              <span className="inline-block w-4 h-4 rounded bg-vlab-surface"></span> Ungraded attempt
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="text-[#c1c1c1]">—</span> Not attempted
+              <span className="text-vlab-300">—</span> Not attempted
             </span>
           </div>
         </div>

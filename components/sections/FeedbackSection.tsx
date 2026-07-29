@@ -58,7 +58,7 @@ function StarRating({
             className={`w-7 h-7 transition-colors ${
               star <= (hovered || value)
                 ? 'text-amber-400 fill-amber-400'
-                : 'text-[#c1c1c1]'
+                : 'text-vlab-300'
             }`}
           />
         </button>
@@ -89,11 +89,11 @@ function ScaleSlider({
         value={value || min}
         onChange={(e) => onChange(Number(e.target.value))}
         aria-labelledby={labelledBy}
-        className="w-full accent-[#ff385c]"
+        className="w-full accent-vlab-600"
       />
-      <div className="flex justify-between text-xs text-[#6a6a6a]">
+      <div className="flex justify-between text-xs text-vlab-muted">
         <span>{min}</span>
-        <span className="font-semibold text-[#ff385c]">{value || min}</span>
+        <span className="font-semibold text-vlab-600">{value || min}</span>
         <span>{max}</span>
       </div>
     </div>
@@ -219,14 +219,14 @@ export function FeedbackSection({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 text-[#6a6a6a] animate-spin" />
+        <Loader2 className="w-6 h-6 text-vlab-muted animate-spin" />
       </div>
     )
   }
 
   if (!form || !form.is_enabled) {
     return (
-      <div className="py-8 text-center text-[#6a6a6a] text-sm">
+      <div className="py-8 text-center text-vlab-muted text-sm">
         Feedback is not available for this experiment.
       </div>
     )
@@ -235,12 +235,12 @@ export function FeedbackSection({
   if (alreadySubmitted || submitted) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center gap-4">
-        <div className="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center">
+        <div className="w-16 h-16 rounded-lg bg-green-100 flex items-center justify-center">
           <CheckCircle2 className="w-8 h-8 text-green-600" />
         </div>
         <div>
-          <p className="font-semibold text-[#222222] mb-1">Thank you for your feedback!</p>
-          <p className="text-sm text-[#6a6a6a]">Your response has been recorded.</p>
+          <p className="font-semibold text-vlab-ink mb-1">Thank you for your feedback!</p>
+          <p className="text-sm text-vlab-muted">Your response has been recorded.</p>
         </div>
       </div>
     )
@@ -250,13 +250,13 @@ export function FeedbackSection({
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[#ff385c]/10 flex items-center justify-center shrink-0">
-          <MessageSquare className="w-5 h-5 text-[#ff385c]" />
+        <div className="w-10 h-10 rounded-lg bg-vlab-600/10 flex items-center justify-center shrink-0">
+          <MessageSquare className="w-5 h-5 text-vlab-600" />
         </div>
         <div>
-          <h2 className="text-base font-semibold text-[#222222]">{form.title}</h2>
+          <h2 className="text-base font-semibold text-vlab-ink">{form.title}</h2>
           {form.description && (
-            <p className="text-xs text-[#6a6a6a] mt-0.5">{form.description}</p>
+            <p className="text-xs text-vlab-muted mt-0.5">{form.description}</p>
           )}
         </div>
       </div>
@@ -265,14 +265,14 @@ export function FeedbackSection({
         {questions.map((q, idx) => (
           <div
             key={q.id}
-            className="bg-white rounded-xl border border-[#c1c1c1] p-5"
+            className="bg-white rounded-lg border border-vlab-rule-strong p-5"
             style={{
               boxShadow:
                 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px',
             }}
           >
-            <p id={`fq-label-${q.id}`} className="text-sm font-semibold text-[#222222] mb-3">
-              <span className="text-[#ff385c] mr-1">{idx + 1}.</span>
+            <p id={`fq-label-${q.id}`} className="text-sm font-semibold text-vlab-ink mb-3">
+              <span className="text-vlab-600 mr-1">{idx + 1}.</span>
               {q.question_text}
               {q.is_required && <span className="text-red-500 ml-0.5">*</span>}
             </p>
@@ -302,7 +302,7 @@ export function FeedbackSection({
                 onChange={(e) => setAnswer(q.id, e.target.value)}
                 placeholder="Type your answer here..."
                 aria-labelledby={`fq-label-${q.id}`}
-                className="w-full px-3 py-2.5 border border-[#c1c1c1] rounded-xl text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-2 focus:ring-[#ff385c]/20 resize-none transition-colors"
+                className="w-full px-3 py-2.5 border border-vlab-rule-strong rounded-lg text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-2 focus:ring-vlab-600/20 resize-none transition-colors"
               />
             )}
 
@@ -313,10 +313,10 @@ export function FeedbackSection({
                   return (
                     <label
                       key={option.id}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                         selected
-                          ? 'border-[#ff385c] bg-[#ff385c]/5'
-                          : 'border-[#f2f2f2] hover:border-[#c1c1c1] hover:bg-[#f2f2f2]/50'
+                          ? 'border-vlab-600 bg-vlab-600/5'
+                          : 'border-vlab-surface hover:border-vlab-rule-strong hover:bg-vlab-surface/50'
                       }`}
                     >
                       <input
@@ -325,9 +325,9 @@ export function FeedbackSection({
                         value={option.id}
                         checked={selected}
                         onChange={() => setAnswer(q.id, option.id)}
-                        className="accent-[#ff385c]"
+                        className="accent-vlab-600"
                       />
-                      <span className="text-sm text-[#222222]">{option.text}</span>
+                      <span className="text-sm text-vlab-ink">{option.text}</span>
                     </label>
                   )
                 })}
@@ -337,7 +337,7 @@ export function FeedbackSection({
         ))}
 
         {error && (
-          <div className="flex items-start gap-2.5 p-3.5 bg-red-50 rounded-xl border border-red-200">
+          <div className="flex items-start gap-2.5 p-3.5 bg-red-50 rounded-lg border border-red-200">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
             <p className="text-sm text-red-700">{error}</p>
           </div>
@@ -346,7 +346,7 @@ export function FeedbackSection({
         <button
           type="submit"
           disabled={isPending}
-          className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="w-full py-3 bg-vlab-600 text-white rounded-lg text-sm font-semibold hover:bg-vlab-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isPending ? (
             <span className="flex items-center justify-center gap-2">

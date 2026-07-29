@@ -29,7 +29,7 @@ function getYouTubeEmbedUrl(url: string): string | null {
 
 export function VideoSection({ content }: { content: VideoContent | null }) {
   if (!content || !content.url) {
-    return <p className="text-[#6a6a6a]">No video content available.</p>
+    return <p className="text-vlab-muted">No video content available.</p>
   }
 
   const { url, caption } = content
@@ -39,7 +39,7 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
     if (embedUrl) {
       return (
         <div className="space-y-3">
-          <div className="aspect-video w-full rounded-xl overflow-hidden border border-[#c1c1c1] bg-black">
+          <div className="aspect-video w-full rounded-lg overflow-hidden border border-vlab-rule-strong bg-black">
             <iframe
               src={embedUrl}
               title={caption ?? 'Video'}
@@ -49,7 +49,7 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
             />
           </div>
           {caption && (
-            <p className="text-xs text-[#6a6a6a] text-center">{caption}</p>
+            <p className="text-xs text-vlab-muted text-center">{caption}</p>
           )}
         </div>
       )
@@ -61,7 +61,7 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
   if (isVideoFile) {
     return (
       <div className="space-y-3">
-        <div className="rounded-xl overflow-hidden border border-[#c1c1c1]">
+        <div className="rounded-lg overflow-hidden border border-vlab-rule-strong">
           { }
           <video
             src={url}
@@ -70,7 +70,7 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
           />
         </div>
         {caption && (
-          <p className="text-xs text-[#6a6a6a] text-center">{caption}</p>
+          <p className="text-xs text-vlab-muted text-center">{caption}</p>
         )}
       </div>
     )
@@ -83,10 +83,10 @@ export function VideoSection({ content }: { content: VideoContent | null }) {
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center gap-3 p-4 rounded-xl border border-[#c1c1c1] hover:border-[#ff385c] hover:bg-[#f2f2f2] transition-all group"
+        className="flex items-center gap-3 p-4 rounded-lg border border-vlab-rule-strong hover:border-vlab-600 hover:bg-vlab-surface transition-all group"
       >
-        <ExternalLink className="w-4 h-4 text-[#6a6a6a] group-hover:text-[#ff385c] transition-colors" />
-        <span className="text-sm text-[#222222] group-hover:text-[#ff385c] transition-colors font-medium">
+        <ExternalLink className="w-4 h-4 text-vlab-muted group-hover:text-vlab-600 transition-colors" />
+        <span className="text-sm text-vlab-ink group-hover:text-vlab-600 transition-colors font-medium">
           {caption ?? 'Watch Video'}
         </span>
       </a>

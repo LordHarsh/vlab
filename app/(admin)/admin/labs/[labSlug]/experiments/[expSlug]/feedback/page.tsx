@@ -53,26 +53,26 @@ export default async function FeedbackEditorPage({
 
   return (
     <div className="p-8">
-      <div className="flex items-center gap-2 mb-6 text-sm text-[#6a6a6a]">
-        <Link href="/admin/labs" className="hover:text-[#222222] transition-colors">Labs</Link>
+      <div className="flex items-center gap-2 mb-6 text-sm text-vlab-muted">
+        <Link href="/admin/labs" className="hover:text-vlab-ink transition-colors">Labs</Link>
         <span>/</span>
-        <Link href={`/admin/labs/${labSlug}`} className="hover:text-[#222222] transition-colors">{lab.title}</Link>
+        <Link href={`/admin/labs/${labSlug}`} className="hover:text-vlab-ink transition-colors">{lab.title}</Link>
         <span>/</span>
-        <Link href={`/admin/labs/${labSlug}/experiments/${expSlug}`} className="hover:text-[#222222] transition-colors">{experiment.title}</Link>
+        <Link href={`/admin/labs/${labSlug}/experiments/${expSlug}`} className="hover:text-vlab-ink transition-colors">{experiment.title}</Link>
         <span>/</span>
-        <span className="text-[#222222]">Feedback Form</span>
+        <span className="text-vlab-ink">Feedback Form</span>
       </div>
 
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-[#222222]">{form.title}</h1>
+          <h1 className="text-2xl font-semibold text-vlab-ink">{form.title}</h1>
           {form.description && (
-            <p className="text-sm text-[#6a6a6a] mt-1">{form.description}</p>
+            <p className="text-sm text-vlab-muted mt-1">{form.description}</p>
           )}
         </div>
         <span
           className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-            form.is_enabled ? 'bg-[#e6f9f5] text-[#00a699]' : 'bg-[#f2f2f2] text-[#6a6a6a]'
+            form.is_enabled ? 'bg-green-50 text-vlab-green-ink' : 'bg-vlab-surface text-vlab-muted'
           }`}
         >
           {form.is_enabled ? 'Enabled' : 'Disabled'}
@@ -83,10 +83,10 @@ export default async function FeedbackEditorPage({
         {/* Left: form settings */}
         <div className="lg:col-span-1">
           <div
-            className="bg-white rounded-2xl p-6"
-            style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+            className="bg-white rounded-lg p-6"
+            style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
           >
-            <h2 className="text-base font-semibold text-[#222222] mb-4">Form Settings</h2>
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">Form Settings</h2>
             <FeedbackSettingsForm form={form} />
           </div>
         </div>
@@ -94,20 +94,20 @@ export default async function FeedbackEditorPage({
         {/* Right: questions */}
         <div className="lg:col-span-2 space-y-4">
           <div
-            className="bg-white rounded-2xl p-6"
-            style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+            className="bg-white rounded-lg p-6"
+            style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
           >
-            <h2 className="text-base font-semibold text-[#222222] mb-4">
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">
               Questions ({questions.length})
             </h2>
             <FeedbackQuestionsList questions={questions} />
           </div>
 
           <div
-            className="bg-white rounded-2xl p-6"
-            style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+            className="bg-white rounded-lg p-6"
+            style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
           >
-            <h2 className="text-base font-semibold text-[#222222] mb-4">Add Question</h2>
+            <h2 className="text-base font-semibold text-vlab-ink mb-4">Add Question</h2>
             <AddFeedbackQuestionForm formId={form.id} />
           </div>
         </div>

@@ -15,16 +15,16 @@ export function CopyJoinCode({ joinCode }: { joinCode: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#f2f2f2] border border-[#c1c1c1] rounded-xl hover:bg-[#e8e8e8] transition-colors group"
+      className="inline-flex items-center gap-2 px-3 py-1.5 bg-vlab-surface border border-vlab-rule-strong rounded-lg hover:bg-vlab-rule transition-colors group"
       title="Click to copy join code"
     >
-      <span className="font-mono font-bold text-[#222222] text-lg tracking-widest">
+      <span className="font-mono font-bold text-vlab-ink text-lg tracking-widest">
         {joinCode}
       </span>
       {copied ? (
         <Check className="w-4 h-4 text-green-600" />
       ) : (
-        <Copy className="w-4 h-4 text-[#6a6a6a] group-hover:text-[#222222]" />
+        <Copy className="w-4 h-4 text-vlab-muted group-hover:text-vlab-ink" />
       )}
     </button>
   )
