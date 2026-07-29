@@ -254,19 +254,10 @@ export function WorkspaceToolbar({
         showLabel={wide}
       />
 
+      {/* No wire-width dropdown. Like "Send To" it named a setting this panel
+          has no notion of — every lead is drawn at one gauge — so it was
+          furniture whose only possible answer was "this does nothing". */}
       <span className={`${wide ? 'flex' : 'hidden'} items-center gap-0.5`}>
-        <InertTool
-          label="Wire routing style"
-          reason="Wire routing is fixed — the leads are drawn as the lab sheet runs them."
-          onNotify={onNotify}
-          className="h-7 w-auto gap-1 rounded-[3px] border border-[#dfe3e8] px-1.5"
-        >
-          <span className="h-[3px] w-5 rounded-full bg-[#9aa3ab]" />
-          <ChevronDown className="h-3 w-3 text-[#9aa3ab]" />
-        </InertTool>
-
-        <Divider />
-
         <InertTool
           label="Bend wire"
           reason="Wire routing is fixed — the leads are drawn as the lab sheet runs them."
