@@ -869,6 +869,8 @@ export function CanvasStatusStrip({
   experimentId,
   controls = NO_CONTROLS,
   onSensorChange,
+  manual = false,
+  onRelease,
 }: {
   frame: ShowreelFrame
   /** For the one threshold check `isSensorWarn` runs. */
@@ -877,6 +879,17 @@ export function CanvasStatusStrip({
   controls?: readonly SensorControlSpec[]
   /** Applies a dragged/toggled value. Omitted renders the plain read-only strip. */
   onSensorChange?: (field: SensorControlSpec['field'], value: number | boolean) => void
+  /**
+   * Whether the student has taken these readings over from the scripted run.
+   *
+   * Worth SAYING rather than leaving to be inferred: before first touch the
+   * sliders track the timeline and move on their own, which without a label
+   * reads as the panel being broken; after it they hold still, which without a
+   * label reads as the panel having stopped. The badge names which of the two
+   * is happening, and gives the way back.
+   */
+  manual?: boolean
+  onRelease?: () => void
 }) {
   const skip = useMemo(() => new Set(controls.map((c) => c.field)), [controls])
   const rows = readouts(frame.sensors, skip)
@@ -886,6 +899,22 @@ export function CanvasStatusStrip({
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[#dfe3e8] bg-white px-3 py-1.5">
       {controls.length > 0 && onSensorChange && (
         <SensorControls controls={controls} sensors={frame.sensors} warn={warn} onChange={onSensorChange} />
+      )}
+
+      {manual && onRelease && (
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="rounded-[3px] border border-[#c7dcf0] bg-[#1477d1]/[0.08] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#1477d1]">
+            Manual
+          </span>
+          <button
+            type="button"
+            onClick={onRelease}
+            title="Hand the readings back to the scripted run"
+            className="rounded-[3px] px-1 text-[11px] text-[#566573] underline underline-offset-2 transition-colors hover:text-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1]"
+          >
+            Resume
+          </button>
+        </span>
       )}
 
       {rows.length > 0 && (
