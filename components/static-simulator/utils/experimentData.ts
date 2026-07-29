@@ -1,14 +1,43 @@
 import type { Experiment } from '../types';
 import { HEALTH_MONITORING_RPI_SCRIPT } from '@/lib/simulator/pico/experiments';
 
+/**
+ * `title` and `keyComponents` are transcribed from the lab sheet this app was
+ * built from — reference/iot_virtual_lab.html, its `experiments` array — and
+ * that sheet is the source of truth for them. `keyComponents` is its bill of
+ * materials verbatim, so it names the hardware a student would buy for the
+ * bench build, including the items the sheet itself marks optional and the
+ * sketch never touches.
+ *
+ * That is deliberately NOT the same list as `defaultComponents` below, which
+ * is what this simulator draws. The gap worth knowing about: every Raspberry
+ * Pi experiment is written for a full Raspberry Pi, and this app emulates a
+ * Pico, so the sheet's "Raspberry Pi 3/4" is drawn here as a Pico. The BOM
+ * keeps the sheet's wording; the drawing keeps the truth about the emulation.
+ *
+ * `aim`, `theory`, `procedure` and the four-question quiz that the same lab
+ * sheet carries per experiment have no home in the `Experiment` type — they
+ * are lab-sheet prose, and they live in the content pipeline instead: the
+ * seed (supabase/seeds/003_experiments.sql) writes them as experiment_sections,
+ * and supabase/migrations/016_backfill_authored_content.sql rebuilds those
+ * sections for experiments 4-12 and all 48 quiz questions from the sheet.
+ */
 export const EXPERIMENTS: Experiment[] = [
   {
     id: 1,
-    title: 'LED & DHT11 Temp/Humidity Sensor Interfacing',
+    title: 'LED & DHT11 Temperature/Humidity Sensor Interfacing',
     category: 'arduino',
     platform: 'Arduino',
     difficulty: 'Beginner',
-    keyComponents: ['Arduino Uno', 'LED', 'DHT11', 'Resistor (220Ω)'],
+    keyComponents: [
+      'Arduino Uno',
+      'DHT11 Sensor',
+      'LED (Red)',
+      '220Ω Resistor',
+      '10kΩ Pull-up Resistor',
+      'Connecting Wires',
+      'Breadboard'
+    ],
     description: 'Monitor environment temperature and humidity. If the temperature exceeds 28°C, the warning LED will turn ON.',
     tips: [
       'Use the DHT11 temperature slider in the controls panel to simulate temperature changes.',
@@ -140,7 +169,15 @@ void loop() {
     category: 'arduino',
     platform: 'Arduino',
     difficulty: 'Beginner',
-    keyComponents: ['Arduino Uno', 'HC-SR04', 'PIR Sensor'],
+    keyComponents: [
+      'Arduino Uno',
+      'HC-SR04 Ultrasonic Sensor',
+      'PIR Sensor (HC-SR501)',
+      'LED',
+      '220Ω Resistor',
+      'Connecting Wires',
+      'Breadboard'
+    ],
     description: 'Combine motion detection with distance measurements to form an smart security checking circuit.',
     tips: [
       'PIR sensor checks if motion is triggered. Use the toggle button in the controls panel.',
@@ -208,7 +245,16 @@ void loop() {
     category: 'arduino',
     platform: 'Arduino',
     difficulty: 'Beginner',
-    keyComponents: ['Arduino Uno', 'Red/Yellow/Green LEDs', '3x 220Ω Resistors'],
+    keyComponents: [
+      'Arduino Uno',
+      'Red LED',
+      'Yellow LED',
+      'Green LED',
+      '3× 220Ω Resistors',
+      'Push Button (optional)',
+      'Connecting Wires',
+      'Breadboard'
+    ],
     description: 'Simulate a traffic light intersection sequences (Red -> Green -> Yellow -> Red) with adjustable cycle delays.',
     tips: [
       'LEDs are connected to digital pins 10 (Red), 11 (Yellow), and 12 (Green).',
@@ -303,7 +349,13 @@ void loop() {
     category: 'arduino',
     platform: 'Arduino',
     difficulty: 'Intermediate',
-    keyComponents: ['Arduino Uno', 'YF-S201 Water Flow Sensor'],
+    keyComponents: [
+      'Arduino Uno',
+      'YF-S201 Flow Sensor',
+      '16×2 LCD (optional)',
+      '10kΩ Resistor (pull-up)',
+      'Connecting Wires'
+    ],
     description: 'Measures liquid flow velocity and computes total water volume passing through the pipeline.',
     tips: [
       'The flow sensor spins an internal rotor containing a magnet that activates a hall effect sensor.',
@@ -351,11 +403,19 @@ void loop() {
   },
   {
     id: 5,
-    title: 'LED & Push Button with Raspberry Pi',
+    title: 'LED & Push Button Interfacing with Raspberry Pi',
     category: 'raspberry-pi',
     platform: 'Raspberry Pi',
     difficulty: 'Beginner',
-    keyComponents: ['Raspberry Pi Pico', 'LED', 'Push Button', '10kΩ Pull-down Resistor'],
+    keyComponents: [
+      'Raspberry Pi (any model)',
+      'LED',
+      '220Ω Resistor',
+      'Push Button',
+      '10kΩ Pull-down Resistor',
+      'Connecting Wires',
+      'Breadboard'
+    ],
     description: 'Toggle the state of a GPIO output pin (LED) by polling a GPIO input pin connected to a tactile push button.',
     tips: [
       'Uses Python programming style structure.',
@@ -413,11 +473,23 @@ while True:
   },
   {
     id: 6,
-    title: 'Motion Sensor Alarm using PIR',
+    title: 'Motion Sensor Alarm using PIR Sensor',
     category: 'arduino',
+    // The lab sheet heads this one "Arduino / RPi" — it is written to be built
+    // on either board. `platform` is a two-value union here and it drives the
+    // code panel's language and filename, so it names the board the sketch
+    // below is actually written for.
     platform: 'Arduino',
     difficulty: 'Beginner',
-    keyComponents: ['Arduino Uno', 'PIR Sensor', 'Piezo Buzzer'],
+    keyComponents: [
+      'Arduino Uno',
+      'PIR Sensor HC-SR501',
+      'Active Buzzer',
+      'Red LED',
+      'Green LED',
+      '220Ω Resistors',
+      'Connecting Wires'
+    ],
     description: 'Trigger a security alarm when motion is detected. Sound a piezo buzzer and flash an indicator.',
     tips: [
       'PIR sensor outputs HIGH logic when movement is detected.',
@@ -472,11 +544,11 @@ void loop() {
   },
   {
     id: 7,
-    title: 'DHT11 with Raspberry Pi',
+    title: 'DHT11 Temperature & Humidity with Raspberry Pi',
     category: 'raspberry-pi',
     platform: 'Raspberry Pi',
     difficulty: 'Beginner',
-    keyComponents: ['Raspberry Pi Pico', 'DHT11 Sensor'],
+    keyComponents: ['Raspberry Pi', 'DHT11 Sensor', '10kΩ Resistor', 'Connecting Wires'],
     description: 'Interface the DHT11 digital humidity and temperature sensor with Raspberry Pi Pico using Python.',
     tips: [
       'We use the MicroPython structure to poll the DHT11 data pin.',
@@ -532,11 +604,16 @@ while True:
   },
   {
     id: 8,
-    title: 'DS18B20 Temperature Sensor with RPi',
+    title: 'DS18B20 Temperature Sensor with Raspberry Pi',
     category: 'raspberry-pi',
     platform: 'Raspberry Pi',
     difficulty: 'Intermediate',
-    keyComponents: ['Raspberry Pi Pico', 'DS18B20 Temp Probe', '4.7kΩ Pull-up Resistor'],
+    keyComponents: [
+      'Raspberry Pi',
+      'DS18B20 Sensor (waterproof probe)',
+      '4.7kΩ Resistor',
+      'Connecting Wires'
+    ],
     description: 'Interfacing the 1-Wire DS18B20 waterproof temperature sensor with Raspberry Pi.',
     tips: [
       'The DS18B20 uses the unique 1-wire protocol, allowing multiple probes on a single data wire.',
@@ -606,11 +683,19 @@ except Exception as e:
   },
   {
     id: 9,
-    title: 'DC & Stepper Motor Control with RPi',
+    title: 'DC Motor & Stepper Motor Control with Raspberry Pi',
     category: 'raspberry-pi',
     platform: 'Raspberry Pi',
     difficulty: 'Intermediate',
-    keyComponents: ['Raspberry Pi Pico', 'L298N Motor Driver', 'DC Motor'],
+    keyComponents: [
+      'Raspberry Pi',
+      'L298N Motor Driver',
+      'DC Motor (5V)',
+      '28BYJ-48 Stepper Motor',
+      'ULN2003 Driver Board',
+      '12V Power Supply',
+      'Connecting Wires'
+    ],
     description: 'Use the dual H-Bridge driver to control rotation direction and speed of a DC motor.',
     tips: [
       'The L298N driver board handles the power switching for high current inductive loads (motors).',
@@ -672,11 +757,17 @@ while True:
   },
   {
     id: 10,
-    title: 'Home Automation with Raspberry Pi',
+    title: 'Smartphone Controlled Home Automation with Raspberry Pi',
     category: 'raspberry-pi',
     platform: 'Raspberry Pi',
     difficulty: 'Intermediate',
-    keyComponents: ['Raspberry Pi Pico', '5V Relay Module'],
+    keyComponents: [
+      'Raspberry Pi 3/4',
+      '4-Channel Relay Module',
+      'LEDs (simulate loads)',
+      'WiFi Network',
+      'Smartphone / PC Browser'
+    ],
     description: 'Construct a smart light controller. Power an external bulb through a high-voltage isolation relay.',
     tips: [
       'A relay isolates the micro-controller logic from high-voltage main circuits.',
@@ -743,14 +834,24 @@ asyncio.run(run_automation())`,
     id: 11,
     title: 'Smart Traffic Light Controller',
     category: 'arduino',
+    // The lab sheet files this one under platform "Advanced", which is a
+    // difficulty and not a board; its own tags and bill of materials say
+    // Arduino, and the difficulty is carried below where it belongs.
     platform: 'Arduino',
     difficulty: 'Advanced',
     // The lab sheet's own bill of materials (iot_virtual_lab.html), not the
     // single-lane Uno + HC-SR04 circuit this used to describe: an Arduino
     // Mega, twelve LEDs as three RGYG sets, four density potentiometers, a
-    // 16x2 LCD, and four IR sensors the sheet itself marks optional and the
+    // 16×2 LCD, and four IR sensors the sheet itself marks optional and the
     // sketch below never reads (density comes from the pots instead).
-    keyComponents: ['Arduino Mega', '12x LEDs (3 sets RGYG)', '4x Potentiometers', 'LCD 16x2'],
+    keyComponents: [
+      'Arduino Mega',
+      '12× LEDs (3 sets RGYG)',
+      '4× Potentiometers',
+      '4× IR Sensors (optional)',
+      'LCD 16×2',
+      'Connecting Wires'
+    ],
     description: 'Build a four-lane adaptive traffic controller. Each lane\'s density potentiometer sets how long its green phase runs, so the busiest lane gets the most time before the sequence moves on.',
     tips: [
       'Each density slider stands in for a lane\'s traffic sensor; turning one up lengthens that lane\'s green phase the next time the sequence reaches it.',
@@ -869,7 +970,15 @@ void loop() {
     // DS18B20, a pulse sensor read through an MCP3008 SPI ADC because a
     // Raspberry Pi has no analog input pins of its own, and an optional OLED
     // the code below does not use — every reading it takes goes to `print()`.
-    keyComponents: ['Raspberry Pi Pico', 'DS18B20 Sensor', 'Pulse Sensor', 'MCP3008 ADC'],
+    keyComponents: [
+      'Raspberry Pi 3/4',
+      'DS18B20 Temperature Sensor',
+      'Pulse Sensor (SEN-11574)',
+      'MCP3008 ADC',
+      '4.7kΩ Resistor',
+      'OLED Display (optional)',
+      'WiFi Dongle'
+    ],
     description: 'Read body temperature from a DS18B20 and heart rate from a pulse sensor wired through an external ADC — the converter a Raspberry Pi needs because it has no analog pins of its own — and flag readings outside the normal range.',
     tips: [
       'The DS18B20 is a real digital thermometer, not a stand-in: it reports body temperature straight off its 1-Wire bus.',

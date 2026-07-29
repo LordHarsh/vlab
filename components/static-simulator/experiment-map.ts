@@ -13,26 +13,30 @@ import type { Experiment } from './types'
  * deliberately absent from this table.
  *
  * The correspondence below was verified title-by-title against BOTH sources
- * rather than assumed from ordering; their titles are quoted next to ours so a
- * future re-sync can re-check it by reading, without opening either file.
+ * rather than assumed from ordering; the titles are quoted here so a future
+ * re-sync can re-check it by reading, without opening either file.
  *
- *   id  our slug                    our title (seed)                                     their title (experimentData.ts)
- *   ──  ──────────────────────────  ───────────────────────────────────────────────────  ───────────────────────────────────────────────────
- *    1  led-dht11-arduino           LED & DHT11 Temperature/Humidity Sensor Interfacing   LED & DHT11 Temp/Humidity Sensor Interfacing
- *    2  ultrasonic-pir-arduino      Ultrasonic Sensor & PIR Sensor Interfacing            Ultrasonic Sensor & PIR Sensor Interfacing
- *    3  traffic-light-arduino       Traffic Light Simulator                               Traffic Light Simulator
- *    4  water-flow-arduino          Water Flow Detection using Arduino                    Water Flow Detection using Arduino
- *    5  led-button-rpi              LED & Push Button Interfacing with Raspberry Pi       LED & Push Button with Raspberry Pi
- *    6  pir-alarm-arduino           Motion Sensor Alarm using PIR Sensor                  Motion Sensor Alarm using PIR
- *    7  dht11-rpi                   DHT11 Temperature & Humidity with Raspberry Pi        DHT11 with Raspberry Pi
- *    8  ds18b20-rpi                 DS18B20 Temperature Sensor with Raspberry Pi          DS18B20 Temperature Sensor with RPi
- *    9  motor-control-rpi           DC Motor & Stepper Motor Control with Raspberry Pi    DC & Stepper Motor Control with RPi
- *   10  home-automation-rpi         Smartphone Controlled Home Automation with Rasp. Pi   Home Automation with Raspberry Pi
- *   11  smart-traffic-controller    Smart Traffic Light Controller                        Smart Traffic Light Controller
- *   12  health-monitoring-rpi       Smart Health Monitoring System                        Smart Health Monitoring System
+ * The two sources used to spell the same experiment two ways — ours abbreviated
+ * ("DHT11 with Raspberry Pi"), the seed's written out. They now agree, because
+ * both take their titles from the original lab sheet
+ * (reference/iot_virtual_lab.html) verbatim.
  *
- * Every pairing is the same experiment described two ways — the only variation
- * is how much of the hardware name each source spells out. There is no slug
+ *   id  our slug                    title (lab sheet = seed = experimentData.ts)
+ *   ──  ──────────────────────────  ───────────────────────────────────────────────────────
+ *    1  led-dht11-arduino           LED & DHT11 Temperature/Humidity Sensor Interfacing
+ *    2  ultrasonic-pir-arduino      Ultrasonic Sensor & PIR Sensor Interfacing
+ *    3  traffic-light-arduino       Traffic Light Simulator
+ *    4  water-flow-arduino          Water Flow Detection using Arduino
+ *    5  led-button-rpi              LED & Push Button Interfacing with Raspberry Pi
+ *    6  pir-alarm-arduino           Motion Sensor Alarm using PIR Sensor
+ *    7  dht11-rpi                   DHT11 Temperature & Humidity with Raspberry Pi
+ *    8  ds18b20-rpi                 DS18B20 Temperature Sensor with Raspberry Pi
+ *    9  motor-control-rpi           DC Motor & Stepper Motor Control with Raspberry Pi
+ *   10  home-automation-rpi         Smartphone Controlled Home Automation with Raspberry Pi
+ *   11  smart-traffic-controller    Smart Traffic Light Controller
+ *   12  health-monitoring-rpi       Smart Health Monitoring System
+ *
+ * Every pairing is the same experiment under the same name. There is no slug
  * whose meaning had to be stretched to make the table line up.
  */
 export const SLUG_TO_STATIC_EXPERIMENT_ID: Readonly<Record<string, number>> = {
