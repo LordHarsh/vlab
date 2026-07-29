@@ -384,7 +384,7 @@ export const STARTER_DHT11_PICO: CircuitDoc = {
 }
 
 /**
- * Experiment 08 — "DS18B20 Temperature Sensor with RPi" (slug `ds18b20-rpi`).
+ * Experiment 08 — "DS18B20 Temperature Sensor with Raspberry Pi" (slug `ds18b20-rpi`).
  * A PICO circuit.
  *
  * Bill of materials from the experiment's own Components section: board,
@@ -416,7 +416,7 @@ export const STARTER_DS18B20_PICO: CircuitDoc = {
 }
 
 /**
- * Experiment 09 — "DC & Stepper Motor Control with RPi"
+ * Experiment 09 — "DC Motor & Stepper Motor Control with Raspberry Pi"
  * (slug `motor-control-rpi`). A PICO circuit, and the largest starter in the lab.
  *
  * Bill of materials from the experiment's own Components section: board, L298N
