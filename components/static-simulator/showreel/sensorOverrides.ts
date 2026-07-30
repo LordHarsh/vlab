@@ -27,6 +27,27 @@
  * code sitting next to it would be worse than no slider — see the owner's
  * brief — so there is exactly one source for each number and this file is not
  * it.
+ *
+ * ALL OF THEM WERE RE-DERIVED when those sketches were replaced with the lab
+ * sheet's own (reference/iot_virtual_lab.html), and the re-derivation is worth
+ * recording because it did not merely move numbers:
+ *
+ *   experiment 1   28 °C → 30 °C. The sheet alerts at `if (t > 30)`; the
+ *                  sketch this file used to read had been rewritten to 28.
+ *   experiment 2   50 cm → 20 cm, and the comparison changed shape: the
+ *                  sheet's condition is `pir || dist < 20`, an OR, where the
+ *                  rewritten sketch had `motion == 1 && dist < 50`.
+ *   experiments 4, 7, 8   THE CONSTANT IS GONE. Their published sketches draw
+ *                  no line at all — 4 prints a flow rate and a running total,
+ *                  7 prints a reading or a read failure, 8 prints °C and °F —
+ *                  and every "WARNING: High flow rate detected!", "CRITICAL:
+ *                  Hot room!" and "HIGH TEMP WARNING: Liquid boiling!" this
+ *                  file used to quote came from the rewrites, not the lab.
+ *                  A threshold with no line behind it is exactly the invention
+ *                  the paragraph above forbids, so those three no longer warn.
+ *   experiment 12  60–100 BPM, unchanged, and confirmed from both sides: the
+ *                  published sketch's `if not (60 <= bpm <= 100)` and the
+ *                  MicroPython port's `bpm_ok = 60 <= bpm <= 100` agree.
  */
 
 import { getPart } from '@/lib/simulator/model/parts'
@@ -76,10 +97,6 @@ export interface SliderControlSpec extends RangeMeta {
    * prop and a status-strip number, so it has no need of this.
    */
   deviceFor?: (value: number) => Record<string, number | string | boolean>
-  /** Lit exactly when the value crosses this, sourced from the sketch. */
-  warnAbove?: number
-  /** The LED part id `warnAbove` drives. Only experiment 1 has one. */
-  ledId?: string
 }
 
 export interface ToggleControlSpec {
@@ -93,26 +110,26 @@ export type SensorControlSpec = SliderControlSpec | ToggleControlSpec
 
 // ── Thresholds, quoted from the sketch shown beside each circuit ───────────
 
-/** Experiment 1 (`utils/experimentData.ts`): `if (currentTemp > 28) { ... }` */
-const EXP1_LED_THRESHOLD = 28
-/** Experiment 1's own LED part id, from circuits.ts's `CIRCUIT_LED_DHT11`. */
-const EXP1_LED_ID = 'led'
 /**
- * Experiment 2: `if (motion == 1 && dist < 50) { Serial.println("WARNING:
- * Intruder Detected close by!"); }`
+ * Experiment 1: `// LED ON if temperature exceeds threshold` / `if (t > 30) {`
+ * — and the `else` below it drives D13 LOW again, so the lamp is steady while
+ * the reading is over the line rather than blinking. The 28 this used to read
+ * came from a rewritten sketch, not from the lab.
  */
-const EXP2_CLOSE_THRESHOLD_CM = 50
-/** Experiment 4: `if (flow > 8.0) { "WARNING: High flow rate detected!" }` */
-const EXP4_FLOW_THRESHOLD = 8
-/** Experiment 7: `if temp > 30: print("CRITICAL: Hot room! Turn on AC.")` */
-const EXP7_TEMP_THRESHOLD = 30
-/** Experiment 8: `if temp > 40: print("HIGH TEMP WARNING: Liquid boiling!")` */
-const EXP8_TEMP_THRESHOLD = 40
+const EXP1_LED_THRESHOLD = 30
 /**
- * Experiment 12's own tip: "Watch the printed status flip to ALERT when
- * temperature drifts outside 36.1-37.2C or BPM outside 60-100." Only the BPM
- * half is wired to a slider here — see the brief on why experiment 12 gets
- * `bpm` and not a second `tempProbe` control.
+ * Experiment 2: `if (pir || dist < 20) { digitalWrite(LED_PIN, HIGH); }`
+ *
+ * AN OR, NOT AN AND, and 20 cm rather than 50. Either half lights D13 on its
+ * own: someone standing still 15 cm from the module trips it on distance, and
+ * someone crossing the PIR's cone at three metres trips it on motion.
+ */
+const EXP2_CLOSE_THRESHOLD_CM = 20
+/**
+ * Experiment 12: `bpm_ok = 60 <= bpm <= 100`, and the published sketch this
+ * one is a port of agrees — `if not (60 <= bpm <= 100): status = "⚠ BPM
+ * ALERT"`. Only the BPM half is wired to a slider here; see the brief on why
+ * experiment 12 gets `bpm` and not a second `tempProbe` control.
  */
 const EXP12_BPM_LOW = 60
 const EXP12_BPM_HIGH = 100
@@ -135,8 +152,6 @@ export const SENSOR_CONTROLS: Readonly<Record<number, readonly SensorControlSpec
       partId: 'dht',
       propKey: 'temperature',
       ...rangeOf('dht11', 'temperature'),
-      warnAbove: EXP1_LED_THRESHOLD,
-      ledId: EXP1_LED_ID,
     },
     { kind: 'slider', field: 'humidity', partId: 'dht', propKey: 'humidity', ...rangeOf('dht11', 'humidity') },
   ],
@@ -178,24 +193,74 @@ export function controlsFor(experimentId: number | undefined): readonly SensorCo
 /**
  * Whether the CURRENT reading is past the line the sketch itself draws — one
  * boolean per experiment, straight off the thresholds cited above. Used only
- * to recolour a readout; it changes no prop, no device state and no LED.
+ * to recolour a readout; it changes no prop and no device state.
  *
- * Experiment 2 is the one combined case: the sketch's own condition is
- * `motion == 1 && dist < 50`, both halves of which are separately
- * controllable here (a toggle and a slider), so the warning has to read both.
+ * THREE ENTRIES WERE DELETED, not retuned: experiments 4, 7 and 8 drew their
+ * lines from sketches that have been replaced by the lab sheet's own, and the
+ * sheet's compare nothing. A readout that turns amber at a number no listing
+ * on the page mentions is the same defect as a slider that contradicts the
+ * code beside it, so those three now never warn.
+ *
+ * Experiment 2 is the one combined case, and it is an OR: the sketch's own
+ * condition is `pir || dist < 20`, both halves of which are separately
+ * controllable here (a toggle and a slider), so either alone is a warning.
  */
 const SENSOR_WARN: Readonly<Record<number, (s: ShowreelSensors) => boolean>> = {
   1: (s) => typeof s.temperature === 'number' && s.temperature > EXP1_LED_THRESHOLD,
-  2: (s) => s.motion === true && typeof s.distance === 'number' && s.distance < EXP2_CLOSE_THRESHOLD_CM,
-  4: (s) => typeof s.flowRate === 'number' && s.flowRate > EXP4_FLOW_THRESHOLD,
-  7: (s) => typeof s.temperature === 'number' && s.temperature > EXP7_TEMP_THRESHOLD,
-  8: (s) => typeof s.tempProbe === 'number' && s.tempProbe > EXP8_TEMP_THRESHOLD,
+  2: (s) =>
+    s.motion === true ||
+    (typeof s.distance === 'number' && s.distance < EXP2_CLOSE_THRESHOLD_CM),
+  6: (s) => s.motion === true,
   12: (s) => typeof s.bpm === 'number' && (s.bpm < EXP12_BPM_LOW || s.bpm > EXP12_BPM_HIGH),
 }
 
 export function isSensorWarn(experimentId: number | undefined, sensors: ShowreelSensors): boolean {
   const check = experimentId === undefined ? undefined : SENSOR_WARN[experimentId]
   return check ? check(sensors) : false
+}
+
+/**
+ * WHAT THE SKETCH'S OUTPUT PINS ARE DOING for the reading now on the controls
+ * — one function per experiment, straight off its own `digitalWrite` lines.
+ *
+ * WHY THIS IS A TABLE AND NOT A FIELD ON A SLIDER. It used to be
+ * `warnAbove`/`ledId` on experiment 1's temperature spec, which can express
+ * exactly one shape: one lamp, one slider, lit ABOVE a number. The corrected
+ * circuits broke both halves of that. Experiment 2's lamp is `pir || dist <
+ * 20` — a toggle OR a slider, and the slider from BELOW — and experiment 6
+ * drives two lamps in opposition off one toggle. A function of the whole
+ * sensor bag states any of the three plainly, and puts the output logic
+ * beside the thresholds it reads.
+ *
+ * IT IS ALSO WHAT WIRES THE NEWLY DRAWN LAMPS UP. ../circuits.ts gained an
+ * LED on experiment 2 and a red/green pair on experiment 6, because the
+ * reference wires them and the reference's sketches drive them. Without an
+ * entry here those parts would sit on the board doing nothing whenever a
+ * student took the controls — present, drawn, and dead, which is the one
+ * thing this panel is built not to be.
+ *
+ * A partId NOT named is left exactly as the timeline had it, so an entry can
+ * say `{ led_red: 0 }` without knowing what else is on the board.
+ */
+const SENSOR_LEDS: Readonly<Record<number, (s: ShowreelSensors) => Record<string, number>>> = {
+  /** `if (t > 30) digitalWrite(LED_PIN, HIGH); else digitalWrite(LED_PIN, LOW);` */
+  1: (s) => ({
+    led: typeof s.temperature === 'number' && s.temperature > EXP1_LED_THRESHOLD ? 1 : 0,
+  }),
+  /** `if (pir || dist < 20) digitalWrite(LED_PIN, HIGH); else ... LOW;` */
+  2: (s) => ({
+    led:
+      s.motion === true ||
+      (typeof s.distance === 'number' && s.distance < EXP2_CLOSE_THRESHOLD_CM)
+        ? 1
+        : 0,
+  }),
+  /**
+   * Motion: `digitalWrite(GREEN_LED, LOW); digitalWrite(RED_LED, HIGH);` and
+   * the buzzer chirps ten times, which this board has no drawn state for.
+   * Idle: `setup()`'s own `digitalWrite(GREEN_LED, HIGH)` still standing.
+   */
+  6: (s) => (s.motion === true ? { led_green: 0, led_red: 1 } : { led_green: 1, led_red: 0 }),
 }
 
 /**
@@ -216,10 +281,30 @@ export function isSensorWarn(experimentId: number | undefined, sensors: Showreel
  * Every format string below is transcribed from the same `defaultCode` the
  * thresholds above were, so a live line is byte-identical in shape to the
  * scripted ones it appears beneath — same decimals, same separators, same
- * wording. Experiment 1 prints `24.00 *C` with two spaces around the pipe
- * because its sketch does; experiment 7 prints `Temp: 31°C, Humidity: 45%`
- * because its sketch does. If these drifted from the listing on screen the
- * feature would be worse than not having it.
+ * ORDER, same wording. If these drifted from the listing on screen the feature
+ * would be worse than not having it, and a live line sits directly under the
+ * scripted ones where any difference shows.
+ *
+ * WHAT THE LAB SHEET'S OWN SKETCHES CHANGED HERE, all of it visible on screen:
+ *
+ *   1  TWO LINES, HUMIDITY FIRST. `Serial.print("Humidity: ") … println(" %")`
+ *      then `Serial.print("Temperature: ") … println(" °C")` — two separate
+ *      `println`s in that order, where this used to emit one combined
+ *      `Temperature: … *C  |  Humidity: … %`. Note `°C`, not `*C`.
+ *   2  `Distance: 240 cm` then `Motion: DETECTED` / `Motion: None` — and no
+ *      warning line at all. `dist` is a `long`, so no decimals.
+ *   4  `Flow Rate: 3.20 L/min`. Its second line, `Total Volume: … L`, is an
+ *      ACCUMULATOR — `totalLitres += flowRate / 60` over the whole run — so it
+ *      has no value derivable from one slider position and is deliberately not
+ *      offered live. The scripted log carries it.
+ *   6  NEW. Its control is a toggle and its sketch prints on both branches, so
+ *      flipping Motion now says what the sketch would say.
+ *   7  `Temp=22.0°C  Humidity=55.0%` — one decimal each, an `=` rather than a
+ *      `:`, two spaces between the fields, no comma, and no threshold line.
+ *   8  `Temperature: 24.500°C  |  76.100°F` — THREE decimals, and a Fahrenheit
+ *      column this never had.
+ *  12  Unchanged: its listing is the MicroPython port, and this already
+ *      quoted it.
  *
  * These are NOT written into the showreel's own log buffer. They are derived
  * from the current reading and rendered as a distinct trailing line — see
@@ -230,34 +315,38 @@ export function isSensorWarn(experimentId: number | undefined, sensors: Showreel
 const LIVE_SERIAL: Readonly<Record<number, (s: ShowreelSensors) => string[]>> = {
   1: (s) => {
     if (typeof s.temperature !== 'number' || typeof s.humidity !== 'number') return []
-    const line = `Temperature: ${s.temperature.toFixed(2)} *C  |  Humidity: ${s.humidity.toFixed(2)} %`
-    return s.temperature > EXP1_LED_THRESHOLD ? [line, 'ALERT: High Temperature! LED ON'] : [line]
+    const out = [
+      `Humidity: ${s.humidity.toFixed(2)} %`,
+      `Temperature: ${s.temperature.toFixed(2)} °C`,
+    ]
+    if (s.temperature > EXP1_LED_THRESHOLD) out.push('ALERT: High Temperature! LED ON')
+    return out
   },
   2: (s) => {
     if (typeof s.distance !== 'number') return []
-    const motion = s.motion === true
-    const out = [`Motion: ${motion ? 1 : 0} | Range: ${Math.round(s.distance)} cm`]
-    if (motion && s.distance < EXP2_CLOSE_THRESHOLD_CM) out.push('WARNING: Intruder Detected close by!')
-    else if (motion) out.push('Notice: Motion detected at safe distance.')
-    return out
+    // `long dist` and `int pir`, so: no decimals, and the words the ternary
+    // in `Serial.println(pir ? "DETECTED" : "None")` picks between.
+    return [
+      `Distance: ${Math.round(s.distance)} cm`,
+      `Motion: ${s.motion === true ? 'DETECTED' : 'None'}`,
+    ]
   },
   4: (s) => {
     if (typeof s.flowRate !== 'number') return []
-    const out = [`Current Flow Rate: ${s.flowRate.toFixed(2)} L/min`]
-    if (s.flowRate > EXP4_FLOW_THRESHOLD) out.push('WARNING: High flow rate detected!')
-    return out
+    return [`Flow Rate: ${s.flowRate.toFixed(2)} L/min`]
+  },
+  6: (s) => {
+    if (typeof s.motion !== 'boolean') return []
+    return [s.motion ? '⚠ MOTION DETECTED — ALARM!' : 'No motion — System Idle']
   },
   7: (s) => {
     if (typeof s.temperature !== 'number' || typeof s.humidity !== 'number') return []
-    const out = [`Temp: ${Math.round(s.temperature)}°C, Humidity: ${Math.round(s.humidity)}%`]
-    if (s.temperature > EXP7_TEMP_THRESHOLD) out.push('CRITICAL: Hot room! Turn on AC.')
-    return out
+    return [`Temp=${s.temperature.toFixed(1)}°C  Humidity=${s.humidity.toFixed(1)}%`]
   },
   8: (s) => {
     if (typeof s.tempProbe !== 'number') return []
-    const out = [`DS18B20 Temperature: ${s.tempProbe.toFixed(1)} °C`]
-    if (s.tempProbe > EXP8_TEMP_THRESHOLD) out.push('HIGH TEMP WARNING: Liquid boiling!')
-    return out
+    const f = (s.tempProbe * 9) / 5 + 32
+    return [`Temperature: ${s.tempProbe.toFixed(3)}°C  |  ${f.toFixed(3)}°F`]
   },
   12: (s) => {
     if (typeof s.bpm !== 'number') return []
@@ -380,10 +469,6 @@ export function applySensorOverrides(
       if (spec.deviceFor) {
         devices = { ...devices, [spec.partId]: spec.deviceFor(value) }
       }
-      if (spec.ledId && spec.warnAbove !== undefined) {
-        leds = new Map(leds)
-        leds.set(spec.ledId, value > spec.warnAbove ? 1 : 0)
-      }
     } else {
       const value = overrides[spec.field]
       if (typeof value !== 'boolean') continue
@@ -393,6 +478,22 @@ export function applySensorOverrides(
         [spec.partId]: { ...devices[spec.partId], powered: true, warming: false, motion: value },
       }
     }
+  }
+
+  /**
+   * The output pins, LAST — after every control has been resolved, because the
+   * sketches that drive more than one lamp read more than one field to decide
+   * (`pir || dist < 20`) and cannot be answered a control at a time.
+   *
+   * `sensors` here is already the resolved bag, so before first touch this is
+   * computing from the timeline's own live readings and agrees with whatever
+   * the step's `leds` said; after it, from the student's.
+   */
+  const lamps = experimentId === undefined ? undefined : SENSOR_LEDS[experimentId]
+  if (lamps) {
+    const next = lamps(sensors as ShowreelSensors)
+    leds = new Map(leds)
+    for (const id of Object.keys(next)) leds.set(id, next[id])
   }
 
   return { ...frame, sensors: sensors as ShowreelSensors, props, devices, leds }

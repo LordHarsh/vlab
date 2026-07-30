@@ -1,26 +1,79 @@
 import type { Experiment } from '../types';
-import { HEALTH_MONITORING_RPI_SCRIPT } from '@/lib/simulator/pico/experiments';
+import {
+  HEALTH_MONITORING_RPI_SCRIPT,
+  HOME_AUTOMATION_RPI_SCRIPT,
+  MOTOR_CONTROL_RPI_SCRIPT,
+} from '@/lib/simulator/pico/experiments';
 
 /**
- * `title` and `keyComponents` are transcribed from the lab sheet this app was
- * built from — reference/iot_virtual_lab.html, its `experiments` array — and
- * that sheet is the source of truth for them. `keyComponents` is its bill of
- * materials verbatim, so it names the hardware a student would buy for the
- * bench build, including the items the sheet itself marks optional and the
- * sketch never touches.
+ * THE LAB SHEET — reference/iot_virtual_lab.html — GOVERNS THIS FILE.
  *
- * That is deliberately NOT the same list as `defaultComponents` below, which
- * is what this simulator draws. The gap worth knowing about: every Raspberry
- * Pi experiment is written for a full Raspberry Pi, and this app emulates a
- * Pico, so the sheet's "Raspberry Pi 3/4" is drawn here as a Pico. The BOM
- * keeps the sheet's wording; the drawing keeps the truth about the emulation.
+ * `title` and `keyComponents` are transcribed from its `experiments` array.
+ * `keyComponents` is its bill of materials verbatim, so it names the hardware
+ * a student would buy for the bench build, including the items the sheet marks
+ * optional and the sketch never touches.
  *
- * `aim`, `theory`, `procedure` and the four-question quiz that the same lab
- * sheet carries per experiment have no home in the `Experiment` type — they
- * are lab-sheet prose, and they live in the content pipeline instead: the
- * seed (supabase/seeds/003_experiments.sql) writes them as experiment_sections,
- * and supabase/migrations/016_backfill_authored_content.sql rebuilds those
- * sections for experiments 4-12 and all 48 quiz questions from the sheet.
+ * That is deliberately NOT the same list as `defaultComponents` below, which is
+ * what this simulator draws. The gap worth knowing about: every Raspberry Pi
+ * experiment is written for a full Raspberry Pi, and this app emulates a Pico,
+ * so the sheet's "Raspberry Pi 3/4" is drawn here as a Pico. The BOM keeps the
+ * sheet's wording; the drawing keeps the truth about the emulation.
+ *
+ * `aim`, `theory`, `procedure` and the four-question quiz the same sheet
+ * carries per experiment have no home in the `Experiment` type — they are
+ * lab-sheet prose, and they live in the content pipeline instead: the seed
+ * (supabase/seeds/003_experiments.sql) writes them as experiment_sections, and
+ * supabase/migrations/016_backfill_authored_content.sql rebuilds those sections
+ * for experiments 4-12 and all 48 quiz questions from the sheet.
+ *
+ * WHERE `defaultCode` COMES FROM, AND WHY IT IS NOT ALL FROM ONE PLACE.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ THE LAB SHEET GOVERNS. Experiments 1-8 and 11 carry the sketch printed  │
+ * │ in reference/iot_virtual_lab.html, character for character — decoded    │
+ * │ with scripts/reference-code.mjs rather than retyped, so no `i < 10`     │
+ * │ lost a comparison on the way in. Nothing was reformatted, renamed or    │
+ * │ "improved": the listing beside the drawing is the listing the student   │
+ * │ was handed.                                                            │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * These replaced sketches that had drifted a long way from it — a
+ * non-blocking millis() rewrite of experiment 1 that alerted at 28 °C where
+ * the sheet alerts at 30, an experiment 2 that read D2/D3/D4 where the sheet
+ * reads D7/D9/D10 and drove no lamp at all, an experiment 6 with no red or
+ * green LED in it. ../circuits.ts had already been rewired to the sheet; this
+ * is the other half of the same correction, and showreel/timelines.ts and
+ * showreel/sensorOverrides.ts are re-derived from these listings in turn.
+ *
+ * THREE ARE NOT THE SHEET'S OWN LISTING, and each is a considered exception
+ * rather than a leftover. All three are Raspberry Pi experiments whose
+ * published program is written for a full Pi with a network — CPython,
+ * RPi.GPIO, Flask, spidev — and this app emulates a Pico, which is what
+ * ../circuits.ts draws:
+ *
+ *   9  MOTOR_CONTROL_RPI_SCRIPT     The published listing PRINTS NOTHING: it is
+ *   10 HOME_AUTOMATION_RPI_SCRIPT   a bare demo and a Flask route table, so a
+ *   12 HEALTH_MONITORING_RPI_SCRIPT verbatim transcription would leave the
+ *                                   serial monitor on "Waiting for data…"
+ *                                   forever on two of twelve panels — while
+ *                                   the reference lab's OWN widgets for those
+ *                                   experiments do print (its `simLog` calls).
+ *                                   12's two SPI shifts are corrupt in the
+ *                                   source HTML besides: `(8+ch)<4` and
+ *                                   `(r[1]&3)<8` lost a `<` to the syntax
+ *                                   highlighter, which turns both into
+ *                                   comparisons.
+ *
+ * The three ports in lib/simulator/pico/experiments.ts keep the sheet's own
+ * pin numbers, structure and printed wording, state every departure in their
+ * own comments, and are the SAME source ../circuits.ts already followed when
+ * it had to move IN1/IN2 to GP19/GP20 and the fourth relay to GP16 — GPIO23
+ * and GPIO24 are not brought out on a Pico header. Listing and drawing
+ * therefore still have one source each, which is the whole point.
+ *
+ * `description`, `tips` and `buildSteps` are NOT rendered anywhere in this app
+ * — nothing reads them — and several still describe the pre-correction wiring;
+ * they are left as found rather than half-fixed.
  */
 export const EXPERIMENTS: Experiment[] = [
   {
@@ -53,79 +106,39 @@ export const EXPERIMENTS: Experiment[] = [
       'Place a 220Ω Resistor connecting hole J7 (LED Cathode) to the bottom black rail (GND).',
       'Place the DHT11 sensor (VCC to red rail, GND to black rail, DATA to Arduino D2).'
     ],
-    defaultCode: `// Experiment 1: DHT11 Sensor & Non-blocking LED Alert
-// This sketch reads temperature and humidity from a DHT11 sensor every 2 seconds.
-// If the temperature exceeds 28°C, an LED blinks continuously without blocking the sensor updates.
+    defaultCode: `#include <DHT.h>
 
-#include <DHT.h>
+#define DHTPIN   2
+#define DHTTYPE  DHT11
+#define LED_PIN  13
 
-// Define hardware pins
-#define DHTPIN 2       // DHT11 Data pin connected to Digital Pin 2
-#define DHTTYPE DHT11  // Using DHT11 sensor
-#define LED_PIN 13     // LED connected to Digital Pin 13
-
-// Initialize DHT sensor
 DHT dht(DHTPIN, DHTTYPE);
 
-// Timing variables for non-blocking sensor reads
-unsigned long previousSensorMillis = 0;
-const long sensorInterval = 2000; // Read every 2 seconds
-
-// Timing variables for non-blocking LED blink
-unsigned long previousLedMillis = 0;
-const long ledInterval = 500; // Blink every 500ms
-int ledState = LOW; // Current state of the LED
-
-// Global variable to store the latest temperature reading
-float currentTemp = 0.0;
-
 void setup() {
-  // Initialize serial monitor
   Serial.begin(9600);
-  Serial.println("DHT11 Sensor & LED System Initialized");
-  
-  // Initialize the DHT sensor
   dht.begin();
-  
-  // Configure the LED pin as an output
   pinMode(LED_PIN, OUTPUT);
+  Serial.println("DHT11 Test Starting...");
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
+  delay(2000);
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
 
-  // 1. Non-blocking Sensor Read
-  if (currentMillis - previousSensorMillis >= sensorInterval) {
-    previousSensorMillis = currentMillis; // Update the timing variable
-    
-    currentTemp = dht.readTemperature();
-    float h = dht.readHumidity();
-
-    // Print the readings to the Serial Monitor
-    Serial.print("Temperature: ");
-    Serial.print(currentTemp);
-    Serial.print(" *C  |  Humidity: ");
-    Serial.print(h);
-    Serial.println(" %");
+  if (isnan(h) || isnan(t)) {
+    Serial.println("Sensor read failed!");
+    return;
   }
 
-  // 2. Non-blocking LED Blink Logic
-  if (currentTemp > 28) {
-    // Temperature is HIGH: Blink the LED
-    if (currentMillis - previousLedMillis >= ledInterval) {
-      previousLedMillis = currentMillis; // Update the timing variable
-      
-      // Toggle LED state
-      if (ledState == LOW) {
-        ledState = HIGH;
-      } else {
-        ledState = LOW;
-      }
-      digitalWrite(LED_PIN, ledState);
-    }
+  Serial.print("Humidity: ");    Serial.print(h);   Serial.println(" %");
+  Serial.print("Temperature: "); Serial.print(t);   Serial.println(" °C");
+
+  // LED ON if temperature exceeds threshold
+  if (t > 30) {
+    digitalWrite(LED_PIN, HIGH);
+    Serial.println("ALERT: High Temperature! LED ON");
   } else {
-    // Temperature is NORMAL: Ensure LED is OFF
-    ledState = LOW;
     digitalWrite(LED_PIN, LOW);
   }
 }`,
@@ -192,36 +205,40 @@ void loop() {
       'Connect PIR sensor VCC (Red wire) to Arduino 5V and GND (Black wire) to Arduino GND.',
       'Connect PIR sensor OUT pin to Arduino digital pin D2 (Green wire).'
     ],
-    defaultCode: `// Experiment 2: Ultrasonic & PIR security check
-int pirPin = 2;
-int trigPin = 3;
-int echoPin = 4;
+    defaultCode: `#define TRIG_PIN  9
+#define ECHO_PIN  10
+#define PIR_PIN   7
+#define LED_PIN   13
 
 void setup() {
-  pinMode(pirPin, INPUT);
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
   Serial.begin(9600);
-  Serial.println("Security Scanner Online...");
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(PIR_PIN,  INPUT);
+  pinMode(LED_PIN,  OUTPUT);
+}
+
+long readDistance() {
+  digitalWrite(TRIG_PIN, LOW);   delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  return duration * 0.034 / 2;
 }
 
 void loop() {
-  int motion = digitalRead(pirPin); // Reads logic state from PIR OUT
-  int dist = distance;              // Reads simulated range
+  long dist = readDistance();
+  int  pir  = digitalRead(PIR_PIN);
 
-  Serial.print("Motion: ");
-  Serial.print(motion);
-  Serial.print(" | Range: ");
-  Serial.print(dist);
-  Serial.println(" cm");
+  Serial.print("Distance: "); Serial.print(dist); Serial.println(" cm");
+  Serial.print("Motion: ");   Serial.println(pir ? "DETECTED" : "None");
 
-  if (motion == 1 && dist < 50) {
-    Serial.println("WARNING: Intruder Detected close by!");
-  } else if (motion == 1) {
-    Serial.println("Notice: Motion detected at safe distance.");
+  if (pir || dist < 20) {
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    digitalWrite(LED_PIN, LOW);
   }
-
-  delay(1500);
+  delay(500);
 }`,
     defaultComponents: [
       { id: 'uno_1', type: 'arduino', name: 'Arduino Uno', x: 40, y: 40, rotation: 0, properties: {} },
@@ -270,40 +287,38 @@ void loop() {
       'Connect Arduino digital pin D11 to the Yellow LED Anode pin (Yellow wire).',
       'Connect Arduino digital pin D12 to the Green LED Anode pin (Green wire).'
     ],
-    defaultCode: `// Experiment 3: Traffic Light System
-int redLED = 10;
-int yellowLED = 11;
-int greenLED = 12;
+    defaultCode: `#define RED_PIN    2
+#define YELLOW_PIN 3
+#define GREEN_PIN  4
+
+void setLight(int r, int y, int g) {
+  digitalWrite(RED_PIN,    r);
+  digitalWrite(YELLOW_PIN, y);
+  digitalWrite(GREEN_PIN,  g);
+}
 
 void setup() {
-  pinMode(redLED, OUTPUT);
-  pinMode(yellowLED, OUTPUT);
-  pinMode(greenLED, OUTPUT);
+  pinMode(RED_PIN,    OUTPUT);
+  pinMode(YELLOW_PIN, OUTPUT);
+  pinMode(GREEN_PIN,  OUTPUT);
   Serial.begin(9600);
-  Serial.println("Traffic Lights Starting...");
 }
 
 void loop() {
-  // Red State
-  Serial.println("State: RED - STOP!");
-  digitalWrite(redLED, HIGH);
-  digitalWrite(yellowLED, LOW);
-  digitalWrite(greenLED, LOW);
-  delay(3000);
+  // GREEN phase — 5 seconds
+  setLight(LOW, LOW, HIGH);
+  Serial.println("GREEN — Go!");
+  delay(5000);
 
-  // Green State
-  Serial.println("State: GREEN - GO!");
-  digitalWrite(redLED, LOW);
-  digitalWrite(yellowLED, LOW);
-  digitalWrite(greenLED, HIGH);
-  delay(3000);
+  // YELLOW phase — 2 seconds
+  setLight(LOW, HIGH, LOW);
+  Serial.println("YELLOW — Slow down");
+  delay(2000);
 
-  // Yellow State
-  Serial.println("State: YELLOW - CAUTION!");
-  digitalWrite(redLED, LOW);
-  digitalWrite(yellowLED, HIGH);
-  digitalWrite(greenLED, LOW);
-  delay(1000);
+  // RED phase — 5 seconds
+  setLight(HIGH, LOW, LOW);
+  Serial.println("RED — Stop!");
+  delay(5000);
 }`,
     defaultComponents: [
       { id: 'uno_1', type: 'arduino', name: 'Arduino Uno R3', x: 40, y: 40, rotation: 0, properties: {} },
@@ -368,28 +383,36 @@ void loop() {
       'Connect YF-S201 GND terminal (Black wire) to Arduino GND.',
       'Connect YF-S201 OUT signal terminal (Yellow wire) to Arduino digital pin D2.'
     ],
-    defaultCode: `// Experiment 4: Water Flow Detector
-int sensorPin = 2;
+    defaultCode: `volatile int pulseCount = 0;
+float flowRate, totalLitres;
+unsigned long lastTime;
+
+void pulseCounter() {
+  pulseCount++;
+}
 
 void setup() {
-  pinMode(sensorPin, INPUT);
   Serial.begin(9600);
-  Serial.println("Flow Meter Activated.");
+  pinMode(2, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(2), pulseCounter, FALLING);
+  lastTime = millis();
+  totalLitres = 0;
 }
 
 void loop() {
-  // Read flow sensor value in L/min from control panel slider
-  float flow = flowRateInput; 
+  if (millis() - lastTime >= 1000) {
+    detachInterrupt(digitalPinToInterrupt(2));
 
-  Serial.print("Current Flow Rate: ");
-  Serial.print(flow);
-  Serial.println(" L/min");
+    flowRate   = pulseCount / 7.5;
+    totalLitres += flowRate / 60;
 
-  if (flow > 8.0) {
-    Serial.println("WARNING: High flow rate detected!");
+    Serial.print("Flow Rate: ");    Serial.print(flowRate);   Serial.println(" L/min");
+    Serial.print("Total Volume: "); Serial.print(totalLitres); Serial.println(" L");
+
+    pulseCount = 0;
+    lastTime   = millis();
+    attachInterrupt(digitalPinToInterrupt(2), pulseCounter, FALLING);
   }
-
-  delay(2000);
 }`,
     defaultComponents: [
       { id: 'uno_1', type: 'arduino', name: 'Arduino Uno R3', x: 50, y: 50, rotation: 0, properties: {} },
@@ -429,29 +452,34 @@ void loop() {
       'Connect RPi Pico VBUS (5V) to Push Button Pin 1A.',
       'Connect Push Button Pin 1B to RPi Pico GP1.'
     ],
-    defaultCode: `from machine import Pin
+    defaultCode: `import RPi.GPIO as GPIO
 import time
 
-# GPIO pins matching the canvas netlist
-LED_PIN = 15 
-BUTTON_PIN = 14 
+# Pin configuration
+LED_PIN    = 17
+BUTTON_PIN = 27
 
-led = Pin(LED_PIN, Pin.OUT)
-button = Pin(BUTTON_PIN, Pin.IN, Pin.PULL_DOWN)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(LED_PIN,    GPIO.OUT)
+GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
-print("Starting Raspberry Pi GPIO script...")
+print("Press button to toggle LED. Ctrl+C to exit.")
 
-# The infinite loop keeps the simulation running
-while True:
-    if button.value() == 1:
-        led.value(1)
-        print("Button pressed -> LED ON")
-    else:
-        led.value(0)
-        
-    # Crucial: Sleep yields execution back to the JS simulation engine
-    # to prevent browser UI freezing/crashing.
-    time.sleep(0.1)`,
+led_state = False
+
+try:
+    while True:
+        if GPIO.input(BUTTON_PIN) == GPIO.HIGH:
+            led_state = not led_state
+            GPIO.output(LED_PIN, led_state)
+            state_str = "ON" if led_state else "OFF"
+            print(f"LED {state_str}")
+            time.sleep(0.3)  # debounce
+        time.sleep(0.05)
+
+except KeyboardInterrupt:
+    print("Cleaning up GPIO...")
+    GPIO.cleanup()`,
     defaultComponents: [
       { id: 'rpi_1', type: 'raspberry_pi', name: 'Raspberry Pi Pico', x: 40, y: 50, rotation: 0, properties: {} },
       { id: 'breadboard_1', type: 'breadboard', name: 'Breadboard', x: 320, y: 40, rotation: 0, properties: {} },
@@ -503,30 +531,40 @@ while True:
       'Connect Buzzer positive (+) terminal to Arduino digital pin D3 (Orange wire).',
       'Connect Buzzer negative (-) terminal to Arduino GND (Black wire).'
     ],
-    defaultCode: `// Experiment 6: Motion Sensor Alarm
-int pirPin = 2;
-int buzzerPin = 3;
+    defaultCode: `#define PIR_PIN    7
+#define BUZZER     8
+#define RED_LED    12
+#define GREEN_LED  11
 
 void setup() {
-  pinMode(pirPin, INPUT);
-  pinMode(buzzerPin, OUTPUT);
   Serial.begin(9600);
-  Serial.println("Alarm System Activated");
+  pinMode(PIR_PIN,   INPUT);
+  pinMode(BUZZER,    OUTPUT);
+  pinMode(RED_LED,   OUTPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  // System ready indication
+  digitalWrite(GREEN_LED, HIGH);
+  Serial.println("PIR Alarm Ready — Waiting...");
 }
 
 void loop() {
-  int motion = digitalRead(pirPin); // reads logic output from PIR sensor
+  int motion = digitalRead(PIR_PIN);
 
-  if (motion == 1) {
-    Serial.println("ALERT! Motion detected! Sounding Buzzer!");
-    digitalWrite(buzzerPin, HIGH);
-    delay(200);
-    digitalWrite(buzzerPin, LOW);
-    delay(200);
+  if (motion == HIGH) {
+    Serial.println("⚠ MOTION DETECTED — ALARM!");
+    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(RED_LED,   HIGH);
+
+    for (int i = 0; i < 10; i++) {
+      digitalWrite(BUZZER, HIGH); delay(200);
+      digitalWrite(BUZZER, LOW);  delay(200);
+    }
+    digitalWrite(RED_LED, LOW);
+    digitalWrite(GREEN_LED, HIGH);
   } else {
-    digitalWrite(buzzerPin, LOW);
-    delay(1000);
+    Serial.println("No motion — System Idle");
   }
+  delay(500);
 }`,
     defaultComponents: [
       { id: 'uno_1', type: 'arduino', name: 'Arduino Uno R3', x: 50, y: 50, rotation: 0, properties: {} },
@@ -561,37 +599,28 @@ void loop() {
       'Connect DHT11 GND pin to RPi Pico GND (Black wire).',
       'Connect DHT11 DATA pin to RPi Pico GP4 (Green wire).'
     ],
-    defaultCode: `# Experiment 7: DHT11 and Raspberry Pi Pico
+    defaultCode: `import Adafruit_DHT
 import time
-# Assume the engine provides a virtual DHT library
-import virtual_dht 
 
-DHT_PIN = 4 # GP4
-sensor = virtual_dht.DHT11(DHT_PIN)
+DHT_SENSOR = Adafruit_DHT.DHT11
+DHT_PIN    = 4   # GPIO4
 
-print("Initializing DHT11 Sensor on GP4...")
+print("DHT11 on Raspberry Pi — Reading sensor...")
 
 while True:
-    try:
-        # Trigger a read from the virtual sensor
-        sensor.measure()
-        
-        # Fetch the values
-        temp = sensor.temperature()
-        hum = sensor.humidity()
-        
-        # Print to the Serial Monitor using safe formatting
-        print(f"Temp: {temp}°C, Humidity: {hum}%")
-        
-        # Logic check
-        if temp > 30:
-            print("CRITICAL: Hot room! Turn on AC.")
-            
-    except Exception as e:
-        print(f"Sensor read error: {str(e)}")
-        
-    # Yield execution back to the JS engine to prevent UI freezing
-    time.sleep(2.0)`,
+    humidity, temperature = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
+
+    if humidity is not None and temperature is not None:
+        print(f"Temp={temperature:.1f}°C  Humidity={humidity:.1f}%")
+
+        # Log to CSV file
+        with open("dht_log.csv", "a") as f:
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"{ts},{temperature:.1f},{humidity:.1f}\\n")
+    else:
+        print("Failed to read sensor!")
+
+    time.sleep(2)`,
     defaultComponents: [
       { id: 'rpi_1', type: 'raspberry_pi', name: 'Raspberry Pi Pico', x: 50, y: 50, rotation: 0, properties: {} },
       { id: 'dht_1', type: 'dht11', name: 'DHT11 Sensor', x: 380, y: 60, rotation: 0, properties: { temperature: 22, humidity: 50 } }
@@ -627,43 +656,33 @@ while True:
       'Connect DS18B20 DQ (Data) pin to RPi Pico GP15 (Green wire).',
       'Connect the 4.7kΩ Resistor bridging VCC and DQ pin (essential pull-up Resistor).'
     ],
-    defaultCode: `# Experiment 8: RPi with DS18B20
-import time
-import machine
-import onewire
-import ds18x20
+    defaultCode: `import os, glob, time
 
-# Define the pin where the green data wire is connected
-DATA_PIN = machine.Pin(15) 
+# Enable 1-Wire: add dtoverlay=w1-gpio to /boot/config.txt
+os.system('modprobe w1-gpio')
+os.system('modprobe w1-therm')
 
-print("[Simulation Started on Raspberry Pi]")
-print("Searching for 1-Wire devices...")
+base_dir   = '/sys/bus/w1/devices/'
+device_dir = glob.glob(base_dir + '28*')[0]
+device_file = device_dir + '/w1_slave'
 
-try:
-    # Initialize the 1-Wire bus and DS18B20 sensor
-    ds_sensor = ds18x20.DS18X20(onewire.OneWire(DATA_PIN))
-    roms = ds_sensor.scan()
-    
-    if not roms:
-        print("Error: No DS18B20 device found. Check wiring!")
-    else:
-        print(f"Found DS18B20 device with address: {roms[0]}")
-        
-        while True:
-            ds_sensor.convert_temp()
-            time.sleep_ms(750)
-            temp = ds_sensor.read_temp(roms[0])
-            
-            # Use f-strings to force proper string rendering in the UI
-            print(f"DS18B20 Temperature: {temp} °C")
-            
-            if temp > 40:
-                print("HIGH TEMP WARNING: Liquid boiling!")
-            
-            time.sleep(1)
-            
-except Exception as e:
-    print(f"Fatal Error: {str(e)}")`,
+def read_temp_raw():
+    with open(device_file, 'r') as f:
+        return f.readlines()
+
+def read_temp():
+    lines = read_temp_raw()
+    while lines[0].strip()[-3:] != 'YES':
+        time.sleep(0.2)
+        lines = read_temp_raw()
+    eq_pos = lines[1].find('t=')
+    temp_c = float(lines[1][eq_pos+2:]) / 1000.0
+    return temp_c
+
+while True:
+    temp = read_temp()
+    print(f"Temperature: {temp:.3f}°C  |  {temp*9/5+32:.3f}°F")
+    time.sleep(1)`,
     defaultComponents: [
       { id: 'rpi_1', type: 'raspberry_pi', name: 'Raspberry Pi Pico', x: 50, y: 50, rotation: 0, properties: {} },
       { id: 'breadboard_1', type: 'breadboard', name: 'Breadboard', x: 320, y: 40, rotation: 0, properties: {} },
@@ -708,33 +727,7 @@ except Exception as e:
       'Connect L298N OUT1 & OUT2 to the DC Motor terminals.',
       'Connect RPi Pico GP14 to L298N IN1, GP15 to IN2, and GP13 to ENA.'
     ],
-    defaultCode: `from machine import Pin
-import time
-
-# Initialize L298N DC Motor Pins (Channel A)
-in1 = Pin(14, Pin.OUT)
-in2 = Pin(15, Pin.OUT)
-ena = Pin(13, Pin.OUT)
-ena.value(1) # Enable Channel A
-
-print("[Simulation Started on Raspberry Pi]")
-print("Initializing Motor Controller...")
-
-while True:
-    print("Spinning DC Motor Clockwise...")
-    in1.value(1)
-    in2.value(0)
-    time.sleep(2)
-    
-    print("Braking DC Motor...")
-    in1.value(0)
-    in2.value(0)
-    time.sleep(1)
-    
-    print("Spinning DC Motor Counter-Clockwise...")
-    in1.value(0)
-    in2.value(1)
-    time.sleep(2)`,
+    defaultCode: MOTOR_CONTROL_RPI_SCRIPT,
     defaultComponents: [
       { id: 'rpi_1', type: 'raspberry_pi', name: 'Raspberry Pi Pico', x: 40, y: 50, rotation: 0, properties: {} },
       { id: 'l298n_1', type: 'l298n', name: 'L298N Driver', x: 320, y: 50, rotation: 0, properties: {} },
@@ -782,34 +775,7 @@ while True:
       'Connect Pico VBUS (5V) to Relay COM (Common).',
       'Connect Relay NO (Normally Open) to Lightbulb Terminal 1, and Lightbulb Terminal 2 to Pico GND.'
     ],
-    defaultCode: `import asyncio
-from machine import Pin
-
-print("[Simulation Started on Raspberry Pi]")
-
-async def run_automation():
-    try:
-        # Initialize Relay on the correct pin (matching the green wire)
-        RELAY_PIN = 15 
-        print(f"Initializing Relay on GP{RELAY_PIN}...")
-        relay = Pin(RELAY_PIN, Pin.OUT)
-        print("Initialization successful. Starting loop...")
-        
-        while True:
-            relay.value(1)
-            print("Relay Triggered: [ON] -> Appliance Powered")
-            await asyncio.sleep(2) # Non-blocking yield to React UI
-            
-            relay.value(0)
-            print("Relay Triggered: [OFF] -> Appliance Off")
-            await asyncio.sleep(2)
-            
-    except Exception as err:
-        # Catch silent hardware mapping crashes
-        print("CRITICAL ERROR: " + str(err))
-
-# Execute the non-blocking loop
-asyncio.run(run_automation())`,
+    defaultCode: HOME_AUTOMATION_RPI_SCRIPT,
     defaultComponents: [
       { id: 'rpi_1', type: 'raspberry_pi', name: 'Raspberry Pi Pico', x: 50, y: 50, rotation: 0, properties: {} },
       { id: 'relay_1', type: 'relay', name: 'Relay Module', x: 380, y: 60, rotation: 0, properties: { state: false } },
@@ -865,20 +831,16 @@ asyncio.run(run_automation())`,
       'Wire the 16x2 LCD in 4-bit mode (RS, E, D4-D7) to six free digital pins, VSS/RW/V0 to ground, VDD and the backlight anode to 5V.',
       'Upload the code and open the Serial Monitor to see each lane\'s computed green time.'
     ],
-    defaultCode: `// Experiment 11: Smart Traffic Light Controller
-// Four lanes, each with its own density potentiometer.
-// Busier lanes (higher density reading) get a longer green phase.
-
-int redPins[]    = {22, 25, 28, 31};
-int yelPins[]    = {23, 26, 29, 32};
-int grnPins[]    = {24, 27, 30, 33};
-int densityPin[] = {A0, A1, A2, A3};
+    defaultCode: `int redPins[]   = {22,25,28,31};
+int yelPins[]   = {23,26,29,32};
+int grnPins[]   = {24,27,30,33};
+int densityPin[]= {A0, A1, A2, A3};
 
 void allRed() {
-  for (int i = 0; i < 4; i++) {
-    digitalWrite(redPins[i], HIGH);
-    digitalWrite(yelPins[i], LOW);
-    digitalWrite(grnPins[i], LOW);
+  for(int i=0;i<4;i++){
+    digitalWrite(redPins[i],HIGH);
+    digitalWrite(yelPins[i],LOW);
+    digitalWrite(grnPins[i],LOW);
   }
 }
 
@@ -889,27 +851,21 @@ void setGreen(int lane) {
 }
 
 void setup() {
-  for (int i = 0; i < 4; i++) {
-    pinMode(redPins[i], OUTPUT);
-    pinMode(yelPins[i], OUTPUT);
-    pinMode(grnPins[i], OUTPUT);
+  for(int i=0;i<4;i++){
+    pinMode(redPins[i],OUTPUT);
+    pinMode(yelPins[i],OUTPUT);
+    pinMode(grnPins[i],OUTPUT);
   }
-  allRed();
-  Serial.begin(9600);
-  Serial.println("Smart Traffic Controller Active");
+  allRed(); Serial.begin(9600);
 }
 
 void loop() {
-  for (int i = 0; i < 4; i++) {
-    int density = analogRead(densityPin[i]);
+  for(int i=0;i<4;i++){
+    int density  = analogRead(densityPin[i]);
     int greenTime = 3000 + (long)density * 7;
-
-    Serial.print("Lane "); Serial.print(i + 1);
+    Serial.print("Lane "); Serial.print(i+1);
     Serial.print(" Green: "); Serial.print(greenTime); Serial.println("ms");
-
-    setGreen(i);
-    delay(greenTime);
-
+    setGreen(i);  delay(greenTime);
     // Yellow transition
     digitalWrite(grnPins[i], LOW);
     digitalWrite(yelPins[i], HIGH);
