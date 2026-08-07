@@ -31,7 +31,7 @@ from public.quizzes z
 join public.experiments e on e.id = z.experiment_id
 where q.quiz_id = z.id
   and e.slug = 'dht11-rpi'
-  and q.question = 'Python f-string syntax:'
+  and q.question_text = 'Python f-string syntax:'
   and q.correct_answer = 'd';
 
 do $$
@@ -43,7 +43,7 @@ begin
   join public.quizzes z on z.id = q.quiz_id
   join public.experiments e on e.id = z.experiment_id
   where e.slug = 'dht11-rpi'
-    and q.question = 'Python f-string syntax:'
+    and q.question_text = 'Python f-string syntax:'
     and q.correct_answer = 'a';
 
   if n <> 1 then
