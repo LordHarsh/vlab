@@ -34,13 +34,8 @@ export function Navbar() {
               />
             </svg>
           </span>
-          <span className="min-w-0">
-            <span className="block font-display text-base font-bold leading-tight text-vlab-600 sm:text-lg">
-              {INSTITUTION.platform.toUpperCase()}
-            </span>
-            <span className="hidden truncate font-chrome text-[11px] uppercase tracking-[0.11em] text-vlab-muted sm:block">
-              {INSTITUTION.department}
-            </span>
+          <span className="min-w-0 font-display text-base font-bold leading-tight text-vlab-600 sm:text-lg">
+            {INSTITUTION.platform.toUpperCase()}
           </span>
         </Link>
 
