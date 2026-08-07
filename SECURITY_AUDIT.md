@@ -1,5 +1,31 @@
 # VLab — security and data-access audit
 
+> **REMEDIATION STATUS — applied 2026-08-08, pre-production.**
+>
+> Migrations `031`–`034` have all been **applied to the live database**, together with the
+> `lib/actions/quiz.ts` change that `031` depends on. The findings below are therefore a record of
+> what WAS true when the audit ran, not the current posture. Re-verified after applying, each inside
+> a rolled-back transaction:
+>
+> | Finding | Probe result |
+> |---|---|
+> | H1 grade forgery | `forgery BLOCKED sqlstate=42501` |
+> | M1 unenrolled write | `unenrolled BLOCKED sqlstate=42501` |
+> | M1 legitimate write | permitted (failed only on `23505` unique violation — RLS allowed it) |
+> | H2 enrolled student content | still reads 111 sections |
+> | H2 approved educator | still reads own-class submissions |
+>
+> Two further changes were made at the same time, beyond the audit's scope:
+> - **`/api/dev/harvest` (M4) deleted outright** rather than left behind its `NODE_ENV` gate. Its
+>   output (`wokwi-art.generated.json`) is committed, so nothing needs it at runtime.
+> - **The one lab was published.** It was `published = false`, and there is no policy granting an
+>   enrolled student read on `labs` — only admin, educator-published, and public-published. Students
+>   therefore could not see their own assigned lab at all. This also unblocked `034`, which requires
+>   a published lab before an educator may assign it.
+>
+> Still open, needs the owner: confirm Clerk is on production keys (`pk_live_`) in the deployed
+> environment. See "Could not test".
+
 **Scope:** branch `claude/security-audit`, cut from `main` at `b712bc5`. Live Supabase project
 `odaocqfnhqarewoimrma` (`vlab`, ap-northeast-2), plus `supabase/migrations/*.sql`, `lib/actions/`,
 `lib/supabase/`, `proxy.ts`, every route-group `layout.tsx`, and `app/api/`.

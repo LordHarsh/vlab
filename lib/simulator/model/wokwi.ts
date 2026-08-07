@@ -2,10 +2,16 @@
  * Adapter for harvested @wokwi/elements component art.
  *
  * Source: @wokwi/elements 1.9.2, MIT, Copyright (c) 2020 Uri Shaked.
- * The harvested data lives in wokwi-art.generated.json and is produced by the
- * dev-only route /api/dev/harvest — see SIMULATOR_ARCHITECTURE.md §3, which
- * calls for taking the SVG and pinInfo at BUILD time rather than mounting the
- * Lit components at runtime.
+ * The harvested data lives in wokwi-art.generated.json — see
+ * SIMULATOR_ARCHITECTURE.md §3, which calls for taking the SVG and pinInfo at
+ * BUILD time rather than mounting the Lit components at runtime.
+ *
+ * The route that produced it (/api/dev/harvest) has been REMOVED. It wrote
+ * caller-supplied JSON to a fixed source-tree path with no authentication,
+ * gated only on NODE_ENV — safe in production, but a build tool has no
+ * business shipping inside the app at all. The generated JSON is committed,
+ * so nothing needs it at runtime; restore the route locally from git history
+ * if the harvest ever has to be re-run.
  *
  * ── Units ────────────────────────────────────────────────────────────────────
  * Two coordinate systems have to be reconciled:
