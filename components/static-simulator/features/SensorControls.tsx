@@ -87,7 +87,7 @@ function SliderControl({
         value={value}
         onChange={(e) => onChange(spec.field, Number(e.target.value))}
         aria-label={`${spec.label} — nudge the simulated reading`}
-        className="h-1.5 w-16 shrink-0 cursor-pointer accent-[#1477d1] sm:w-24"
+        className="h-1.5 w-16 shrink-0 cursor-pointer accent-[#337ab7] sm:w-24"
       />
       <span
         className={`w-14 shrink-0 font-mono tabular-nums ${warn ? 'text-[#c0392b]' : 'text-[#34495e]'}`}
@@ -115,10 +115,10 @@ function ToggleControl({
       aria-checked={value}
       onClick={() => onChange(spec.field, !value)}
       title={`${spec.label} — simulate the sensor detecting it`}
-      className={`flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+      className={`flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1 ${
         value
           ? 'border-[#f4c568] bg-[#fdf2df] text-[#92400e]'
-          : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1] hover:text-[#1477d1]'
+          : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#337ab7] hover:text-[#337ab7]'
       }`}
     >
       <span

@@ -358,7 +358,7 @@ export function StaticSimulator({
             onClick={fullscreen.toggle}
             aria-label={fullscreen.active ? 'Exit fullscreen' : 'View fullscreen'}
             title={fullscreen.active ? 'Exit fullscreen' : 'View fullscreen'}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#337ab7] hover:text-[#337ab7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1"
           >
             {fullscreen.active ? (
               <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />

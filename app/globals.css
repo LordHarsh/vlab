@@ -2,41 +2,150 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * VLab design tokens — institutional engineering-lab register.
+ *
+ * The palette is anchored on values read directly out of the SRM EEE Virtual
+ * Labs stylesheets (srmeeevlab.github.io), so the app reads as part of that
+ * family. Each literal below is annotated with where it was observed.
+ *
+ * The reference site has no token system at all — every colour is a hardcoded
+ * literal scattered across four stylesheets, which is how it ended up using two
+ * near-identical blues (#337ab7 and #2C99CE) interchangeably for one semantic
+ * role. We take the palette and NOT that habit: one blue ramp, one role per
+ * token, declared once here.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 @layer base {
   :root {
-    /* Airbnb design tokens */
+    /* Each colour is declared ONCE, as space-separated sRGB channels.
+     *
+     * That form is what lets Tailwind support an opacity modifier on the token
+     * (`bg-vlab-600/10` → `rgb(var(--vlab-blue-600-c) / 0.1)`). A token holding
+     * a literal `#337ab7` cannot take one: Tailwind emits invalid CSS and the
+     * declaration is silently dropped, which is precisely the class of failure
+     * this brief warned about. The `--vlab-*` aliases underneath are the same
+     * value resolved to a colour, for use in hand-written CSS and inline SVG
+     * `stroke` attributes — derived, never re-typed.
+     */
+
+    /* ── Institutional blue ramp ───────────────────────────────────────────
+     * #337ab7 is the reference's canonical page-title / breadcrumb / lab-name
+     * blue (`.page-name`, `.breadcrumbs` in vlabs-style.css). It is the anchor;
+     * everything else is a tuned step around it. #2C99CE — the reference's
+     * *second* heading blue — is deliberately not adopted as a heading colour.
+     */
+    --vlab-blue-900-c: 15 48 80;
+    --vlab-blue-800-c: 26 71 113; /* headings ink — 9.6:1 on white */
+    --vlab-blue-700-c: 35 96 143; /* primary action hover */
+    --vlab-blue-600-c: 51 122 183; /* OBSERVED .page-name / .breadcrumbs — 4.6:1 */
+    --vlab-blue-500-c: 74 144 201;
+    --vlab-blue-300-c: 137 167 196; /* OBSERVED content/sidebar dotted divider */
+    --vlab-blue-200-c: 199 216 232;
+    --vlab-blue-100-c: 220 232 243;
+    --vlab-blue-50-c: 240 245 250;
+
+    /* Sidebar nav link. OBSERVED `.sidebar a { color: #3e6389 }` — 6.2:1. */
+    --vlab-steel-c: 62 99 137;
+
+    /* ── Accent ────────────────────────────────────────────────────────────
+     * OBSERVED `border-bottom: 8px solid #ff6600` on .vlabs-header — the single
+     * most distinctive element of the shared lab template. Kept exactly.
+     *
+     * It is a 2.9:1 colour, so it is a RULE / FILL colour only. The reference
+     * also uses it as sidebar hover *text*, which fails AA; --vlab-orange-ink
+     * is the darkened text-safe counterpart (5.5:1) used in its place.
+     */
+    --vlab-orange-c: 255 102 0;
+    --vlab-orange-ink-c: 179 71 0;
+    --vlab-orange-50-c: 255 245 237;
+
+    /* OBSERVED `.vlabs-header #headerNavbar a:hover { background: #77BB41 }` */
+    --vlab-green-c: 119 187 65;
+    --vlab-green-ink-c: 63 107 31;
+
+    /* ── Neutrals ──────────────────────────────────────────────────────────
+     * Warmed very slightly toward blue so they sit under the blue ramp rather
+     * than beside it. Not observed values — the reference just uses Bootstrap's.
+     */
+    --vlab-ink-c: 28 43 54; /* body text — 14.5:1 */
+    --vlab-ink-muted-c: 90 107 120; /* secondary text — 5.5:1 */
+    --vlab-ink-faint-c: 135 148 160;
+    --vlab-rule-c: 221 230 239; /* hairline borders */
+    --vlab-rule-strong-c: 199 211 222; /* input / card borders */
+    --vlab-surface-c: 238 243 248; /* pale blue fill */
+    --vlab-surface-alt-c: 244 247 250;
+
+    /* OBSERVED: shared-template footer background (inline style on <footer>). */
+    --vlab-footer-bg-c: 249 246 247;
+
+    /* ── Department dashboard shell ────────────────────────────────────────
+     * OBSERVED verbatim from the root dashboard's default.css. Used here for
+     * the public shell, which is that site's structural equivalent.
+     */
+    --vlab-sage-c: 95 113 97; /* dashboard body background */
+    --vlab-cream-c: 239 234 216; /* dashboard nav bar */
+    --vlab-taupe-c: 208 201 192; /* dashboard lab card */
+
+    /* Resolved aliases — for plain CSS and SVG attributes. */
+    --vlab-blue-900: rgb(var(--vlab-blue-900-c));
+    --vlab-blue-800: rgb(var(--vlab-blue-800-c));
+    --vlab-blue-700: rgb(var(--vlab-blue-700-c));
+    --vlab-blue-600: rgb(var(--vlab-blue-600-c));
+    --vlab-blue-500: rgb(var(--vlab-blue-500-c));
+    --vlab-blue-300: rgb(var(--vlab-blue-300-c));
+    --vlab-blue-200: rgb(var(--vlab-blue-200-c));
+    --vlab-blue-100: rgb(var(--vlab-blue-100-c));
+    --vlab-blue-50: rgb(var(--vlab-blue-50-c));
+    --vlab-steel: rgb(var(--vlab-steel-c));
+    --vlab-orange: rgb(var(--vlab-orange-c));
+    --vlab-orange-ink: rgb(var(--vlab-orange-ink-c));
+    --vlab-orange-50: rgb(var(--vlab-orange-50-c));
+    --vlab-green: rgb(var(--vlab-green-c));
+    --vlab-green-ink: rgb(var(--vlab-green-ink-c));
+    --vlab-ink: rgb(var(--vlab-ink-c));
+    --vlab-ink-muted: rgb(var(--vlab-ink-muted-c));
+    --vlab-ink-faint: rgb(var(--vlab-ink-faint-c));
+    --vlab-rule: rgb(var(--vlab-rule-c));
+    --vlab-rule-strong: rgb(var(--vlab-rule-strong-c));
+    --vlab-surface: rgb(var(--vlab-surface-c));
+    --vlab-surface-alt: rgb(var(--vlab-surface-alt-c));
+    --vlab-footer-bg: rgb(var(--vlab-footer-bg-c));
+    --vlab-sage: rgb(var(--vlab-sage-c));
+    --vlab-cream: rgb(var(--vlab-cream-c));
+    --vlab-taupe: rgb(var(--vlab-taupe-c));
+
+    /* ── shadcn/ui bridge ──────────────────────────────────────────────────
+     * components/ui/* read these. Re-pointed at the institutional palette so
+     * the primitives inherit it without each needing an edit.
+     */
     --background: 0 0% 100%;
-    --foreground: 0 0% 13%;          /* #222222 near-black */
+    --foreground: 205 32% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 13%;
+    --card-foreground: 205 32% 16%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 13%;
-    --primary: 349 100% 60%;         /* #ff385c Rausch Red */
+    --popover-foreground: 205 32% 16%;
+    --primary: 207 56% 46%; /* #337ab7 */
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 95%;           /* #f2f2f2 light surface */
-    --secondary-foreground: 0 0% 13%;
-    --muted: 0 0% 95%;
-    --muted-foreground: 0 0% 42%;    /* #6a6a6a secondary text */
-    --accent: 0 0% 95%;
-    --accent-foreground: 0 0% 13%;
-    --destructive: 14 83% 43%;       /* #c13515 error */
+    --secondary: 210 41% 95%;
+    --secondary-foreground: 205 32% 16%;
+    --muted: 210 41% 95%;
+    --muted-foreground: 204 14% 41%;
+    --accent: 210 41% 95%;
+    --accent-foreground: 205 32% 16%;
+    --destructive: 4 65% 45%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 76%;              /* #c1c1c1 border */
-    --input: 0 0% 76%;
-    --ring: 349 100% 60%;            /* Rausch Red focus ring */
-    --radius: 0.5rem;
+    --border: 209 33% 84%;
+    --input: 209 33% 84%;
+    --ring: 207 56% 46%;
 
-    /* Airbnb palette tokens */
-    --palette-rausch: #ff385c;
-    --palette-text-primary: #222222;
-    --palette-text-secondary: #6a6a6a;
-    --palette-text-disabled: rgba(0,0,0,0.24);
-    --palette-surface: #f2f2f2;
-    --palette-border: #c1c1c1;
+    /* Institutional chrome is squared off, not pill-shaped. The reference's
+     * only radius is Bootstrap's 0.25rem plus a 10px nav-hover rounding. */
+    --radius: 0.25rem;
 
-    /* Card shadow: three-layer warm lift */
-    --shadow-card: rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px;
-    --shadow-hover: rgba(0,0,0,0.08) 0px 4px 12px;
+    /* Flat, printed feel. No soft multi-layer product shadow. */
+    --shadow-card: 0 1px 2px rgba(15, 48, 80, 0.05);
+    --shadow-hover: 0 2px 6px rgba(15, 48, 80, 0.1);
   }
 }
 
@@ -44,16 +153,302 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font-open-sans), 'Open Sans', -apple-system,
+      BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 1rem;
+    line-height: 1.65;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-  h1, h2, h3, h4, h5, h6 {
+
+  /* OBSERVED pairing: Raleway for chrome/headings, Open Sans for reading copy.
+   * The reference declares exactly this split (.vlabs-header/.sidebar/.footer
+   * and .markdown-body in Raleway; .vlabs-page-main in Open Sans). */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--vlab-blue-800);
+    text-wrap: balance;
+  }
+
+  /* Left-aligned, never justified. The reference justifies its Theory
+   * paragraphs and gets rivers of white space in a narrow column. */
+  p {
+    text-align: left;
+  }
+
+  /* The reference ships no visible focus states at all. */
+  :focus-visible {
+    outline: 2px solid var(--vlab-blue-600);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@layer components {
+  /* ── Page title ────────────────────────────────────────────────────────
+   * The reference's `h3.page-name` — a blue title standing alone above the
+   * content ("Introduction", "List of Experiments", "Aim"). Given a hairline
+   * rule underneath so it reads as a document heading rather than a card title.
+   */
+  .vlab-page-title {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
+    color: var(--vlab-blue-600);
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+  }
+
+  /* Small uppercase label above a title — the "which part of the curriculum is
+   * this" marker. Terse, institutional, no marketing eyebrow copy. */
+  .vlab-eyebrow {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--vlab-ink-muted);
+  }
+
+  /* ── Content / sidebar separator ───────────────────────────────────────
+   * OBSERVED `border-left: 2px dotted #89a7c4` on .vlabs-page-content. Subtle,
+   * old-fashioned, and the most quietly recognisable detail on the reference.
+   */
+  .vlab-dotted-divide {
+    border-left: 2px dotted var(--vlab-blue-300);
+  }
+
+  /* ── Curriculum table ──────────────────────────────────────────────────
+   * The reference's "List of Experiments" is a literal <table> with S.No |
+   * Experiment. A numbered table reads as a syllabus; a card grid reads as a
+   * storefront. This is the shared styling for every table in the app.
+   */
+  .vlab-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+  }
+  .vlab-table thead th {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--vlab-ink-muted);
+    background: var(--vlab-surface-alt);
+    border-bottom: 2px solid var(--vlab-blue-300);
+    padding: 0.625rem 0.875rem;
+    white-space: nowrap;
+  }
+  .vlab-table tbody td,
+  .vlab-table tbody th {
+    padding: 0.6875rem 0.875rem;
+    border-bottom: 1px solid var(--vlab-rule);
+    vertical-align: top;
+    text-align: left;
+  }
+  .vlab-table tbody th[scope='row'] {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--vlab-ink-muted);
+    width: 3.5rem;
+  }
+  .vlab-table tbody tr:hover {
+    background: var(--vlab-blue-50);
+  }
+  .vlab-table a {
+    color: var(--vlab-blue-600);
+    text-decoration: none;
+  }
+  .vlab-table a:hover {
+    color: var(--vlab-blue-800);
+    text-decoration: underline;
+  }
+
+  /* ── Sidebar navigation ────────────────────────────────────────────────
+   * OBSERVED: `.sidebar { font-size: 1.2rem; font-weight: bold }`, links in
+   * #3e6389, hover in #ff6600. The hover colour is darkened to --vlab-orange-ink
+   * for contrast; the orange reading is preserved, the 2.9:1 is not.
+   */
+  .vlab-nav-link {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.4375rem 0.75rem;
+    font-size: 0.9375rem;
     font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--palette-text-primary);
+    color: var(--vlab-steel);
+    border-left: 3px solid transparent;
+    transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+  }
+  .vlab-nav-link:hover {
+    color: var(--vlab-orange-ink);
+    background: var(--vlab-orange-50);
+  }
+  .vlab-nav-link[aria-current='page'],
+  .vlab-nav-link.is-active {
+    color: var(--vlab-blue-800);
+    background: var(--vlab-blue-50);
+    border-left-color: var(--vlab-orange);
+    font-weight: 700;
+  }
+
+  /* ── Academic bibliography ─────────────────────────────────────────────
+   * OBSERVED references.md format: "1. Power System Analysis by John J. Grainger,
+   * William D. Stevenson, McGraw-Hill Education (India) Private Limited, New
+   * Delhi, 2015." Hanging indent, numbered, no cards, no favicons.
+   */
+  .vlab-citations {
+    counter-reset: citation;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+  .vlab-citations > li {
+    counter-increment: citation;
+    position: relative;
+    padding-left: 2.5rem;
+    padding-bottom: 0.875rem;
+    margin-bottom: 0.875rem;
+    border-bottom: 1px dotted var(--vlab-blue-300);
+  }
+  .vlab-citations > li:last-child {
+    border-bottom: 0;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+  .vlab-citations > li::before {
+    content: '[' counter(citation) ']';
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--vlab-blue-600);
+  }
+
+  /* ── Long-form lab copy ────────────────────────────────────────────────
+   * High information density on content pages: tight-ish leading, real heading
+   * hierarchy, numbered lists that look like a lab manual.
+   */
+  .vlab-prose {
+    color: var(--vlab-ink);
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+  .vlab-prose > * + * {
+    margin-top: 0.9rem;
+  }
+  .vlab-prose h1,
+  .vlab-prose h2 {
+    font-size: 1.1875rem;
+    margin-top: 1.75rem;
+    color: var(--vlab-blue-800);
+  }
+  .vlab-prose h3,
+  .vlab-prose h4 {
+    font-size: 1.0625rem;
+    margin-top: 1.5rem;
+    color: var(--vlab-blue-800);
+  }
+  .vlab-prose ul,
+  .vlab-prose ol {
+    padding-left: 1.5rem;
+  }
+  .vlab-prose ul {
+    list-style: disc;
+  }
+  .vlab-prose ol {
+    list-style: decimal;
+  }
+  .vlab-prose li + li {
+    margin-top: 0.35rem;
+  }
+  .vlab-prose li::marker {
+    color: var(--vlab-blue-600);
+    font-weight: 600;
+  }
+  .vlab-prose a {
+    color: var(--vlab-blue-600);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .vlab-prose a:hover {
+    color: var(--vlab-blue-800);
+  }
+  .vlab-prose strong {
+    color: var(--vlab-blue-900);
+    font-weight: 700;
+  }
+  .vlab-prose code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.875em;
+    background: var(--vlab-surface);
+    border: 1px solid var(--vlab-rule);
+    border-radius: 2px;
+    padding: 0.05em 0.3em;
+  }
+  .vlab-prose blockquote {
+    border-left: 3px solid var(--vlab-blue-300);
+    padding-left: 0.875rem;
+    color: var(--vlab-ink-muted);
+  }
+
+  /* ── Level-2 navigation swap ───────────────────────────────────────────
+   * Inside an experiment, the reference REPLACES the three-item lab sidebar
+   * with the eight-step experiment sidebar; it never shows both. ExperimentShell
+   * renders inside StudentShell here, so this stands the outer one down when the
+   * inner one is mounted.
+   *
+   * Desktop only. Below lg the outer sidebar is the off-canvas panel the header
+   * hamburger opens, and the experiment sequence is shown as a horizontal rail
+   * instead — so nothing is hidden that has no replacement.
+   *
+   * If a browser does not support :has(), both navigation columns render. That
+   * is the pre-existing layout, so the degradation is inert.
+   */
+  @media (min-width: 1024px) {
+    .vlab-shell:has([data-experiment-shell]) .vlab-lab-sidebar {
+      display: none;
+    }
+    .vlab-shell:has([data-experiment-shell]) .vlab-lab-content {
+      border-left: 0;
+    }
+  }
+
+  /* ── Data panel ────────────────────────────────────────────────────────
+   * The institutional replacement for the soft-shadowed SaaS card: a flat
+   * bordered box with a titled header strip.
+   */
+  .vlab-panel {
+    background: #fff;
+    border: 1px solid var(--vlab-rule-strong);
+    border-radius: var(--radius);
+  }
+  .vlab-panel-header {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    background: var(--vlab-surface-alt);
+    border-bottom: 1px solid var(--vlab-rule);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--vlab-ink-muted);
   }
 }
 
@@ -65,6 +460,51 @@
     box-shadow: var(--shadow-hover);
   }
   .text-secondary {
-    color: var(--palette-text-secondary);
+    color: var(--vlab-ink-muted);
+  }
+
+  /* The 8px solid orange rule under the header. OBSERVED verbatim; it is the
+   * reference's whole brand in one declaration, so it is reproduced exactly
+   * rather than softened into a shadow. */
+  .vlab-header-rule {
+    border-bottom: 8px solid var(--vlab-orange);
+  }
+  .vlab-header-rule-thin {
+    border-bottom: 5px solid var(--vlab-orange);
+  }
+
+  /* Tiled circuit-board background — the reference dashboard's
+   * `background-image: url(/images/circuit-board.svg)`. A cheap, unmistakable
+   * "this is an electronics lab" cue. Ours is drawn locally rather than
+   * hotlinked, so it carries no third-party asset. */
+  .vlab-circuit-bg {
+    background-image: url('/images/circuit-board.svg');
+    background-repeat: repeat;
+  }
+
+  /* Horizontal section rail below lg. Keeps a scroll affordance — the rail
+   * genuinely overflows and a student needs to know the sequence continues —
+   * but as a thin muted bar rather than the full-height OS scrollbar, which
+   * reads as a rendering artifact under a row of tabs. */
+  .vlab-rail-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--vlab-rule-strong) transparent;
+  }
+  .vlab-rail-scroll::-webkit-scrollbar {
+    height: 4px;
+  }
+  .vlab-rail-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .vlab-rail-scroll::-webkit-scrollbar-thumb {
+    background: var(--vlab-rule-strong);
+    border-radius: 2px;
+  }
+
+  .font-display {
+    font-family: var(--font-roboto-slab), 'Roboto Slab', Georgia, serif;
+  }
+  .font-chrome {
+    font-family: var(--font-raleway), 'Raleway', system-ui, sans-serif;
   }
 }

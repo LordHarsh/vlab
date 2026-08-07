@@ -103,7 +103,7 @@ import { LED_OPTIONS, WIRE_OPTIONS, type ColourSelection } from './colours'
 const ICON_SLOT =
   'flex h-7 w-7 shrink-0 select-none items-center justify-center rounded-[3px] text-[#9aa3ab] ' +
   'transition-colors hover:bg-[#f1f1f3] hover:text-[#566573] focus:outline-none ' +
-  'focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1'
+  'focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1'
 
 /**
  * One reason, reused wherever the answer is the same: this circuit's wiring is
@@ -286,10 +286,10 @@ export function WorkspaceToolbar({
           onClick={onToggleCode}
           aria-pressed={codeOpen}
           title={codeOpen ? 'Hide the code panel' : 'Show the code panel'}
-          className={`flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border px-2.5 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+          className={`flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border px-2.5 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1 ${
             codeOpen
-              ? 'border-[#c7dcf0] bg-[#1477d1]/[0.08] text-[#1477d1] hover:bg-[#1477d1]/[0.14]'
-              : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1] hover:text-[#1477d1]'
+              ? 'border-[#c7d8e8] bg-[#337ab7]/[0.08] text-[#337ab7] hover:bg-[#337ab7]/[0.14]'
+              : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#337ab7] hover:text-[#337ab7]'
           }`}
         >
           <Code2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -414,7 +414,7 @@ const RunState = React.memo(function RunState({
       className={`flex h-8 shrink-0 select-none items-center gap-2 rounded-[3px] border px-2.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 sm:px-3 ${toneClass} ${
         isRunning
           ? 'hover:bg-[#dcf3e3] focus-visible:ring-[#15803d]'
-          : 'hover:border-[#1477d1] hover:text-[#1477d1] focus-visible:ring-[#1477d1]'
+          : 'hover:border-[#337ab7] hover:text-[#337ab7] focus-visible:ring-[#337ab7]'
       }`}
     >
       {inner}
@@ -501,9 +501,9 @@ function ColourSwatchControl({
         aria-expanded={selection ? open : undefined}
         aria-haspopup={selection ? 'true' : undefined}
         title={selection ? label : 'Wire and LED colour — select one on the board first'}
-        className={`flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border bg-white px-2 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+        className={`flex h-8 shrink-0 select-none items-center gap-1.5 rounded-[3px] border bg-white px-2 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1 ${
           selection
-            ? 'border-[#dfe3e8] text-[#34495e] hover:border-[#1477d1]'
+            ? 'border-[#dfe3e8] text-[#34495e] hover:border-[#337ab7]'
             : 'border-[#e6e9ec] text-[#9aa3ab] hover:border-[#dfe3e8]'
         }`}
       >
@@ -535,8 +535,8 @@ function ColourSwatchControl({
                   onPick(opt.value)
                   setOpen(false)
                 }}
-                className={`flex h-8 w-8 items-center justify-center rounded-full border-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] ${
-                  isCurrent ? 'border-[#1477d1]' : 'border-transparent hover:border-[#dfe3e8]'
+                className={`flex h-8 w-8 items-center justify-center rounded-full border-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] ${
+                  isCurrent ? 'border-[#337ab7]' : 'border-transparent hover:border-[#dfe3e8]'
                 }`}
               >
                 <span
@@ -698,7 +698,7 @@ export function ComponentsRail({
           onClick={() =>
             onNotify('This list is fixed — it is the parts this circuit is built from.')
           }
-          className="min-w-0 flex-1 select-none rounded-[3px] border border-[#dfe3e8] px-2.5 py-1 text-left transition-colors hover:border-[#1477d1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+          className="min-w-0 flex-1 select-none rounded-[3px] border border-[#dfe3e8] px-2.5 py-1 text-left transition-colors hover:border-[#337ab7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1"
         >
           <div className="text-[9px] uppercase leading-tight tracking-[0.08em] text-[#9aa3ab]">
             Components
@@ -726,7 +726,7 @@ export function ComponentsRail({
         <button
           type="button"
           onClick={() => onNotify('Nothing to search — every part in this circuit is listed below.')}
-          className="flex h-8 w-full select-none items-center gap-2 rounded-[3px] border border-[#e6e9ec] bg-[#f4f5f6] px-2.5 text-left transition-colors hover:border-[#dfe3e8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1"
+          className="flex h-8 w-full select-none items-center gap-2 rounded-[3px] border border-[#e6e9ec] bg-[#f4f5f6] px-2.5 text-left transition-colors hover:border-[#dfe3e8] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1"
         >
           <Search className="h-3.5 w-3.5 shrink-0 text-[#b6bdc4]" aria-hidden="true" />
           <span className="text-[12px] text-[#b6bdc4]">Search</span>

@@ -8,7 +8,7 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
-  HelpCircle,
+
   AlertCircle,
 } from 'lucide-react'
 
@@ -170,14 +170,14 @@ export function QuizSection({
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 text-[#6a6a6a] animate-spin" />
+        <Loader2 className="w-6 h-6 text-vlab-muted animate-spin" />
       </div>
     )
   }
 
   if (error && !result) {
     return (
-      <div className="flex items-start gap-3 p-4 bg-red-50 rounded-xl border border-red-200">
+      <div className="flex items-start gap-3 border border-red-300 bg-red-50 p-4">
         <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
         <p className="text-sm text-red-700">{error}</p>
       </div>
@@ -193,52 +193,56 @@ export function QuizSection({
   if (result && result.success) {
     return (
       <div className="space-y-5">
-        {/* Score card */}
+        {/* Result of assessment — a marksheet row, not a celebration card. */}
         <div
-          className={`rounded-2xl p-6 border ${
+          className={`border-l-4 border-y border-r ${
             result.passed
-              ? 'bg-green-50 border-green-200'
-              : 'bg-red-50 border-red-200'
+              ? 'border-l-vlab-green border-y-vlab-rule-strong border-r-vlab-rule-strong bg-white'
+              : 'border-l-red-500 border-y-vlab-rule-strong border-r-vlab-rule-strong bg-white'
           }`}
         >
-          <div className="flex items-start gap-4">
-            <div
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                result.passed ? 'bg-green-100' : 'bg-red-100'
-              }`}
-            >
-              {result.passed ? (
-                <CheckCircle2 className="w-6 h-6 text-green-600" />
-              ) : (
-                <XCircle className="w-6 h-6 text-red-600" />
-              )}
+          <div className="vlab-panel-header justify-between">
+            <span>Result of assessment</span>
+            <span className="font-normal normal-case tracking-normal">
+              Attempt {result.attemptNumber}
+              {effectiveMaxAttempts !== null && ` of ${effectiveMaxAttempts}`}
+            </span>
+          </div>
+          <dl className="grid grid-cols-3 gap-px bg-vlab-rule">
+            <div className="bg-white px-4 py-3">
+              <dt className="vlab-eyebrow">Score</dt>
+              <dd className="mt-0.5 font-chrome text-lg font-bold tabular-nums text-vlab-800">
+                {result.score}/{result.maxScore}
+              </dd>
             </div>
-            <div>
-              <p
-                className={`font-bold text-lg ${
-                  result.passed ? 'text-green-800' : 'text-red-800'
+            <div className="bg-white px-4 py-3">
+              <dt className="vlab-eyebrow">Percentage</dt>
+              <dd className="mt-0.5 font-chrome text-lg font-bold tabular-nums text-vlab-800">
+                {result.percentage}%
+              </dd>
+            </div>
+            <div className="bg-white px-4 py-3">
+              <dt className="vlab-eyebrow">Outcome</dt>
+              <dd
+                className={`mt-0.5 flex items-center gap-1.5 font-chrome text-lg font-bold ${
+                  result.passed ? 'text-vlab-green-ink' : 'text-red-700'
                 }`}
               >
-                {result.passed ? 'Passed!' : 'Not passed'}
-              </p>
-              <p
-                className={`text-sm ${result.passed ? 'text-green-700' : 'text-red-700'}`}
-              >
-                {result.percentage}% · {result.score}/{result.maxScore} points
-              </p>
-              <p className="text-xs text-[#6a6a6a] mt-1">
-                Attempt #{result.attemptNumber}
-                {effectiveMaxAttempts !== null &&
-                  ` of ${effectiveMaxAttempts}`}
-              </p>
+                {result.passed ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <XCircle className="h-4 w-4" />
+                )}
+                {result.passed ? 'Pass' : 'Fail'}
+              </dd>
             </div>
-          </div>
+          </dl>
         </div>
 
         {/* Answer review */}
         {result.showAnswers && result.answerDetails && result.answerDetails.length > 0 && (
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-[#222222]">Answer Review</h3>
+            <h3 className="font-chrome text-[14px] font-bold uppercase tracking-[0.07em] text-vlab-800">Answer Review</h3>
             {questions.map((q, idx) => {
               const detail = result.answerDetails?.find((d) => d.questionId === q.id)
               const studentAnswerId = answers[q.id]
@@ -249,15 +253,15 @@ export function QuizSection({
               return (
                 <div
                   key={q.id}
-                  className={`rounded-xl p-4 border ${
+                  className={`border p-4 ${
                     isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
                   }`}
                 >
                   <div className="flex items-start gap-2 mb-2">
-                    <span className="text-xs font-semibold text-[#6a6a6a] shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-vlab-muted shrink-0 mt-0.5">
                       Q{idx + 1}
                     </span>
-                    <p className="text-sm text-[#222222] font-medium">{q.question_text}</p>
+                    <p className="text-sm text-vlab-ink font-medium">{q.question_text}</p>
                     {isCorrect ? (
                       <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0 ml-auto" />
                     ) : (
@@ -265,7 +269,7 @@ export function QuizSection({
                     )}
                   </div>
 
-                  <p className="text-xs text-[#6a6a6a] ml-5">
+                  <p className="text-xs text-vlab-muted ml-5">
                     Your answer:{' '}
                     <span
                       className={`font-medium ${isCorrect ? 'text-green-700' : 'text-red-700'}`}
@@ -282,7 +286,7 @@ export function QuizSection({
                   )}
 
                   {detail?.explanation && (
-                    <p className="text-xs text-[#6a6a6a] ml-5 mt-2 p-2 bg-white/60 rounded-lg">
+                    <p className="ml-5 mt-2 border border-vlab-rule bg-white/70 p-2 text-xs text-vlab-muted">
                       {detail.explanation}
                     </p>
                   )}
@@ -300,9 +304,9 @@ export function QuizSection({
               setAnswers({})
               setError(null)
             }}
-            className="px-4 py-2.5 border border-[#c1c1c1] rounded-xl text-sm text-[#222222] hover:border-[#ff385c] hover:text-[#ff385c] transition-colors"
+            className="border border-vlab-rule-strong px-4 py-2 font-chrome text-[13px] font-semibold text-vlab-steel transition-colors hover:border-vlab-600 hover:text-vlab-800"
           >
-            Try Again
+            Try again
             {attemptsRemaining !== null && ` (${attemptsRemaining} left)`}
           </button>
         )}
@@ -313,60 +317,62 @@ export function QuizSection({
   // Form view
   return (
     <div className="space-y-5">
-      {/* Quiz header */}
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[#ff385c]/10 flex items-center justify-center shrink-0">
-          <HelpCircle className="w-5 h-5 text-[#ff385c]" />
-        </div>
-        <div>
-          <h2 className="text-base font-semibold text-[#222222]">{quiz.title}</h2>
+      {/* Assessment particulars, stated as facts rather than dressed as a card.
+          The reference's pre/post test pages are austere: a bold question, a
+          plain column of answers, a Submit Quiz button. */}
+      <div className="border border-vlab-rule-strong">
+        <div className="vlab-panel-header">{quiz.title}</div>
+        <div className="px-4 py-3">
           {quiz.description && (
-            <p className="text-xs text-[#6a6a6a] mt-0.5">{quiz.description}</p>
+            <p className="mb-2 text-sm leading-relaxed text-vlab-muted">{quiz.description}</p>
           )}
-          <div className="flex items-center gap-3 mt-1 text-xs text-[#6a6a6a]">
-            <span>{questions.length} question{questions.length !== 1 ? 's' : ''}</span>
-            <span>Pass: {passingPct}%</span>
+          <dl className="flex flex-wrap gap-x-8 gap-y-1 text-[13px]">
+            <div className="flex gap-1.5">
+              <dt className="text-vlab-muted">Questions:</dt>
+              <dd className="font-semibold tabular-nums text-vlab-ink">{questions.length}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt className="text-vlab-muted">Pass mark:</dt>
+              <dd className="font-semibold tabular-nums text-vlab-ink">{passingPct}%</dd>
+            </div>
             {attemptsRemaining !== null && (
-              <span>
-                Attempt{existingAttempts > 0 ? ` ${existingAttempts + 1}` : ''} of{' '}
-                {effectiveMaxAttempts}
-              </span>
+              <div className="flex gap-1.5">
+                <dt className="text-vlab-muted">Attempt:</dt>
+                <dd className="font-semibold tabular-nums text-vlab-ink">
+                  {existingAttempts + 1} of {effectiveMaxAttempts}
+                </dd>
+              </div>
             )}
-          </div>
+          </dl>
         </div>
       </div>
 
       {!canAttempt ? (
-        <div className="p-4 bg-[#f2f2f2] rounded-xl text-sm text-[#6a6a6a] text-center">
+        <div className="border border-vlab-rule-strong bg-vlab-surface-alt px-4 py-6 text-center text-sm text-vlab-muted">
           You have used all allowed attempts for this quiz.
         </div>
       ) : (
         <>
-          {/* Questions */}
-          <div className="space-y-5">
+          <ol className="space-y-4">
             {questions.map((q, idx) => (
-              <div
-                key={q.id}
-                className="bg-white rounded-xl border border-[#c1c1c1] p-5"
-                style={{
-                  boxShadow:
-                    'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px',
-                }}
-              >
-                <p className="text-sm font-semibold text-[#222222] mb-3">
-                  <span className="text-[#ff385c] mr-1">Q{idx + 1}.</span>
+              <li key={q.id} className="border border-vlab-rule-strong p-4">
+                {/* OBSERVED `.question { font-weight: 900 }` — the reference
+                    sets its questions in the heaviest weight it has. */}
+                <p className="mb-3 font-chrome text-[15px] font-extrabold leading-snug text-vlab-ink">
+                  <span className="mr-1.5 text-vlab-600">Q{idx + 1}.</span>
                   {q.question_text}
                 </p>
-                <div className="space-y-2">
+                {/* OBSERVED `.answers { display: flex; flex-direction: column }` */}
+                <div className="flex flex-col gap-1.5">
                   {q.options.map((option) => {
                     const selected = answers[q.id] === option.id
                     return (
                       <label
                         key={option.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                        className={`flex cursor-pointer items-center gap-3 border px-3 py-2 transition-colors ${
                           selected
-                            ? 'border-[#ff385c] bg-[#ff385c]/5'
-                            : 'border-[#f2f2f2] hover:border-[#c1c1c1] hover:bg-[#f2f2f2]/50'
+                            ? 'border-vlab-600 bg-vlab-50'
+                            : 'border-vlab-rule hover:border-vlab-rule-strong hover:bg-vlab-surface-alt'
                         }`}
                       >
                         <input
@@ -375,20 +381,20 @@ export function QuizSection({
                           value={option.id}
                           checked={selected}
                           onChange={() => handleAnswer(q.id, option.id)}
-                          className="accent-[#ff385c]"
+                          className="accent-vlab-600"
                         />
-                        <span className="text-sm text-[#222222]">{option.text}</span>
+                        <span className="text-sm text-vlab-ink">{option.text}</span>
                       </label>
                     )
                   })}
                 </div>
-              </div>
+              </li>
             ))}
-          </div>
+          </ol>
 
           {error && (
-            <div className="flex items-start gap-2.5 p-3.5 bg-red-50 rounded-xl border border-red-200">
-              <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 border border-red-300 bg-red-50 p-3.5">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
               <p className="text-sm text-red-700">{error}</p>
             </div>
           )}
@@ -396,15 +402,15 @@ export function QuizSection({
           <button
             onClick={handleSubmit}
             disabled={!allAnswered || isPending}
-            className="w-full py-3 bg-[#ff385c] text-white rounded-xl text-sm font-semibold hover:bg-[#e0324f] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full border border-vlab-600 bg-vlab-600 py-2.5 font-chrome text-sm font-semibold text-white transition-colors hover:border-vlab-700 hover:bg-vlab-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? (
               <span className="flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Submitting...
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Submitting…
               </span>
             ) : (
-              'Submit Answers'
+              'Submit Quiz'
             )}
           </button>
         </>

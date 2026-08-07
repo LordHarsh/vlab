@@ -58,12 +58,12 @@ export default async function LabsPage({
   return (
     <div className="max-w-5xl mx-auto">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-[#6a6a6a] mb-6">
-        <Link href="/educator" className="hover:text-[#222222] transition-colors">My Classes</Link>
+      <div className="flex items-center gap-2 text-sm text-vlab-muted mb-6">
+        <Link href="/educator" className="hover:text-vlab-ink transition-colors">My Classes</Link>
         <span>/</span>
-        <Link href={`/educator/classes/${classId}`} className="hover:text-[#222222] transition-colors">{cls.name}</Link>
+        <Link href={`/educator/classes/${classId}`} className="hover:text-vlab-ink transition-colors">{cls.name}</Link>
         <span>/</span>
-        <span className="text-[#222222]">Labs</span>
+        <span className="text-vlab-ink">Labs</span>
       </div>
 
       <LabsClient

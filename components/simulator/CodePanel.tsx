@@ -374,7 +374,7 @@ export function CodePanel({
           data-testid="code-close"
           aria-label="Close the code panel"
           onClick={onClose}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e]"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#337ab7] hover:text-[#34495e]"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
@@ -435,7 +435,7 @@ export function CodePanel({
               type="button"
               data-testid="code-reset-cancel"
               onClick={() => setConfirmingReset(false)}
-              className="h-8 shrink-0 rounded-[3px] border border-[#dfe3e8] bg-white px-2.5 text-xs text-[#566573] transition-colors hover:border-[#1477d1]"
+              className="h-8 shrink-0 rounded-[3px] border border-[#dfe3e8] bg-white px-2.5 text-xs text-[#566573] transition-colors hover:border-[#337ab7]"
             >
               Keep it
             </button>
@@ -451,7 +451,7 @@ export function CodePanel({
                 ? "Replace the editor with this experiment's original script"
                 : 'This experiment ships no starter script'
             }
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[3px] border border-[#dfe3e8] bg-white px-2.5 text-xs text-[#34495e] transition-colors hover:border-[#1477d1] disabled:opacity-40 disabled:hover:border-[#dfe3e8]"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[3px] border border-[#dfe3e8] bg-white px-2.5 text-xs text-[#34495e] transition-colors hover:border-[#337ab7] disabled:opacity-40 disabled:hover:border-[#dfe3e8]"
           >
             <RotateCcw className="h-3 w-3" aria-hidden="true" />
             Reset to starter
@@ -1059,7 +1059,7 @@ export function CodePanelResizer({
       tabIndex={0}
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
-      className="hidden w-1.5 shrink-0 cursor-col-resize bg-[#dfe3e8] transition-colors hover:bg-[#1477d1] focus:bg-[#1477d1] focus:outline-none md:block"
+      className="hidden w-1.5 shrink-0 cursor-col-resize bg-[#dfe3e8] transition-colors hover:bg-[#337ab7] focus:bg-[#337ab7] focus:outline-none md:block"
     />
   )
 }

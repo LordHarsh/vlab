@@ -150,7 +150,7 @@ const NO_SNAPSHOT: SharedSnapshot = {
 /** Shared chrome for the toolbar strip and the rail's secondary buttons. */
 const BTN =
   'h-8 shrink-0 px-2.5 rounded-[3px] text-xs border border-[#dfe3e8] bg-white text-[#34495e] ' +
-  'transition-colors hover:border-[#1477d1] disabled:opacity-40 disabled:hover:border-[#dfe3e8]'
+  'transition-colors hover:border-[#337ab7] disabled:opacity-40 disabled:hover:border-[#dfe3e8]'
 
 const SECTION_LABEL = 'text-[10px] uppercase tracking-wider text-[#566573]'
 
@@ -196,10 +196,10 @@ function PanelToggle({
       aria-pressed={open}
       aria-controls={controls}
       title={`${open ? 'Hide' : 'Show'} the ${label.toLowerCase()} panel`}
-      className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1] focus-visible:ring-offset-1 ${
+      className={`h-8 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-xs border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7] focus-visible:ring-offset-1 ${
         open
-          ? 'border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
-          : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#1477d1]'
+          ? 'border-[#337ab7] bg-[#337ab7]/10 text-[#337ab7]'
+          : 'border-[#dfe3e8] bg-white text-[#34495e] hover:border-[#337ab7]'
       }`}
     >
       {children}
@@ -302,7 +302,7 @@ function PartsPalette({
         placeholder="Search parts"
         aria-label="Search parts"
         data-testid="palette-search"
-        className="w-full h-[37px] mb-3 px-2.5 rounded-none bg-white border-[0.8px] border-[#dfe3e8] text-[15px] text-[#34495e] placeholder:text-[#566573] outline-none focus:border-[#1477d1]"
+        className="w-full h-[37px] mb-3 px-2.5 rounded-none bg-white border-[0.8px] border-[#dfe3e8] text-[15px] text-[#34495e] placeholder:text-[#566573] outline-none focus:border-[#337ab7]"
       />
 
       {shown.length === 0 ? (
@@ -320,7 +320,7 @@ function PartsPalette({
                 data-testid={`palette-${type}`}
                 title={def.label}
                 onClick={() => add(type)}
-                className="h-[99px] w-[75px] flex flex-col items-center justify-center gap-1.5 px-1.5 rounded-[5px] bg-[#f1f1f3] border-[1.6px] border-transparent transition-colors hover:border-[#1477d1] focus:outline-none focus-visible:border-[#1477d1]"
+                className="h-[99px] w-[75px] flex flex-col items-center justify-center gap-1.5 px-1.5 rounded-[5px] bg-[#f1f1f3] border-[1.6px] border-transparent transition-colors hover:border-[#337ab7] focus:outline-none focus-visible:border-[#337ab7]"
               >
                 {/* The part's own artwork, letterboxed into a fixed box so a
                     325-unit breadboard and a 30-unit LED read at one scale. */}
@@ -353,7 +353,7 @@ function isToggle(prop: PropSpec): boolean {
 /** Shared field chrome, so the text box and the unit dropdown line up. */
 const FIELD =
   'h-[37px] bg-white border-[0.8px] border-[#dfe3e8] rounded-none px-2 text-xs ' +
-  'text-[#34495e] outline-none focus:border-[#1477d1]'
+  'text-[#34495e] outline-none focus:border-[#337ab7]'
 
 /**
  * Free numeric entry plus an SI unit dropdown — Tinkercad's `VALUE_AND_UNIT`.
@@ -555,7 +555,7 @@ function PropControl({
           data-testid={testId}
           checked={Number(value) >= 0.5}
           onChange={(e) => onChange(e.target.checked ? 1 : 0)}
-          className="h-3.5 w-3.5 shrink-0 accent-[#1477d1]"
+          className="h-3.5 w-3.5 shrink-0 accent-[#337ab7]"
         />
         <label htmlFor={id} className="text-[11px] text-[#34495e] leading-none">
           {prop.label}
@@ -583,7 +583,7 @@ function PropControl({
           step={prop.step}
           value={Number(value)}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="w-full accent-[#1477d1]"
+          className="w-full accent-[#337ab7]"
         />
       </div>
     )
@@ -2190,7 +2190,7 @@ export function CircuitEditor({
               type="button"
               data-testid="exit-fullscreen"
               onClick={gate.exit}
-              className="h-7 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-[11px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e]"
+              className="h-7 shrink-0 inline-flex items-center gap-1.5 px-2.5 rounded-[3px] text-[11px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#337ab7] hover:text-[#34495e]"
             >
               <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
               Exit fullscreen
@@ -2269,7 +2269,7 @@ export function CircuitEditor({
               <span
                 data-testid="fw-own-code"
                 title="This board is running the sketch in the code panel"
-                className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]"
+                className="h-8 flex items-center px-2.5 rounded-[3px] text-xs border border-[#337ab7] bg-[#337ab7]/10 text-[#337ab7]"
               >
                 Your sketch
                 {sketch.flashBytes > 0 && (
@@ -2293,8 +2293,8 @@ export function CircuitEditor({
                         i === 0 ? 'rounded-l-[3px]' : '-ml-px'
                       } ${i === boardFirmware.length - 1 ? 'rounded-r-[3px]' : ''} ${
                         activeHexUrl === f.url
-                          ? 'z-10 border-[#1477d1] bg-[#1477d1]/10 text-[#1477d1]'
-                          : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#1477d1]'
+                          ? 'z-10 border-[#337ab7] bg-[#337ab7]/10 text-[#337ab7]'
+                          : 'border-[#dfe3e8] bg-white text-[#566573] hover:border-[#337ab7]'
                       }`}
                     >
                       {f.label}
@@ -2502,7 +2502,7 @@ export function CircuitEditor({
                   data-testid="inspector-close"
                   aria-label="Deselect this part"
                   onClick={() => setSelected(null)}
-                  className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1]"
+                  className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#337ab7] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7]"
                 >
                   <X className="h-3 w-3" aria-hidden="true" />
                 </button>
@@ -2683,7 +2683,7 @@ export function CircuitEditor({
               data-testid="rail-close"
               aria-label="Close the components panel"
               onClick={toggleRail}
-              className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#1477d1] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1477d1]"
+              className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[3px] border border-[#dfe3e8] bg-white text-[#566573] transition-colors hover:border-[#337ab7] hover:text-[#34495e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#337ab7]"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
             </button>

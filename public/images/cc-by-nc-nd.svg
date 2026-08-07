@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="88" height="31" viewBox="0 0 88 31" role="img" aria-label="Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License">
+  <!--
+    Creative Commons BY-NC-ND 4.0 badge, drawn locally.
+
+    Every footer on the reference lab template carries the CC licence badge as a
+    hotlinked PNG from i.creativecommons.org. That third-party request is the one
+    thing not worth reproducing — this is the same mark as vector, self-hosted,
+    and it stays crisp at any density. The four glyphs are, left to right:
+    Creative Commons, Attribution, NonCommercial, NoDerivatives.
+  -->
+  <rect width="88" height="31" rx="3" fill="#231f20" />
+  <g fill="none" stroke="#fff" stroke-width="1.6">
+    <circle cx="13" cy="15.5" r="8.6" />
+    <circle cx="33" cy="15.5" r="8.6" />
+    <circle cx="53" cy="15.5" r="8.6" />
+    <circle cx="73" cy="15.5" r="8.6" />
+  </g>
+
+  <!-- CC -->
+  <g fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round">
+    <path d="M11.7 13.4a3 3 0 1 0 0 4.2" />
+    <path d="M16.5 13.4a3 3 0 1 0 0 4.2" />
+  </g>
+
+  <!-- BY: attribution figure -->
+  <g fill="#fff">
+    <circle cx="33" cy="11.4" r="2.05" />
+    <path d="M33 14.2c-2.5 0-3.7 1.3-3.7 3.1v2.5h1.5v3.1h4.4v-3.1h1.5v-2.5c0-1.8-1.2-3.1-3.7-3.1z" />
+  </g>
+
+  <!-- NC: struck-through currency mark -->
+  <g fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round">
+    <path d="M50.6 12.6c0-1 1.1-1.7 2.4-1.7 1 0 1.9.3 2.4.9" />
+    <path d="M55.4 18.4c0 1-1.1 1.7-2.4 1.7-1.1 0-2-.4-2.5-1" />
+    <path d="M50.6 12.6c0 2.5 4.8 1.9 4.8 4.4" />
+    <path d="M53 9.6v11.8" />
+    <path d="M46.9 15.5h12.2" stroke-width="1.7" />
+  </g>
+
+  <!-- ND: no derivatives -->
+  <g fill="#fff">
+    <rect x="68.6" y="12.4" width="8.8" height="1.9" rx="0.4" />
+    <rect x="68.6" y="16.8" width="8.8" height="1.9" rx="0.4" />
+  </g>
+</svg>

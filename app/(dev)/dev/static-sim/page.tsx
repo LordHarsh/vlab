@@ -25,8 +25,8 @@ export default function DevStaticSimPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-xl font-bold text-[#222222]">Static simulator harness</h1>
-      <p className="mt-1 text-sm text-[#6a6a6a]">
+      <h1 className="text-xl font-bold text-vlab-ink">Static simulator harness</h1>
+      <p className="mt-1 text-sm text-vlab-muted">
         The read-only reference circuit and code view, for each of the twelve experiment slugs. Every
         drawing is one of our own <code className="font-mono text-[13px]">CircuitDoc</code>s from{' '}
         <code className="font-mono text-[13px]">circuits.ts</code>, rendered by the lab editor&rsquo;s
@@ -41,7 +41,7 @@ export default function DevStaticSimPage() {
       <div className="mt-8 space-y-12">
         {slugs.map((slug) => (
           <section key={slug}>
-            <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.08em] text-[#566573]">
+            <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.08em] text-vlab-muted">
               {SLUG_TO_STATIC_EXPERIMENT_ID[slug]} · {slug}
             </h2>
             <StaticSimulator experimentSlug={slug} />
@@ -49,7 +49,7 @@ export default function DevStaticSimPage() {
         ))}
 
         <section>
-          <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.08em] text-[#566573]">
+          <h2 className="mb-2 font-mono text-xs uppercase tracking-[0.08em] text-vlab-muted">
             unmapped slug · expected fallback
           </h2>
           <StaticSimulator experimentSlug="not-a-real-experiment" />

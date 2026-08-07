@@ -51,14 +51,14 @@ export function AddSectionForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
-            Section Type <span className="text-[#ff385c]">*</span>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">
+            Section Type <span className="text-vlab-600">*</span>
           </label>
           <select
             value={type}
             onChange={(e) => setType(e.target.value)}
             required
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition bg-white"
           >
             {SECTION_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -68,13 +68,13 @@ export function AddSectionForm({
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Title</label>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">Title</label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Leave empty to use type"
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
           />
         </div>
       </div>
@@ -85,24 +85,24 @@ export function AddSectionForm({
           type="button"
           onClick={() => setIsRequired((v) => !v)}
           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-            isRequired ? 'bg-[#ff385c]' : 'bg-[#c1c1c1]'
+            isRequired ? 'bg-vlab-600' : 'bg-vlab-rule-strong'
           }`}
         >
           <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
             isRequired ? 'translate-x-4' : 'translate-x-1'
           }`} />
         </button>
-        <span className="text-xs text-[#6a6a6a]">Required section</span>
+        <span className="text-xs text-vlab-muted">Required section</span>
       </div>
 
       {error && (
-        <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">{error}</p>
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
       )}
 
       <button
         type="submit"
         disabled={isPending}
-        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
         Add Section

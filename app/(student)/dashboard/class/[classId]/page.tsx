@@ -2,14 +2,8 @@ import { auth } from '@clerk/nextjs/server'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import {
-  ArrowLeft,
-  BookOpen,
-  ChevronRight,
-  FlaskConical,
-  Tag,
-  BarChart3,
-} from 'lucide-react'
+import { ArrowLeft, Lock } from 'lucide-react'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 export default async function ClassPage({
   params,
@@ -123,160 +117,133 @@ export default async function ClassPage({
     ? `${educator.first_name ?? ''} ${educator.last_name ?? ''}`.trim() || 'Educator'
     : 'Educator'
 
-  const difficultyColors: Record<string, string> = {
-    beginner: 'bg-green-100 text-green-700',
-    intermediate: 'bg-yellow-100 text-yellow-700',
-    advanced: 'bg-red-100 text-red-700',
-  }
-
   return (
-    <div className="px-6 py-8 max-w-5xl mx-auto">
-      {/* Back */}
+    <div className="max-w-5xl px-5 py-8 sm:px-8">
       <Link
         href="/dashboard"
-        className="inline-flex items-center gap-1.5 text-sm text-[#6a6a6a] hover:text-[#222222] transition-colors mb-6"
+        className="mb-5 inline-flex items-center gap-1.5 font-chrome text-[13px] font-semibold text-vlab-steel transition-colors hover:text-vlab-orange-ink"
       >
-        <ArrowLeft className="w-4 h-4" />
-        My Classes
+        <ArrowLeft className="h-4 w-4" />
+        Enrolled classes
       </Link>
 
-      {/* Class header */}
-      <div
-        className="bg-white rounded-2xl p-6 mb-8 border border-[#f2f2f2]"
-        style={{
-          boxShadow:
-            'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
-        }}
-      >
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#ff385c]/10 flex items-center justify-center shrink-0">
-            <BookOpen className="w-6 h-6 text-[#ff385c]" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-bold text-[#222222]">{cls.name}</h1>
-            {cls.description && (
-              <p className="text-sm text-[#6a6a6a] mt-1">{cls.description}</p>
-            )}
-            <div className="flex flex-wrap gap-3 mt-3 text-xs text-[#6a6a6a]">
-              <span className="flex items-center gap-1">
-                <BarChart3 className="w-3.5 h-3.5" />
-                {educatorName}
-              </span>
-              {cls.academic_year && <span>{cls.academic_year}</span>}
-              {cls.semester && <span>{cls.semester}</span>}
-              <span>{(classLabs ?? []).length} labs assigned</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={
+          <>
+            Class
+            {cls.academic_year ? ` · ${cls.academic_year}` : ''}
+            {cls.semester ? ` · ${cls.semester}` : ''}
+          </>
+        }
+        title={cls.name}
+        description={cls.description}
+      />
 
-      {/* Labs section */}
-      <h2 className="text-base font-semibold text-[#222222] mb-4">Assigned Labs</h2>
+      {/* Course particulars, set as a definition strip. A key-value row is how a
+          department states the facts of a course — instructor, term, count —
+          rather than scattering them as icon chips. */}
+      <dl className="mb-8 grid grid-cols-2 gap-px border border-vlab-rule-strong bg-vlab-rule-strong sm:grid-cols-4">
+        {[
+          ['Instructor', educatorName],
+          ['Academic year', cls.academic_year ?? '—'],
+          ['Semester', cls.semester ?? '—'],
+          ['Laboratories assigned', String((classLabs ?? []).length)],
+        ].map(([term, value]) => (
+          <div key={term} className="bg-white px-4 py-3">
+            <dt className="vlab-eyebrow">{term}</dt>
+            <dd className="mt-1 font-chrome text-sm font-bold text-vlab-800">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h2 className="vlab-page-title mb-3 text-[1.15rem]">Assigned Laboratories</h2>
 
       {!classLabs || classLabs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <div className="w-14 h-14 rounded-2xl bg-[#f2f2f2] flex items-center justify-center mb-4">
-            <FlaskConical className="w-7 h-7 text-[#c1c1c1]" />
-          </div>
-          <p className="text-[#6a6a6a] text-sm">No labs assigned to this class yet.</p>
+        <div className="border border-vlab-rule-strong bg-vlab-surface-alt px-6 py-14 text-center text-sm text-vlab-muted">
+          No laboratories assigned to this class yet.
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {classLabs.map((cl) => {
-            const lab = cl.labs as {
-              id: string
-              slug: string
-              title: string
-              description: string | null
-              difficulty: string | null
-              tags: string[] | null
-            } | null
-            if (!lab) return null
+        <div className="overflow-x-auto border border-vlab-rule-strong">
+          <table className="vlab-table">
+            <thead>
+              <tr>
+                <th scope="col">S.No</th>
+                <th scope="col">Laboratory</th>
+                <th scope="col">Level</th>
+                <th scope="col">Experiments</th>
+                <th scope="col">Progress</th>
+              </tr>
+            </thead>
+            <tbody>
+              {classLabs.map((cl, idx) => {
+                const lab = cl.labs as {
+                  id: string
+                  slug: string
+                  title: string
+                  description: string | null
+                  difficulty: string | null
+                  tags: string[] | null
+                } | null
+                if (!lab) return null
 
-            const { completed, total } = progressByLab[lab.id] ?? { completed: 0, total: 0 }
-            const pct = total > 0 ? Math.round((completed / total) * 100) : 0
-            const diffClass =
-              difficultyColors[lab.difficulty?.toLowerCase() ?? ''] ?? 'bg-gray-100 text-gray-600'
+                const { completed, total } = progressByLab[lab.id] ?? { completed: 0, total: 0 }
+                const pct = total > 0 ? Math.round((completed / total) * 100) : 0
+                const isLocked = cl.unlock_at ? new Date(cl.unlock_at) > new Date() : false
 
-            const isLocked =
-              cl.unlock_at ? new Date(cl.unlock_at) > new Date() : false
-
-            return (
-              <div
-                key={cl.id}
-                className={`group block bg-white rounded-2xl p-5 border border-[#c1c1c1] transition-all duration-200 ${isLocked ? 'opacity-60' : 'hover:border-[#ff385c]'}`}
-                style={{
-                  boxShadow:
-                    'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px',
-                }}
-              >
-                {isLocked ? (
-                  <div>
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="w-10 h-10 rounded-xl bg-[#f2f2f2] flex items-center justify-center">
-                        <FlaskConical className="w-5 h-5 text-[#c1c1c1]" />
-                      </div>
-                      <span className="text-xs text-[#6a6a6a] bg-[#f2f2f2] px-2 py-1 rounded-full">
-                        Unlocks {new Date(cl.unlock_at!).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <h3 className="font-semibold text-[#222222] mb-1">{lab.title}</h3>
-                    {lab.description && (
-                      <p className="text-xs text-[#6a6a6a] line-clamp-2">{lab.description}</p>
-                    )}
-                  </div>
-                ) : (
-                  <Link href={`/dashboard/class/${classId}/lab/${lab.slug}`} className="block">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="w-10 h-10 rounded-xl bg-[#ff385c]/10 flex items-center justify-center">
-                        <FlaskConical className="w-5 h-5 text-[#ff385c]" />
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-[#c1c1c1] group-hover:text-[#ff385c] transition-colors mt-1" />
-                    </div>
-
-                    <div className="flex items-center gap-2 mb-2">
-                      <h3 className="font-semibold text-[#222222] flex-1 leading-snug">{lab.title}</h3>
-                      {lab.difficulty && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${diffClass}`}>
-                          {lab.difficulty}
+                return (
+                  <tr key={cl.id} className={isLocked ? 'opacity-60' : undefined}>
+                    <th scope="row">{idx + 1}</th>
+                    <td>
+                      {isLocked ? (
+                        <span className="font-chrome font-bold text-vlab-muted">{lab.title}</span>
+                      ) : (
+                        <Link
+                          href={`/dashboard/class/${classId}/lab/${lab.slug}`}
+                          className="font-chrome font-bold text-vlab-600 hover:text-vlab-800 hover:underline"
+                        >
+                          {lab.title}
+                        </Link>
+                      )}
+                      {lab.description && (
+                        <p className="mt-0.5 max-w-xl text-[13px] leading-relaxed text-vlab-muted">
+                          {lab.description}
+                        </p>
+                      )}
+                      {lab.tags && lab.tags.length > 0 && (
+                        <p className="mt-0.5 text-[12px] text-vlab-faint">
+                          {lab.tags.slice(0, 4).join(', ')}
+                        </p>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap capitalize text-vlab-ink">
+                      {lab.difficulty ?? '—'}
+                    </td>
+                    <td className="whitespace-nowrap tabular-nums text-vlab-ink">
+                      {completed} / {total}
+                    </td>
+                    <td className="whitespace-nowrap">
+                      {isLocked ? (
+                        <span className="inline-flex items-center gap-1.5 font-chrome text-[12px] font-bold text-vlab-orange-ink">
+                          <Lock className="h-3.5 w-3.5" />
+                          Unlocks {new Date(cl.unlock_at!).toLocaleDateString()}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <span className="h-1.5 w-20 overflow-hidden rounded-full bg-vlab-surface">
+                            <span
+                              className="block h-full bg-vlab-600"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </span>
+                          <span className="tabular-nums text-[13px] text-vlab-muted">{pct}%</span>
                         </span>
                       )}
-                    </div>
-
-                    {lab.description && (
-                      <p className="text-xs text-[#6a6a6a] mb-3 line-clamp-2">
-                        {lab.description}
-                      </p>
-                    )}
-
-                    {lab.tags && lab.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mb-3">
-                        {lab.tags.slice(0, 4).map((tag) => (
-                          <span
-                            key={tag}
-                            className="inline-flex items-center gap-1 text-xs text-[#6a6a6a] bg-[#f2f2f2] px-2 py-0.5 rounded-full"
-                          >
-                            <Tag className="w-2.5 h-2.5" />
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="text-xs text-[#6a6a6a] mb-2">
-                      {total} experiment{total !== 1 ? 's' : ''} · {completed} completed
-                    </div>
-                    <div className="w-full h-1.5 bg-[#f2f2f2] rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-[#ff385c] rounded-full transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </Link>
-                )}
-              </div>
-            )
-          })}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

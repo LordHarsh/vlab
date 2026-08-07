@@ -170,28 +170,28 @@ export default async function StudentDetailPage({
   return (
     <div className="max-w-4xl mx-auto">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-[#6a6a6a] mb-6 flex-wrap">
-        <Link href="/educator" className="hover:text-[#222222] transition-colors">My Classes</Link>
+      <div className="flex items-center gap-2 text-sm text-vlab-muted mb-6 flex-wrap">
+        <Link href="/educator" className="hover:text-vlab-ink transition-colors">My Classes</Link>
         <span>/</span>
-        <Link href={`/educator/classes/${classId}`} className="hover:text-[#222222] transition-colors">{cls.name}</Link>
+        <Link href={`/educator/classes/${classId}`} className="hover:text-vlab-ink transition-colors">{cls.name}</Link>
         <span>/</span>
-        <Link href={`/educator/classes/${classId}/gradebook`} className="hover:text-[#222222] transition-colors">Gradebook</Link>
+        <Link href={`/educator/classes/${classId}/gradebook`} className="hover:text-vlab-ink transition-colors">Gradebook</Link>
         <span>/</span>
-        <span className="text-[#222222]">{studentName}</span>
+        <span className="text-vlab-ink">{studentName}</span>
       </div>
 
       {/* Student info card */}
       <div
-        className="bg-white rounded-2xl border border-[#c1c1c1] p-6 mb-6"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg border border-vlab-rule-strong p-6 mb-6"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
         <div className="flex items-start gap-4">
-          <div className="w-12 h-12 rounded-full bg-[#ff385c]/10 flex items-center justify-center text-[#ff385c] font-bold text-lg shrink-0">
+          <div className="w-12 h-12 rounded-full bg-vlab-600/10 flex items-center justify-center text-vlab-600 font-bold text-lg shrink-0">
             {(student.first_name?.[0] ?? student.email[0]).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-semibold text-[#222222]">{studentName}</h1>
-            <p className="text-[#6a6a6a] text-sm">{student.email}</p>
+            <h1 className="text-xl font-semibold text-vlab-ink">{studentName}</h1>
+            <p className="text-vlab-muted text-sm">{student.email}</p>
             <div className="flex flex-wrap gap-3 mt-2">
               {student.registration_no && (
                 <InfoChip label="Reg. No" value={student.registration_no} />
@@ -208,12 +208,12 @@ export default async function StudentDetailPage({
             </div>
           </div>
           <div className="text-right shrink-0">
-            <p className="text-xs text-[#6a6a6a]">Enrolled</p>
-            <p className="text-sm font-medium text-[#222222]">
+            <p className="text-xs text-vlab-muted">Enrolled</p>
+            <p className="text-sm font-medium text-vlab-ink">
               {enrollment.enrolled_at ? new Date(enrollment.enrolled_at).toLocaleDateString() : '—'}
             </p>
             <span className={`inline-flex items-center mt-1 px-2 py-0.5 rounded-full text-xs font-medium capitalize ${
-              enrollment.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-[#f2f2f2] text-[#6a6a6a]'
+              enrollment.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-vlab-surface text-vlab-muted'
             }`}>
               {enrollment.status}
             </span>
@@ -225,10 +225,10 @@ export default async function StudentDetailPage({
       <div className="space-y-4">
         {experiments.length === 0 ? (
           <div
-            className="bg-white rounded-2xl border border-[#c1c1c1] p-10 text-center"
+            className="bg-white rounded-lg border border-vlab-rule-strong p-10 text-center"
             style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px' }}
           >
-            <p className="text-[#6a6a6a]">No experiments found in assigned labs.</p>
+            <p className="text-vlab-muted">No experiments found in assigned labs.</p>
           </div>
         ) : (
           experiments.map((exp) => {
@@ -239,14 +239,14 @@ export default async function StudentDetailPage({
             return (
               <div
                 key={exp.experimentId}
-                className="bg-white rounded-2xl border border-[#c1c1c1] overflow-hidden"
-                style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+                className="bg-white rounded-lg border border-vlab-rule-strong overflow-hidden"
+                style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
               >
                 {/* Experiment header */}
-                <div className="px-6 py-4 border-b border-[#f2f2f2] flex items-center justify-between">
+                <div className="px-6 py-4 border-b border-vlab-surface flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-[#6a6a6a] mb-0.5">{exp.labTitle}</p>
-                    <h3 className="text-base font-semibold text-[#222222]">{exp.experimentTitle}</h3>
+                    <p className="text-xs text-vlab-muted mb-0.5">{exp.labTitle}</p>
+                    <h3 className="text-base font-semibold text-vlab-ink">{exp.experimentTitle}</h3>
                   </div>
                   {isExpCompleted && (
                     <span className="flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 px-2.5 py-1 rounded-full">
@@ -259,12 +259,12 @@ export default async function StudentDetailPage({
                 <div className="px-6 py-4 space-y-5">
                   {/* Sections */}
                   <div>
-                    <h4 className="text-xs font-semibold text-[#6a6a6a] uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-vlab-muted uppercase tracking-wide mb-2 flex items-center gap-1.5">
                       <BookOpen className="w-3.5 h-3.5" />
                       Sections ({completedIds.size}/{exp.sections.length})
                     </h4>
                     {exp.sections.length === 0 ? (
-                      <p className="text-xs text-[#c1c1c1]">No sections</p>
+                      <p className="text-xs text-vlab-300">No sections</p>
                     ) : (
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {exp.sections.map((sec) => {
@@ -275,17 +275,17 @@ export default async function StudentDetailPage({
                               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${
                                 done
                                   ? 'bg-green-50 text-green-700'
-                                  : 'bg-[#f2f2f2] text-[#6a6a6a]'
+                                  : 'bg-vlab-surface text-vlab-muted'
                               }`}
                             >
                               {done ? (
                                 <CheckCircle className="w-3.5 h-3.5 shrink-0" />
                               ) : (
-                                <div className="w-3.5 h-3.5 rounded-full border border-[#c1c1c1] shrink-0" />
+                                <div className="w-3.5 h-3.5 rounded-full border border-vlab-rule-strong shrink-0" />
                               )}
                               <span className="truncate">{sec.title ?? 'Untitled'}</span>
                               {sec.is_required && (
-                                <span className="text-[10px] text-[#ff385c] ml-auto shrink-0">*</span>
+                                <span className="text-[10px] text-vlab-600 ml-auto shrink-0">*</span>
                               )}
                             </div>
                           )
@@ -293,7 +293,7 @@ export default async function StudentDetailPage({
                       </div>
                     )}
                     {progress?.total_time_seconds != null && progress.total_time_seconds > 0 && (
-                      <p className="text-xs text-[#6a6a6a] mt-2 flex items-center gap-1">
+                      <p className="text-xs text-vlab-muted mt-2 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
                         {Math.round(progress.total_time_seconds / 60)} min spent
                       </p>
@@ -303,7 +303,7 @@ export default async function StudentDetailPage({
                   {/* Quizzes */}
                   {exp.quizzes.length > 0 && (
                     <div>
-                      <h4 className="text-xs font-semibold text-[#6a6a6a] uppercase tracking-wide mb-2">
+                      <h4 className="text-xs font-semibold text-vlab-muted uppercase tracking-wide mb-2">
                         Quizzes
                       </h4>
                       <div className="space-y-3">
@@ -314,15 +314,15 @@ export default async function StudentDetailPage({
                           const isGraded = settings?.is_graded ?? false
 
                           return (
-                            <div key={quiz.id} className="rounded-xl border border-[#f2f2f2] overflow-hidden">
-                              <div className="flex items-center justify-between px-4 py-2 bg-[#f9f9f9]">
+                            <div key={quiz.id} className="rounded-lg border border-vlab-surface overflow-hidden">
+                              <div className="flex items-center justify-between px-4 py-2 bg-vlab-surface-alt">
                                 <div>
-                                  <span className="text-xs font-semibold text-[#222222]">{quiz.title}</span>
-                                  <span className="ml-2 text-xs text-[#6a6a6a]">({quiz.type})</span>
+                                  <span className="text-xs font-semibold text-vlab-ink">{quiz.title}</span>
+                                  <span className="ml-2 text-xs text-vlab-muted">({quiz.type})</span>
                                 </div>
-                                <div className="flex items-center gap-2 text-xs text-[#6a6a6a]">
+                                <div className="flex items-center gap-2 text-xs text-vlab-muted">
                                   {isGraded && (
-                                    <span className="text-[10px] bg-[#ff385c]/10 text-[#ff385c] px-2 py-0.5 rounded-full font-medium">
+                                    <span className="text-[10px] bg-vlab-600/10 text-vlab-600 px-2 py-0.5 rounded-full font-medium">
                                       Graded
                                     </span>
                                   )}
@@ -333,15 +333,15 @@ export default async function StudentDetailPage({
                                 </div>
                               </div>
                               {subs.length === 0 ? (
-                                <div className="px-4 py-2 text-xs text-[#c1c1c1]">Not attempted</div>
+                                <div className="px-4 py-2 text-xs text-vlab-300">Not attempted</div>
                               ) : (
-                                <div className="divide-y divide-[#f2f2f2]">
+                                <div className="divide-y divide-vlab-surface">
                                   {subs.map((sub) => (
                                     <div
                                       key={sub.attempt_number}
                                       className="flex items-center gap-3 px-4 py-2"
                                     >
-                                      <span className="text-xs text-[#6a6a6a] w-16 shrink-0">
+                                      <span className="text-xs text-vlab-muted w-16 shrink-0">
                                         Attempt {sub.attempt_number}
                                       </span>
                                       <span
@@ -353,7 +353,7 @@ export default async function StudentDetailPage({
                                       >
                                         {sub.percentage.toFixed(0)}%
                                       </span>
-                                      <span className="text-xs text-[#6a6a6a]">
+                                      <span className="text-xs text-vlab-muted">
                                         {sub.score}/{sub.max_score} pts
                                       </span>
                                       {sub.passed ? (
@@ -362,7 +362,7 @@ export default async function StudentDetailPage({
                                         <XCircle className="w-3.5 h-3.5 text-red-500 ml-auto" />
                                       )}
                                       {sub.submitted_at && (
-                                        <span className="text-[10px] text-[#c1c1c1] shrink-0">
+                                        <span className="text-[10px] text-vlab-300 shrink-0">
                                           {new Date(sub.submitted_at).toLocaleDateString()}
                                         </span>
                                       )}
@@ -380,7 +380,7 @@ export default async function StudentDetailPage({
                   {/* Feedback */}
                   {exp.feedbackForms.length > 0 && (
                     <div>
-                      <h4 className="text-xs font-semibold text-[#6a6a6a] uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                      <h4 className="text-xs font-semibold text-vlab-muted uppercase tracking-wide mb-2 flex items-center gap-1.5">
                         <MessageSquare className="w-3.5 h-3.5" />
                         Feedback
                       </h4>
@@ -393,13 +393,13 @@ export default async function StudentDetailPage({
                               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
                                 submitted
                                   ? 'bg-green-50 text-green-700'
-                                  : 'bg-[#f2f2f2] text-[#6a6a6a]'
+                                  : 'bg-vlab-surface text-vlab-muted'
                               }`}
                             >
                               {submitted ? (
                                 <CheckCircle className="w-3.5 h-3.5" />
                               ) : (
-                                <div className="w-3.5 h-3.5 rounded-full border border-[#c1c1c1]" />
+                                <div className="w-3.5 h-3.5 rounded-full border border-vlab-rule-strong" />
                               )}
                               {form.title}: {submitted ? 'Submitted' : 'Not submitted'}
                             </div>
@@ -420,8 +420,8 @@ export default async function StudentDetailPage({
 
 function InfoChip({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-xs bg-[#f2f2f2] px-2.5 py-1 rounded-lg text-[#222222]">
-      <span className="text-[#6a6a6a]">{label}:</span>
+    <span className="inline-flex items-center gap-1 text-xs bg-vlab-surface px-2.5 py-1 rounded-lg text-vlab-ink">
+      <span className="text-vlab-muted">{label}:</span>
       {value}
     </span>
   )

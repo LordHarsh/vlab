@@ -31,7 +31,7 @@ function RoleCell({ user }: { user: User }) {
       className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
         user.role === 'educator'
           ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-          : 'bg-[#f2f2f2] text-[#6a6a6a] hover:bg-[#e8e8e8]'
+          : 'bg-vlab-surface text-vlab-muted hover:bg-vlab-rule'
       } disabled:opacity-50`}
     >
       {user.role}
@@ -54,7 +54,7 @@ function AdminCell({ user }: { user: User }) {
       className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-50 ${
         user.is_admin
           ? 'bg-amber-50 text-amber-600 hover:bg-amber-100'
-          : 'bg-[#f2f2f2] text-[#c1c1c1] hover:bg-[#e8e8e8]'
+          : 'bg-vlab-surface text-vlab-300 hover:bg-vlab-rule'
       }`}
     >
       <Shield className="w-3.5 h-3.5" />
@@ -88,11 +88,11 @@ export function UsersTable({ users }: { users: User[] }) {
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-[#f2f2f2]">
+        <tr className="border-b border-vlab-surface">
           {['Name', 'Email', 'Role', 'Status', 'Admin', 'Joined'].map((h) => (
             <th
               key={h}
-              className="px-5 py-3 text-left text-xs font-semibold text-[#6a6a6a] uppercase tracking-wide"
+              className="px-5 py-3 text-left text-xs font-semibold text-vlab-muted uppercase tracking-wide"
             >
               {h}
             </th>
@@ -111,18 +111,18 @@ export function UsersTable({ users }: { users: User[] }) {
               })
             : '—'
           return (
-            <tr key={user.id} className="border-b border-[#f7f7f7] hover:bg-[#fafafa] transition-colors">
+            <tr key={user.id} className="border-b border-vlab-surface-alt hover:bg-vlab-surface-alt transition-colors">
               <td className="px-5 py-3.5">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-[#f2f2f2] flex items-center justify-center shrink-0">
-                    <span className="text-xs font-semibold text-[#6a6a6a]">
+                  <div className="w-7 h-7 rounded-full bg-vlab-surface flex items-center justify-center shrink-0">
+                    <span className="text-xs font-semibold text-vlab-muted">
                       {name.charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  <span className="font-medium text-[#222222]">{name}</span>
+                  <span className="font-medium text-vlab-ink">{name}</span>
                 </div>
               </td>
-              <td className="px-5 py-3.5 text-[#6a6a6a]">{user.email}</td>
+              <td className="px-5 py-3.5 text-vlab-muted">{user.email}</td>
               <td className="px-5 py-3.5">
                 <RoleCell user={user} />
               </td>
@@ -132,7 +132,7 @@ export function UsersTable({ users }: { users: User[] }) {
               <td className="px-5 py-3.5">
                 <AdminCell user={user} />
               </td>
-              <td className="px-5 py-3.5 text-[#6a6a6a] text-xs">{joined}</td>
+              <td className="px-5 py-3.5 text-vlab-muted text-xs">{joined}</td>
             </tr>
           )
         })}

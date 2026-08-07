@@ -39,7 +39,7 @@ export function FeedbackQuestionsList({ questions }: { questions: FeedbackQuesti
 
   if (questions.length === 0) {
     return (
-      <p className="text-sm text-[#6a6a6a] text-center py-6">
+      <p className="text-sm text-vlab-muted text-center py-6">
         No questions yet. Add one below.
       </p>
     )
@@ -50,30 +50,30 @@ export function FeedbackQuestionsList({ questions }: { questions: FeedbackQuesti
       {questions.map((q, idx) => (
         <div
           key={q.id}
-          className="flex items-start gap-3 p-3 rounded-xl border border-[#e8e8e8] hover:border-[#c1c1c1] transition-colors"
+          className="flex items-start gap-3 p-3 rounded-lg border border-vlab-rule hover:border-vlab-rule-strong transition-colors"
         >
-          <span className="w-6 h-6 rounded-full bg-[#f2f2f2] flex items-center justify-center text-xs font-bold text-[#6a6a6a] shrink-0 mt-0.5">
+          <span className="w-6 h-6 rounded-full bg-vlab-surface flex items-center justify-center text-xs font-bold text-vlab-muted shrink-0 mt-0.5">
             {idx + 1}
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-[#222222]">{q.question_text}</p>
+            <p className="text-sm text-vlab-ink">{q.question_text}</p>
             <div className="flex items-center gap-2 mt-1">
               <span
                 className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                  TYPE_COLORS[q.question_type] ?? 'bg-[#f2f2f2] text-[#6a6a6a]'
+                  TYPE_COLORS[q.question_type] ?? 'bg-vlab-surface text-vlab-muted'
                 }`}
               >
                 {TYPE_LABELS[q.question_type] ?? q.question_type}
               </span>
               {q.is_required && (
-                <span className="text-xs text-[#ff385c] font-medium">Required</span>
+                <span className="text-xs text-vlab-600 font-medium">Required</span>
               )}
             </div>
           </div>
           <button
             onClick={() => handleArchive(q.id)}
             disabled={isPending && pendingId === q.id}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#6a6a6a] bg-[#f2f2f2] hover:bg-[#e8e8e8] transition-colors disabled:opacity-50 shrink-0"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-vlab-muted bg-vlab-surface hover:bg-vlab-rule transition-colors disabled:opacity-50 shrink-0"
           >
             <Archive className="w-3 h-3" />
             Archive

@@ -15,11 +15,11 @@ export function SimsHarness() {
   const [mounted, setMounted] = useState(true)
 
   return (
-    <div className="min-h-[100dvh] bg-[#f4f5f6] text-[#34495e]">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[#dfe3e8] bg-white px-4 py-3">
+    <div className="min-h-[100dvh] bg-vlab-surface-alt text-vlab-800">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-vlab-rule-strong bg-white px-4 py-3">
         <div>
           <h1 className="text-sm font-semibold">Built-in simulations — dev harness</h1>
-          <p className="mt-0.5 text-[12px] text-[#6b7c8d]">
+          <p className="mt-0.5 text-[12px] text-vlab-muted">
             {SIM_KEYS.length} registered sim_type keys. Development only.
           </p>
         </div>
@@ -27,7 +27,7 @@ export function SimsHarness() {
           type="button"
           data-testid="mount-toggle"
           onClick={() => setMounted((m) => !m)}
-          className="h-8 shrink-0 rounded-[3px] border border-[#dfe3e8] bg-white px-3 font-mono text-[11px] text-[#34495e] transition-colors hover:border-[#1477d1]"
+          className="h-8 shrink-0 rounded-[3px] border border-vlab-rule-strong bg-white px-3 font-mono text-[11px] text-vlab-800 transition-colors hover:border-vlab-600"
         >
           {mounted ? 'Unmount all' : 'Mount all'}
         </button>
@@ -37,7 +37,7 @@ export function SimsHarness() {
         <main className="mx-auto w-full max-w-3xl space-y-6 px-3 py-4 sm:px-4 sm:py-6">
           {SIM_KEYS.map((key) => (
             <section key={key} data-sim={key}>
-              <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#6b7c8d]">
+              <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-vlab-muted">
                 {key}
               </h2>
               <SimulationSection
@@ -51,7 +51,7 @@ export function SimsHarness() {
           ))}
 
           <section data-sim="__unknown">
-            <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#6b7c8d]">
+            <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-vlab-muted">
               unknown key
             </h2>
             <SimulationSection type="builtin" simType="does_not_exist" designId={null} />
@@ -62,7 +62,7 @@ export function SimsHarness() {
               the server round-trip fails without a Clerk session (expected) and
               autosave degrades to 'offline' rather than throwing. */}
           <section data-sim="__native">
-            <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-[#6b7c8d]">
+            <h2 className="mb-2 font-mono text-[11px] uppercase tracking-[0.08em] text-vlab-muted">
               native
             </h2>
             <SimulationSection
@@ -75,7 +75,7 @@ export function SimsHarness() {
           </section>
         </main>
       ) : (
-        <p className="px-4 py-6 font-mono text-[12px] text-[#6b7c8d]">
+        <p className="px-4 py-6 font-mono text-[12px] text-vlab-muted">
           All simulations unmounted — nothing should still be ticking.
         </p>
       )}

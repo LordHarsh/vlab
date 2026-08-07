@@ -74,7 +74,7 @@ import {
 } from '@/lib/simulator/model/wire-draft'
 import { inertPartArt } from './inert-art'
 
-const ACCENT = '#1477d1'
+const ACCENT = '#337ab7'
 
 interface Props {
   doc: CircuitDoc

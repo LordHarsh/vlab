@@ -62,8 +62,8 @@ export function AddExperimentForm({ labId, labSlug }: { labId: string; labSlug: 
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
-            Title <span className="text-[#ff385c]">*</span>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">
+            Title <span className="text-vlab-600">*</span>
           </label>
           <input
             type="text"
@@ -71,12 +71,12 @@ export function AddExperimentForm({ labId, labSlug }: { labId: string; labSlug: 
             onChange={(e) => handleTitleChange(e.target.value)}
             placeholder="Experiment title"
             required
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
-            Slug <span className="text-[#ff385c]">*</span>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">
+            Slug <span className="text-vlab-600">*</span>
           </label>
           <input
             type="text"
@@ -84,29 +84,29 @@ export function AddExperimentForm({ labId, labSlug }: { labId: string; labSlug: 
             onChange={(e) => { setSlug(e.target.value); setSlugManual(true) }}
             placeholder="experiment-slug"
             required
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] font-mono placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink font-mono placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Description</label>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">Description</label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Brief description..."
           rows={2}
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition resize-none"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition resize-none"
         />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Difficulty</label>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">Difficulty</label>
           <select
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition bg-white"
           >
             <option value="">None</option>
             <option value="beginner">Beginner</option>
@@ -115,20 +115,20 @@ export function AddExperimentForm({ labId, labSlug }: { labId: string; labSlug: 
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Duration (min)</label>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">Duration (min)</label>
           <input
             type="number"
             value={duration}
             onChange={(e) => setDuration(e.target.value)}
             placeholder="30"
             min={1}
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
           />
         </div>
       </div>
 
       {error && (
-        <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
@@ -136,7 +136,7 @@ export function AddExperimentForm({ labId, labSlug }: { labId: string; labSlug: 
       <button
         type="submit"
         disabled={isPending || !title.trim() || !slug.trim()}
-        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
         Add Experiment

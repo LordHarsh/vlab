@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { EducatorSidebar } from './educator-sidebar'
+import { InstitutionalFooter } from '@/components/layout/InstitutionalFooter'
 
 export default async function EducatorLayout({
   children,
@@ -27,9 +28,12 @@ export default async function EducatorLayout({
   if (profile.approval_status === 'rejected') redirect('/pending-approval')
 
   return (
-    <div className="min-h-screen bg-[#f2f2f2] flex">
+    <div className="flex min-h-screen bg-white">
       <EducatorSidebar profile={profile} />
-      <main className="flex-1 min-w-0 p-6 lg:p-8">{children}</main>
+      <div className="flex min-w-0 flex-1 flex-col lg:vlab-dotted-divide">
+        <main className="min-w-0 flex-1 p-5 lg:p-8">{children}</main>
+        <InstitutionalFooter />
+      </div>
     </div>
   )
 }

@@ -88,8 +88,8 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
-          Question Text <span className="text-[#ff385c]">*</span>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">
+          Question Text <span className="text-vlab-600">*</span>
         </label>
         <textarea
           value={questionText}
@@ -97,19 +97,19 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
           placeholder="How would you rate this experiment?"
           rows={2}
           required
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition resize-none"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition resize-none"
         />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
-            Question Type <span className="text-[#ff385c]">*</span>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">
+            Question Type <span className="text-vlab-600">*</span>
           </label>
           <select
             value={questionType}
             onChange={(e) => setQuestionType(e.target.value as QuestionType)}
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition bg-white"
           >
             <option value="rating">Rating (stars/emoji)</option>
             <option value="text">Text (open-ended)</option>
@@ -119,12 +119,12 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
         </div>
         <div className="flex items-end">
           <div className="flex items-center justify-between w-full">
-            <label className="text-xs font-medium text-[#6a6a6a]">Required</label>
+            <label className="text-xs font-medium text-vlab-muted">Required</label>
             <button
               type="button"
               onClick={() => setIsRequired(!isRequired)}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                isRequired ? 'bg-[#ff385c]' : 'bg-[#c1c1c1]'
+                isRequired ? 'bg-vlab-600' : 'bg-vlab-rule-strong'
               }`}
             >
               <span
@@ -139,47 +139,47 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
 
       {/* Rating / Scale config */}
       {(questionType === 'rating' || questionType === 'scale') && (
-        <div className="bg-[#f9f9f9] rounded-xl border border-[#e8e8e8] p-4 space-y-3">
-          <p className="text-xs font-medium text-[#6a6a6a]">Scale Configuration</p>
+        <div className="bg-vlab-surface-alt rounded-lg border border-vlab-rule p-4 space-y-3">
+          <p className="text-xs font-medium text-vlab-muted">Scale Configuration</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-[#6a6a6a] mb-1">Min Value</label>
+              <label className="block text-xs text-vlab-muted mb-1">Min Value</label>
               <input
                 type="number"
                 value={minValue}
                 onChange={(e) => setMinValue(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+                className="w-full px-3 py-1.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
               />
             </div>
             <div>
-              <label className="block text-xs text-[#6a6a6a] mb-1">Max Value</label>
+              <label className="block text-xs text-vlab-muted mb-1">Max Value</label>
               <input
                 type="number"
                 value={maxValue}
                 onChange={(e) => setMaxValue(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+                className="w-full px-3 py-1.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
               />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-[#6a6a6a] mb-1">Min Label (optional)</label>
+              <label className="block text-xs text-vlab-muted mb-1">Min Label (optional)</label>
               <input
                 type="text"
                 value={minLabel}
                 onChange={(e) => setMinLabel(e.target.value)}
                 placeholder="e.g. Poor"
-                className="w-full px-3 py-1.5 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+                className="w-full px-3 py-1.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
               />
             </div>
             <div>
-              <label className="block text-xs text-[#6a6a6a] mb-1">Max Label (optional)</label>
+              <label className="block text-xs text-vlab-muted mb-1">Max Label (optional)</label>
               <input
                 type="text"
                 value={maxLabel}
                 onChange={(e) => setMaxLabel(e.target.value)}
                 placeholder="e.g. Excellent"
-                className="w-full px-3 py-1.5 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+                className="w-full px-3 py-1.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
               />
             </div>
           </div>
@@ -188,8 +188,8 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
 
       {/* Multiple choice options */}
       {questionType === 'multiple_choice' && (
-        <div className="bg-[#f9f9f9] rounded-xl border border-[#e8e8e8] p-4 space-y-2">
-          <p className="text-xs font-medium text-[#6a6a6a] mb-2">Options</p>
+        <div className="bg-vlab-surface-alt rounded-lg border border-vlab-rule p-4 space-y-2">
+          <p className="text-xs font-medium text-vlab-muted mb-2">Options</p>
           {mcOptions.map((opt, idx) => (
             <div key={idx} className="flex items-center gap-2">
               <input
@@ -197,13 +197,13 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
                 value={opt}
                 onChange={(e) => updateMcOption(idx, e.target.value)}
                 placeholder={`Option ${idx + 1}`}
-                className="flex-1 px-3 py-1.5 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+                className="flex-1 px-3 py-1.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
               />
               {mcOptions.length > 2 && (
                 <button
                   type="button"
                   onClick={() => removeMcOption(idx)}
-                  className="p-1.5 rounded-lg text-[#6a6a6a] hover:bg-[#e8e8e8] transition-colors"
+                  className="p-1.5 rounded-lg text-vlab-muted hover:bg-vlab-rule transition-colors"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -213,7 +213,7 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
           <button
             type="button"
             onClick={addMcOption}
-            className="inline-flex items-center gap-1 text-xs text-[#ff385c] font-medium hover:underline mt-1"
+            className="inline-flex items-center gap-1 text-xs text-vlab-600 font-medium hover:underline mt-1"
           >
             <Plus className="w-3 h-3" />
             Add Option
@@ -222,7 +222,7 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
       )}
 
       {error && (
-        <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
@@ -230,7 +230,7 @@ export function AddFeedbackQuestionForm({ formId }: { formId: string }) {
       <button
         type="submit"
         disabled={isPending || !questionText.trim()}
-        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
         Add Question

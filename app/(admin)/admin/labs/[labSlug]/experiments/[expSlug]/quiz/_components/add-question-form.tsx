@@ -57,8 +57,8 @@ export function AddQuestionForm({ quizId }: { quizId: string }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-xs font-medium text-[#6a6a6a] mb-1">
-          Question Text <span className="text-[#ff385c]">*</span>
+        <label className="block text-xs font-medium text-vlab-muted mb-1">
+          Question Text <span className="text-vlab-600">*</span>
         </label>
         <textarea
           value={questionText}
@@ -66,13 +66,13 @@ export function AddQuestionForm({ quizId }: { quizId: string }) {
           placeholder="Enter your question..."
           rows={2}
           required
-          className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition resize-none"
+          className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition resize-none"
         />
       </div>
 
       <div className="space-y-2">
-        <label className="block text-xs font-medium text-[#6a6a6a]">
-          Options <span className="text-[#ff385c]">*</span>
+        <label className="block text-xs font-medium text-vlab-muted">
+          Options <span className="text-vlab-600">*</span>
         </label>
         {options.map((opt, idx) => (
           <div key={opt.id} className="flex items-center gap-2">
@@ -82,48 +82,48 @@ export function AddQuestionForm({ quizId }: { quizId: string }) {
               value={opt.id}
               checked={correctAnswer === opt.id}
               onChange={() => setCorrectAnswer(opt.id)}
-              className="accent-[#ff385c]"
+              className="accent-vlab-600"
             />
-            <span className="text-xs font-mono font-bold text-[#6a6a6a] w-4 uppercase">{opt.id}</span>
+            <span className="text-xs font-mono font-bold text-vlab-muted w-4 uppercase">{opt.id}</span>
             <input
               type="text"
               value={opt.text}
               onChange={(e) => updateOption(idx, e.target.value)}
               placeholder={`Option ${opt.id.toUpperCase()}`}
               required
-              className="flex-1 px-3 py-1.5 rounded-lg border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+              className="flex-1 px-3 py-1.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
             />
           </div>
         ))}
-        <p className="text-xs text-[#6a6a6a]">Select the radio button next to the correct answer.</p>
+        <p className="text-xs text-vlab-muted">Select the radio button next to the correct answer.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Explanation</label>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">Explanation</label>
           <input
             type="text"
             value={explanation}
             onChange={(e) => setExplanation(e.target.value)}
             placeholder="Optional..."
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-[#6a6a6a] mb-1">Points</label>
+          <label className="block text-xs font-medium text-vlab-muted mb-1">Points</label>
           <input
             type="number"
             value={points}
             onChange={(e) => setPoints(e.target.value)}
             min={1}
             required
-            className="w-full px-3 py-2 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition"
+            className="w-full px-3 py-2 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition"
           />
         </div>
       </div>
 
       {error && (
-        <p className="text-xs text-[#c13515] bg-[#fff0f0] border border-[#ffd0d0] rounded-lg px-3 py-2">
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
@@ -131,7 +131,7 @@ export function AddQuestionForm({ quizId }: { quizId: string }) {
       <button
         type="submit"
         disabled={isPending || !questionText.trim() || options.some((o) => !o.text.trim())}
-        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#ff385c] text-white text-sm font-medium hover:bg-[#e0314f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-vlab-600 text-white text-sm font-medium hover:bg-vlab-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
         Add Question

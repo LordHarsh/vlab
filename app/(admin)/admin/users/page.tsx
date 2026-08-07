@@ -32,8 +32,8 @@ export default async function AdminUsersPage({
     <div className="p-8">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-[#222222]">Users</h1>
-          <p className="text-sm text-[#6a6a6a] mt-1">{allUsers.length} user{allUsers.length !== 1 ? 's' : ''} total</p>
+          <h1 className="text-2xl font-semibold text-vlab-ink">Users</h1>
+          <p className="text-sm text-vlab-muted mt-1">{allUsers.length} user{allUsers.length !== 1 ? 's' : ''} total</p>
         </div>
       </div>
 
@@ -45,10 +45,10 @@ export default async function AdminUsersPage({
             name="q"
             defaultValue={q ?? ''}
             placeholder="Search by name or email..."
-            className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-[#c1c1c1] text-sm text-[#222222] placeholder:text-[#c1c1c1] focus:outline-none focus:border-[#ff385c] focus:ring-1 focus:ring-[#ff385c] transition bg-white"
+            className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-vlab-rule-strong text-sm text-vlab-ink placeholder:text-vlab-300 focus:outline-none focus:border-vlab-600 focus:ring-1 focus:ring-vlab-600 transition bg-white"
           />
           <svg
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#c1c1c1]"
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-vlab-300"
             fill="none"
             stroke="currentColor"
             strokeWidth={2}
@@ -61,11 +61,11 @@ export default async function AdminUsersPage({
       </form>
 
       <div
-        className="bg-white rounded-2xl overflow-hidden"
-        style={{ boxShadow: 'rgba(0,0,0,0.02) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 2px 6px, rgba(0,0,0,0.1) 0px 4px 8px' }}
+        className="bg-white rounded-lg overflow-hidden"
+        style={{ boxShadow: '0 1px 2px rgba(15,48,80,0.05)' }}
       >
         {users.length === 0 ? (
-          <div className="px-6 py-12 text-center text-sm text-[#6a6a6a]">
+          <div className="px-6 py-12 text-center text-sm text-vlab-muted">
             {q ? `No users matching "${q}".` : 'No users found.'}
           </div>
         ) : (

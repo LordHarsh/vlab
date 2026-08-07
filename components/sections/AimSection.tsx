@@ -4,55 +4,60 @@ type AimContent = {
   note?: string
 }
 
+/**
+ * Aim.
+ *
+ * The reference's aim.md is one sentence of objective followed by a plain
+ * numbered list of sub-objectives — "1. Mathematical Modelling of Synchronous
+ * Generator...". No badge circles, no icons. Numbers set in the margin, text
+ * running to a readable measure.
+ */
 export function AimSection({ content }: { content: AimContent | null }) {
   if (!content) {
-    return <p className="text-[#6a6a6a]">No aim content available.</p>
+    return <p className="text-vlab-muted">No aim content available.</p>
   }
 
   return (
-    <div className="space-y-6">
+    <div className="vlab-prose space-y-7">
       {content.objectives && content.objectives.length > 0 && (
-        <div>
-          <h2 className="text-base font-semibold text-[#222222] mb-3 flex items-center gap-2">
-            <span className="w-1 h-5 bg-[#ff385c] rounded-full inline-block" />
+        <section>
+          <h2 className="mt-0 font-chrome text-[15px] font-bold uppercase tracking-[0.06em] text-vlab-800">
             Objectives
           </h2>
-          <ol className="space-y-2">
+          <ol className="mt-2 list-decimal space-y-1.5 pl-6 marker:font-bold marker:text-vlab-600">
             {content.objectives.map((obj, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <span className="w-6 h-6 rounded-full bg-[#ff385c]/10 text-[#ff385c] text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
-                  {i + 1}
-                </span>
-                <span className="text-sm text-[#222222] leading-relaxed">{obj}</span>
+              <li key={i} className="pl-1 text-vlab-ink">
+                {obj}
               </li>
             ))}
           </ol>
-        </div>
+        </section>
       )}
 
       {content.outcomes && content.outcomes.length > 0 && (
-        <div>
-          <h2 className="text-base font-semibold text-[#222222] mb-3 flex items-center gap-2">
-            <span className="w-1 h-5 bg-[#ff385c] rounded-full inline-block" />
+        <section>
+          <h2 className="mt-0 font-chrome text-[15px] font-bold uppercase tracking-[0.06em] text-vlab-800">
             Learning Outcomes
           </h2>
-          <ul className="space-y-2">
+          <ul className="mt-2 list-disc space-y-1.5 pl-6 marker:text-vlab-600">
             {content.outcomes.map((outcome, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#ff385c] mt-2 shrink-0" />
-                <span className="text-sm text-[#222222] leading-relaxed">{outcome}</span>
+              <li key={i} className="pl-1 text-vlab-ink">
+                {outcome}
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
 
       {content.note && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-          <p className="text-sm text-amber-800">
-            <strong className="font-semibold">Note:</strong> {content.note}
+        <aside className="border-l-4 border-vlab-orange bg-vlab-orange-50 px-4 py-3">
+          <p className="text-sm text-vlab-ink">
+            <strong className="font-chrome font-bold uppercase tracking-wide text-vlab-orange-ink">
+              Note:
+            </strong>{' '}
+            {content.note}
           </p>
-        </div>
+        </aside>
       )}
     </div>
   )

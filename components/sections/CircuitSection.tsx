@@ -7,41 +7,46 @@ type CircuitContent = {
   connections?: CircuitConnection[]
 }
 
+/**
+ * Circuit diagram — the connection schedule.
+ *
+ * A wiring table is the standard way a lab manual states a circuit in text, so
+ * it uses the same S.No table as every other index on the site.
+ */
 export function CircuitSection({ content }: { content: CircuitContent | null }) {
   if (!content) {
-    return <p className="text-[#6a6a6a]">No circuit content available.</p>
+    return <p className="text-vlab-muted">No circuit content available.</p>
+  }
+
+  if (!content.connections || content.connections.length === 0) {
+    return <p className="text-vlab-muted">No connections listed.</p>
   }
 
   return (
-    <div className="space-y-6">
-      {content.connections && content.connections.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-[#222222] mb-3">Connections</h3>
-          <div className="overflow-x-auto rounded-xl border border-[#c1c1c1]">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-[#f2f2f2] border-b border-[#c1c1c1]">
-                  <th className="text-left px-4 py-3 font-semibold text-[#222222] w-8">#</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#222222]">From</th>
-                  <th className="text-left px-4 py-3 font-semibold text-[#222222]">To</th>
-                </tr>
-              </thead>
-              <tbody>
-                {content.connections.map((conn, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-[#f2f2f2] last:border-0 hover:bg-[#f2f2f2]/50 transition-colors"
-                  >
-                    <td className="px-4 py-3 text-[#6a6a6a]">{i + 1}</td>
-                    <td className="px-4 py-3 text-[#222222] font-medium">{conn.from}</td>
-                    <td className="px-4 py-3 text-[#222222]">{conn.to}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+    <div>
+      <h2 className="mb-3 font-chrome text-[14px] font-bold uppercase tracking-[0.07em] text-vlab-800">
+        Connections
+      </h2>
+      <div className="overflow-x-auto border border-vlab-rule-strong">
+        <table className="vlab-table">
+          <thead>
+            <tr>
+              <th scope="col">S.No</th>
+              <th scope="col">From</th>
+              <th scope="col">To</th>
+            </tr>
+          </thead>
+          <tbody>
+            {content.connections.map((conn, i) => (
+              <tr key={i}>
+                <th scope="row">{i + 1}</th>
+                <td className="font-medium text-vlab-ink">{conn.from}</td>
+                <td className="text-vlab-ink">{conn.to}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
