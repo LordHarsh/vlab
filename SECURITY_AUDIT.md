@@ -1,118 +1,48 @@
 # VLab — security and data-access audit
 
-**Scope:** `main` at `b37f685`. Read-only review of `supabase/migrations/*.sql`, `supabase/schema.sql`,
-`lib/actions/`, `lib/supabase/`, `proxy.ts`, every route-group `layout.tsx`, `app/api/`, and the
-compile toolchain under `lib/simulator/avr/`.
-**Live database:** Supabase project `odaocqfnhqarewoimrma` (the `vlab` project named in
-`PROJECT_CONTEXT.md`). All live tests ran inside `DO $$` blocks terminated by `raise exception`,
-so every fixture row was rolled back. Verified afterwards: zero probe rows remain. No secret value
-is reproduced anywhere in this document.
+**Scope:** branch `claude/security-audit`, cut from `main` at `b712bc5`. Live Supabase project
+`odaocqfnhqarewoimrma` (`vlab`, ap-northeast-2), plus `supabase/migrations/*.sql`, `lib/actions/`,
+`lib/supabase/`, `proxy.ts`, every route-group `layout.tsx`, and `app/api/`.
 
-**Findings: 1 critical · 2 high · 2 medium · 7 low · 1 observation.**
+**This audit supersedes the previous one** (which covered `main` at `b37f685`). The headline change:
+the previous **C1** — self-granted platform admin — **is fixed**, by `028_lock_profile_insert_escalation.sql`.
+I re-tested it and it now blocks. The previous **H1** and **H2** are **still live and unfixed**; no
+migration after 028 touches security (029 and 030 are content fixes). H2 is materially worse than
+previously recorded.
 
-Every finding is tagged **[verified]** (established by a query I ran or a specific file:line) or
-**[suspected]** (reasoned from the code but not executed).
+**Findings: 2 high · 4 medium · 6 low · 2 observations. Nothing critical remains open.**
+
+Each finding is **CONFIRMED** (I executed the exploit against the live database and it succeeded) or
+**THEORETICAL** (the code reads wrong but I could not, or should not, execute it). No secret value
+appears anywhere in this document.
 
 ---
 
-## How the live tests were run
+## How the live tests were run, and why you can trust them
 
-The trap recorded in this project is real: `execute_sql` runs privileged, and `SET LOCAL` outside a
-transaction is a silent no-op, so naive impersonation proves nothing. Every probe below therefore:
+`execute_sql` runs privileged, and `SET LOCAL` outside a transaction is a silent no-op — so naive
+impersonation proves nothing. Every probe therefore ran inside a single `DO $$ … $$` block (one
+statement = one transaction) that:
 
-- ran inside a single `DO $$ … $$` block (one statement = one transaction),
+- created its own fixtures, so no real user row was ever the subject of a test,
 - switched role with `perform set_config('role','authenticated', true)`,
-- set the identity with `perform set_config('request.jwt.claims', '{"sub":"…"}', true)`,
-- surfaced results with `raise exception`, which also rolled the whole thing back.
+- set identity with `perform set_config('request.jwt.claims','{"sub":"…"}', true)`,
+- carried **negative controls** alongside every exploit,
+- ended in `raise exception`, which rolled the whole transaction back.
 
-**Probe 2 carried two negative controls**, and both came back `blocked: 42501` — inserting a
-submission attributed to a *different* student, and selecting `quiz_questions.correct_answer`.
-That is what makes the positive results in this report trustworthy: RLS was demonstrably being
-enforced in the same transaction that the accepted writes succeeded in.
+The negative controls are the point. In the same transaction that accepted a forged grade, an attempt
+to forge a row for a *different* student returned `42501` and a `select correct_answer` returned
+`42501`. That is what proves RLS was live and the positive result is real rather than an artefact of
+a privileged connection.
 
----
+**Post-conditions verified after every probe and dry-run** — `total_policies = 81` (unchanged),
+`profiles = 11`, `classes = 4`, `enrollments = 5`, `quiz_submissions = 2`, `student_progress = 25`,
+`sim_attempts = 12`, `feedback_responses = 1`, `class_labs = 4`, zero rows matching the probe
+fixtures, and the proposed helper function absent. Nothing persisted.
 
-## CRITICAL
-
-### C1 — Any user who signs up can make themselves a platform admin in one REST call
-
-**[verified]**
-
-**Location**
-- `supabase/migrations/001_profiles.sql:101-103` — policy `profiles: insert own`
-- `supabase/schema.sql:850-852` — same policy, same gap, in the consolidated schema
-- Live: `pg_policies` shows `with_check = (clerk_user_id = (SELECT auth.jwt() ->> 'sub'))` and nothing else
-
-Migration 018 pinned `is_admin`, `role` and `approval_status` on the **UPDATE** policy. The
-**INSERT** policy was never touched. It constrains only that the row you insert carries your own
-Clerk id — not what privileges that row grants you.
-
-**Evidence**
-
-Column grants confirm the columns are writable by the browser role:
-
-```
-information_schema.column_privileges → profiles / authenticated / INSERT
-  approval_status, avatar_url, class_section, clerk_user_id, created_at, department,
-  email, employee_no, first_name, id, is_admin, last_name, phone, profile_completed,
-  registration_no, role, updated_at, year
-```
-
-Live probe, impersonating a signed-in Clerk user with **no profile row yet**:
-
-```sql
-perform set_config('request.jwt.claims','{"sub":"user_SECAUDIT_PROBE_0001",...}', true);
-perform set_config('role','authenticated', true);
-insert into public.profiles
-  (clerk_user_id, email, role, is_admin, approval_status, profile_completed)
-values (v_sub, 'probe@example.invalid', 'educator', true, 'approved', true);
-```
-
-```
-PROBE RESULT (rolled back) | running_as=authenticated | insert_accepted=YES
-  | is_admin=t | role=educator | approval_status=approved | auth_is_admin()=t
-```
-
-**This is not a race.** `ensureProfile()` in `lib/actions/profile.ts:29` is the function that would
-have created the row server-side on first sign-in — and **it is never called anywhere**
-(`grep -rn ensureProfile app lib components` returns only its own definition and its own error log).
-The only writer of a profile row is `completeOnboarding`, which fires when the user submits the
-onboarding form. An attacker simply never submits it. The window is open from sign-up until they
-choose to close it.
-
-**What an attacker can actually do.** Sign up through the normal `/sign-up` page. Read the Clerk
-session token out of their own browser. POST to `https://<ref>.supabase.co/rest/v1/profiles` with the
-public `NEXT_PUBLIC_SUPABASE_ANON_KEY` — the same key `lib/supabase/client.ts:46` ships to every
-visitor — and the row above. They set `profile_completed: true` in the same insert, and
-`app/(admin)/layout.tsx:7-25` checks nothing but `is_admin`, so `/admin` opens immediately. From
-there: full CRUD on labs, experiments, sections, quizzes and questions; read every profile; read
-every class, enrollment, submission and progress row; approve or reject educators; and read the quiz
-answer key through the admin quiz editor, which uses the service-role client
-(`app/(admin)/admin/labs/[labSlug]/experiments/[expSlug]/quiz/page.tsx:41`).
-
-**Why it survived QA.** `scripts/verify-schema.mjs:441` asserts *"student CANNOT self-promote to
-educator [018]"* — and the body of that test is an `UPDATE`. There is no INSERT equivalent. The
-guard rail checks that the door 018 closed is still closed, and never looks at the other one.
-(Contrast `scripts/verify-schema.mjs:428`, the 019 test, which correctly probes an INSERT.)
-
-**Suggested fix.** Pin the same three columns on insert. Nothing legitimate needs them: onboarding
-writes through the service-role client, which bypasses RLS entirely.
-
-```sql
-alter policy "profiles: insert own" on public.profiles
-  with check (
-    clerk_user_id = (select auth.jwt()->>'sub')
-    and not is_admin
-    and role = 'student'
-    and approval_status = 'approved'
-  );
-```
-
-Defaults satisfy this (`is_admin` defaults false, `role` defaults `'student'`,
-`approval_status` defaults `'approved'`), so a plain insert of the safe columns still works.
-Belt and braces: `revoke insert (is_admin, role, approval_status) on profiles from authenticated, anon;`.
-Add the INSERT case to `verify-schema.mjs` in the same change, and mirror both into `supabase/schema.sql`
-per the two-files rule in `supabase/README.md`.
+**No migration was applied.** Migrations 031–034 are written to `supabase/migrations/` and left for
+you. I dry-ran them inside rolled-back transactions (Postgres DDL is transactional) to prove they
+both block the exploit and leave the legitimate path working; results are quoted under each finding.
 
 ---
 
@@ -120,438 +50,492 @@ per the two-files rule in `supabase/README.md`.
 
 ### H1 — A student can write their own quiz grades straight into the database
 
-**[verified]**
+**CONFIRMED.** Carried over from the previous audit, still unfixed.
 
-**Location**
-- `supabase/migrations/007_activity.sql:67-69` — policy `quiz_submissions: student insert own`
-- Live `with_check`: `((student_id = auth_profile_id()) AND (auth_role() = 'student'::text))`
-
-The policy validates *who* the row belongs to. It validates nothing about `score`, `max_score`,
-`percentage`, `passed`, `attempt_number` or `class_id`.
-
-**Evidence** — live probe as an impersonated student enrolled in **no** classes:
+**Where.** Policy `quiz_submissions: student insert own`, from `007_activity.sql:67-69`. Live
+`with_check` is exactly:
 
 ```
-PROBE2 (rolled back) | enrolled_in_target_class=0
-  | forge_own_perfect_score=ACCEPTED
-  | ctrl_forge_for_other_student=blocked: 42501
-  | ctrl_read_correct_answer=blocked: 42501
+(student_id = auth_profile_id()) AND (auth_role() = 'student'::text)
 ```
 
-The accepted row was `score=100, max_score=100, percentage=100.00, passed=true` against a real
-`quiz_id` and a real `class_id` the student had no enrollment in. The two controls blocking with
-`42501` prove RLS was live for that same transaction.
+It validates *who* the row belongs to. It validates nothing about `score`, `max_score`, `percentage`,
+`passed`, `attempt_number` or `class_id` — none of which carry a CHECK constraint either. This is the
+same shape as the bug 028 fixed on `profiles`: correct about identity, silent about privilege.
 
-**What an attacker can actually do.** Every server-side control on quizzes is in `lib/actions/quiz.ts`
-and every one of them is bypassed by not calling it:
+**How I proved it.** Acting as `authenticated` with a fixture student's Clerk `sub`:
 
-| Control | Where | Bypassed by direct insert? |
+```
+ROLLBACK-PROBE-1 >> acting_as=authenticated auth_profile_id_matches=t auth_role=student
+  | enrolled_in_target_class=0
+  | EXPLOIT_forge_own_perfect_score=ACCEPTED
+  | CTRL_forge_for_other_student=blocked:42501
+  | CTRL_read_correct_answer=blocked:42501
+  | forged_rows_visible_to_educator=1
+```
+
+A row of `score=100, max_score=100, percentage=100.00, passed=true` was accepted against a real
+`quiz_id` and a `class_id` the student **had no enrollment in**. Both controls blocked.
+
+**Why the browser can reach it.** `lib/supabase/client.ts:41-57` hands client components a Supabase
+client built from `NEXT_PUBLIC_SUPABASE_ANON_KEY` with `accessToken()` returning the live Clerk
+token. RLS is the only thing between the browser and PostgREST. Every server-side control is bypassed
+by not calling the server action:
+
+| Control | Where | Bypassed by a direct POST? |
 |---|---|---|
-| Attempt limit | `lib/actions/quiz.ts:109-120` | yes |
+| Attempt cap | `lib/actions/quiz.ts:109-120` | yes |
 | Active-enrollment check | `lib/actions/quiz.ts:127-146` | yes |
-| Grading against the answer key | `lib/actions/quiz.ts:177-192` | yes — score is supplied by the client |
+| Grading against the answer key | `lib/actions/quiz.ts:177-192` | yes — the client supplies the score |
 
-The impact is not cosmetic. The gradebook picks the **highest** percentage per student per quiz:
+**What an attacker gains.** A perfect grade in any class, including classes they are not in. The
+gradebook takes the **highest** percentage per student per quiz
+(`app/(educator)/educator/classes/[classId]/gradebook/page.tsx:125-131`), so one forged row silently
+outranks every genuine attempt and the educator's view shows 100% with no anomaly. Students hold no
+UPDATE or DELETE on the table, so forged rows are permanent without service-role access. On a
+platform whose stated aim is that student progress be "genuinely trackable", this is the assessment
+record being writable by the person being assessed.
 
-```ts
-// app/(educator)/educator/classes/[classId]/gradebook/page.tsx:125-131
-if (!existing || sub.percentage > existing.percentage) { … }
+**Fix — `031_lock_quiz_submission_forgery.sql`, plus the code change in the same commit.** Drop the
+policy (the remedy 019 used for the identical bug on `enrollments`) and route the insert through the
+service-role client, which is the only writer left. `lib/actions/quiz.ts` already proves identity and
+active enrollment before it reaches the insert, and computes every graded value server-side.
+
+Dry-run, both applied inside a rolled-back transaction:
+
 ```
-
-So one forged row silently outranks every genuine attempt, and the educator's view shows 100% with
-no indication anything is wrong. On a platform whose stated purpose is that "student progress must be
-genuinely trackable" (`PROJECT_CONTEXT.md` aim 6), this is the assessment record being writable by
-the person being assessed.
-
-Students have no UPDATE or DELETE policy on `quiz_submissions`, so forged rows are permanent — which
-also means an educator cannot remove them without service-role access.
-
-**Suggested fix.** The same fix 019 applied to enrollments: delete the policy and let the server
-action be the only writer.
-
-```sql
-drop policy if exists "quiz_submissions: student insert own" on public.quiz_submissions;
+DRYRUN-A(031+033) >> FIX031_forge_grade=blocked:42501
 ```
-
-Then switch the insert at `lib/actions/quiz.ts:211` to the service-role client (identity and
-enrollment are already verified above it, at lines 46-63 and 127-146). If a client-side write must
-stay, the honest form is a `SECURITY DEFINER` RPC that takes only `quiz_id`, `class_id` and the
-answers, and computes the score server-side.
-
-`feedback_responses: student insert own` (`007_activity.sql:119-121`) and
-`student_progress: student write own` (`007_activity.sql:153-156`) have the same shape. Their blast
-radius is much smaller — fake feedback and fake progress rows, no grade — but the app-layer
-enrollment gates in `lib/actions/feedback.ts:39-49` and `lib/actions/progress.ts:29-37` are likewise
-unenforced at the RLS layer.
 
 ---
 
-### H2 — The educator approval gate is UI-only; an unapproved educator gets a working class and all gated content
+### H2 — An unapproved educator gets the platform's entire content library
 
-**[verified]**
+**CONFIRMED**, and **worse than the previous audit recorded** (it measured 9 leaked sections; the
+real figure is 111 plus the whole quiz and circuit set).
 
-**Location**
-- `approval_status` is checked in exactly one enforcement site: `app/(educator)/layout.tsx:26-27`
-- `lib/actions/classes.ts:36` — `createClass` checks `profile.role !== 'educator'` and nothing else
-- Live policy `classes: educator write own` — `educator_id = auth_profile_id() AND auth_role() = 'educator'`
-- `can_read_experiment_content()` (`013_gate_content_on_enrollment.sql:53-60`) — educator branch checks class ownership only
-- `circuits: educator read reference` (`015_native_simulator.sql:64-77`) — same
+**Where.** `approval_status` is enforced in exactly one place in the entire codebase:
+`app/(educator)/layout.tsx:26-27`. That is a render-time redirect. It does not run for a server-action
+POST, and it certainly does not run for a direct PostgREST call. The policies underneath check
+`auth_role() = 'educator'` or class ownership and never consult approval:
 
-A `grep -rn approval_status app lib components` returns 18 hits; every one outside
-`app/(educator)/layout.tsx` is either a display badge, the admin approvals page, or the
-onboarding/approval *writers*. Nothing else gates on it.
+- `classes: educator write own` — `educator_id = auth_profile_id() AND auth_role() = 'educator'`
+- `class_labs: educator write own` — `is_educator_of_class(class_id)`
+- the educator branch of `can_read_experiment_content()` — class ownership only
+- `circuits: educator read reference` — class ownership only
 
-**Evidence** — live probe as a profile with `role='educator'`, `approval_status='pending'`:
+**How I proved it.** Acting as `authenticated`, `role='educator'`, `approval_status='pending'`:
 
 ```
-PROBE3 (rolled back) | sections_before_owning_class=0 sections
-  | create_class=ACCEPTED
-  | assign_lab=ACCEPTED
-  | sections_after=9 sections
-  | profiles_readable=1 profiles visible
+ROLLBACK-PROBE-2 >> acting_as=authenticated role=educator approval_status=pending
+  | gated_sections_before=0
+  | EXPLOIT_create_class=ACCEPTED
+  | EXPLOIT_assign_unpublished_lab=ACCEPTED
+  | gated_sections_after=111  simulations=12  quizzes=12  quiz_questions=48  circuits=12  labs_visible=0
+  | CTRL_profiles_visible=1
+  | CTRL_other_educators_classes_visible=0
+  | CTRL_quiz_submissions_visible=0
+  | CTRL_self_approve=blocked:42501
+  | CTRL_self_admin=blocked:42501
 ```
 
-A pending educator went from **0** readable `experiment_sections` to **9** by creating a class and
-assigning a published lab to it — both accepted by RLS, no admin involved.
+Two writes by an account no admin has approved turned **zero** content access into the entire
+library. Every control blocked, so RLS was live throughout.
 
-**What an attacker can actually do.** Sign up, pick "Educator" at onboarding (`lib/actions/profile.ts:96`
-sets `approval_status='pending'`), get bounced to `/pending-approval` by the layout — and then ignore
-the UI entirely. Two paths, both open:
+**What an attacker gains.** Sign up, pick "Educator" at onboarding (`lib/actions/profile.ts:96` sets
+`approval_status='pending'`), get bounced to `/pending-approval` — then ignore the UI. Two open paths:
+the server actions in `lib/actions/classes.ts` (`createClass`, `assignLab`, `generateInviteLink`,
+`regenerateJoinCode`, `addStudentManual`, …), none of which consult `approval_status`; or PostgREST
+directly. Either yields a working class with a live join code, every gated `experiment_sections`,
+`simulations`, `quizzes`, `quiz_questions` and `circuits` row for any lab they attach, and read access
+to the activity of anyone who joins their class.
 
-1. **Server actions.** `createClass`, `assignLab`, `generateInviteLink`, `regenerateJoinCode`,
-   `addStudentManual`, `updateEnrollment`, `updateClassQuizSettings` in `lib/actions/classes.ts` are
-   POST endpoints. The layout redirect never runs for them, and none of them consults
-   `approval_status`.
-2. **PostgREST directly**, with the anon key and their Clerk token, as the probe above did.
+Two things bound it, and both are worth stating precisely:
 
-Either way they get: a class, a working join code, unlocked access to every gated
-`experiment_sections` / `simulations` / `quizzes` / `quiz_questions` / `feedback_forms` row for any
-lab they assign to themselves, and read access to `enrollments`, `quiz_submissions`,
-`student_progress` and `sim_attempts` for anybody who joins their class.
+- **Student PII is not exposed.** `profiles` carries only `own read` and `admin read all`. The probe
+  educator could see exactly **one** profile — their own. Confirmed.
+- **The worked-solution leak is latent, not live.** `circuits: educator read reference` would hand
+  over the solutions, but `select count(*) from circuits where role <> 'starter'` is **0** today. The
+  day a reference circuit is authored, this finding gains an answer-key leak.
 
-Two things bound the damage, and both are worth stating precisely:
+**Fix — `032_enforce_educator_approval.sql`.** Enforce approval where the data lives. Adds
+`auth_is_approved_educator()` and applies it to all seven educator write policies, to the educator
+branch of `can_read_experiment_content()`, to `circuits: educator read reference`, and to the educator
+reads of student activity — so a *rejected* educator also loses classes they already own.
 
-- **Student PII is not exposed.** `profiles` carries only `own read` and `admin read all` — verified
-  live, 5 policies total, no educator read. The probe educator could see exactly one profile: their
-  own.
-- **The reference-circuit leak is latent, not live.** `circuits: educator read reference` would hand
-  the class owner the worked solutions, but `select count(*) from circuits where role='reference'`
-  returns **0** today. The moment a reference circuit is authored, this finding gains an answer-key
-  leak.
+Dry-run inside a rolled-back transaction:
 
-**Suggested fix.** Enforce approval where the data lives, not in a layout.
-
-```sql
-alter policy "classes: educator write own" on public.classes
-  using (educator_id = auth_profile_id() and auth_role() = 'educator'
-         and auth_approval_status() = 'approved')
-  with check (educator_id = auth_profile_id() and auth_role() = 'educator'
-              and auth_approval_status() = 'approved');
+```
+DRYRUN-B(032) >> pending: approved_educator()=f
+  | FIX032_pending_create_class=blocked:42501
+  | FIX032_pending_gated_sections=0
+ || approved: approved_educator()=t
+  | OK_approved_create_class=ACCEPTED
+  | OK_approved_assign_lab=ACCEPTED
+  | OK_approved_gated_sections=111
+  | OK_approved_reads_own_class=1
 ```
 
-`auth_approval_status()` already exists (migration 018) and is already SECURITY DEFINER with a pinned
-`search_path`. Add the same predicate to the educator branch of `can_read_experiment_content()` and
-to `circuits: educator read reference`, and add an approval check to `getEducatorProfile()` in
-`lib/actions/classes.ts:13-25` so the server actions refuse too.
+The pending educator is fully shut out; the approved educator is unaffected.
+
+Also add an approval check to `getEducatorProfile()` (`lib/actions/classes.ts:13-25`) so the server
+actions refuse loudly rather than writing zero rows.
 
 ---
 
 ## MEDIUM
 
-### M1 — Clerk is on development keys
+### M1 — Students can write activity into classes they were never in, and delete their own history
 
-**[verified]** for the local environment; **could not check** production.
+**CONFIRMED.** Same shape as H1, smaller blast radius.
 
-`.env` (gitignored, read for key *prefix* only — no value reproduced):
+`student_progress: student write own` and `sim_attempts: student write own` are **FOR ALL**;
+`feedback_responses: student insert own` is INSERT. All three check only
+`student_id = auth_profile_id() AND auth_role() = 'student'`. `class_id` is a free parameter.
 
 ```
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…
-CLERK_SECRET_KEY=sk_test_…
+ROLLBACK-PROBE-3 >> acting_as=authenticated role=student
+  | EXPLOIT_progress_into_unenrolled_class=ACCEPTED
+  | EXPLOIT_sim_attempt_into_unenrolled_class=ACCEPTED
+  | EXPLOIT_feedback_into_unenrolled_class=ACCEPTED
+  | EXPLOIT_self_mark_complete=ACCEPTED
+  | EXPLOIT_delete_own_sim_attempts=ACCEPTED
+  | CTRL_other_students_submissions=0  CTRL_other_students_progress=0
+    CTRL_other_students_attempts=0     CTRL_other_students_feedback=0
+    CTRL_profiles_visible=1  CTRL_classes_visible=1  CTRL_enrollments_visible=1  CTRL_invites_visible=0
+  | CTRL_self_enroll=blocked:42501
+  | CTRL_move_own_enrollment=blocked:42501
 ```
 
-`.env.example:4-5` documents the same `pk_test_` / `sk_test_` shapes, so a fresh deploy is steered
-toward a development instance too.
+**What an attacker gains.** Phantom rows in a stranger's progress report and feedback summary (class
+UUIDs leak through shared URLs and screen-shares); self-declared completion of any experiment; and
+erasure of their own attempt history. Note the controls: **cross-tenant reads are completely clean**,
+and 019's self-enroll fix still holds.
 
-**What this means plainly.** A Clerk development instance is not a production trust root. It is
-capped at 100 users, it is heavily rate-limited, it issues tokens from a shared
-`*.clerk.accounts.dev` domain rather than one you control, and its sessions are not bound to your
-production origin. Because the Supabase third-party-auth integration trusts *the Clerk domain* to
-mint identities (`.env.example:32-37`), the issuer of every `auth.jwt()->>'sub'` that every RLS
-policy in this app keys off is a development instance. Anything that can obtain a token from that
-instance is, as far as Postgres is concerned, a user of this platform. Swapping to production keys
-also invalidates every existing session and every existing `clerk_user_id`, so this is not a
-zero-cost change to defer.
+**Fix — `033_bind_student_writes_to_enrollment.sql`.** Add `is_enrolled_in_class(class_id)` to all
+three, split the FOR ALL policies into INSERT + UPDATE so students no longer hold DELETE, and leave
+SELECT alone so history survives dropping a class. Breaks nothing: `lib/actions/progress.ts:18-38`
+and `lib/actions/simulator.ts:32-56` already prove active enrollment before writing.
 
-Related: `PROJECT_CONTEXT.md:143` lists `CLERK_WEBHOOK_SECRET` as required, but it is absent from both
-`.env` and `.env.example`, and there is no webhook route in `app/api/` — while `proxy.ts:10`
-already exempts `/api/webhooks(.*)` from auth. See L7.
-
-**Cannot confirm** what the Vercel production project actually has set; I have no access to it. The
-statement above is about what is in the repository and the local environment.
+```
+DRYRUN-A(031+033) >> FIX033_progress_unenrolled=blocked:42501 | FIX033_attempt_unenrolled=blocked:42501
+  | OK_progress_enrolled=ACCEPTED | OK_progress_update=ACCEPTED
+  | OK_attempt_enrolled=ACCEPTED | OK_attempt_update=ACCEPTED
+  | OK_read_own_progress=1 rows | FIX033_delete_own=no-op(0 rows)
+```
 
 ---
 
-### M2 — The compile route's rate limits are per-process, and the semaphore over-admits
+### M2 — An educator can attach a lab they are not allowed to read, unlocking unpublished content
 
-**[verified]** by inspection; **[suspected]** for the deployed effect (no load test run).
+**CONFIRMED.** A confused deputy, and independent of H2 — it applies to *approved* educators too, so
+032 does not fix it.
 
-The compile route is genuinely well defended for a service that runs a real compiler on a stranger's
-text — auth-gated twice, size-capped in bytes, hard-killed on timeout. Three gaps remain.
+`class_labs: educator write own` checks `is_educator_of_class(class_id)` and nothing at all about
+`lab_id`. But attaching a lab is precisely what unlocks its content: `can_read_experiment_content()`
+walks `classes → class_labs → experiments` with no `published` predicate anywhere on that path.
+Meanwhile `labs: educator read published` means the educator can only SELECT published labs.
 
-**a) Both limiters are module-level state.**
+The probe above is the proof: `labs_visible=0` — the educator could not read a single lab row — yet
+`EXPLOIT_assign_unpublished_lab=ACCEPTED` and gated sections went 0 → 111. They attached a lab whose
+existence was invisible to them.
 
-```ts
-// app/api/compile/route.ts:58
-const inFlight = new Set<string>()
-// lib/simulator/avr/build.ts:147-148
-let active = 0
-const waiting: (() => void)[] = []
-```
+**What an attacker gains.** Any educator holding or guessing a lab UUID reads that draft lab's
+sections, simulations, quizzes and starter circuits before publication.
 
-On Vercel these live per lambda instance. "One compile in flight per student" and `MAX_CONCURRENT = 4`
-are therefore per-instance ceilings, not global ones. Under fan-out, one user's concurrent requests
-can land on different instances and each will admit them.
+**Fix — `034_class_labs_published_only.sql`. HOLD THIS ONE.** It requires `labs.published` on the
+educator write path — but `select count(*) from labs where published` is **0** in your database today
+(one lab exists and it is unpublished). Applying it as-is would refuse *all* lab assignment. Publish
+the labs you intend educators to use, then apply. Admins are unaffected via `class_labs: admin write all`.
 
-**b) The semaphore can exceed its own cap.** `release()` decrements `active` and *then* resolves a
-waiter, but the waiter only re-increments when its continuation runs on a later microtask
-(`build.ts:150-163`). A fresh `acquire()` executing synchronously in that gap sees a free slot and
-takes it. Both then proceed, and `active` drifts above `MAX_CONCURRENT`. Fix by moving the increment
-into `release()` before resolving, or by not decrementing when handing the slot straight to a waiter.
+---
 
-**c) `acquire()` has no queue bound and no timeout.** Queued requests wait forever, each holding a
-function invocation open. There is also no per-user quota over time — the only gate is possession of
-a Clerk session, and the Clerk instance in use is a development one where sign-up is open (M1).
+### M3 — `submitQuiz` never binds `quizId` to `classId`
 
-For calibration: a cold Mega build is ~3.6 s of CPU per the comment at `build.ts:47-53`, and the
-identical-source cache does not help an attacker, who simply appends a different comment each time to
-force a miss.
+**CONFIRMED by code reading; currently LATENT in your data.** New in this audit.
 
-**Suggested fix.** A shared rate limiter (Vercel KV / Upstash) keyed on the Clerk user id, a bounded
-queue that 503s rather than parking, and the semaphore correction above.
+`lib/actions/quiz.ts` verifies the caller is actively enrolled in `classId` (lines 127-146) and then
+treats `quizId` as a free parameter. Nothing ties the two together. Three consequences:
+
+1. The service-role read at line 152 returns `correct_answer` and `explanation` for **any** quiz on
+   the platform. This is the *only* route to the answer key — the column revoke in migration 013 is
+   otherwise holding (`CTRL_read_correct_answer=blocked:42501` in probe 1) — so this call site
+   quietly defeats it.
+2. `class_quiz_settings` is looked up by `(quizId, classId)`. Submit under a different class you
+   belong to, find no settings row, and the code falls back to the quiz defaults — bypassing a
+   class's `max_attempts`, `passing_percentage` and `show_answers='never'`.
+3. The attempt counter is per `(quiz_id, class_id, student_id)`, so switching `classId` resets it.
+
+**Why it is latent today, stated honestly:** `class_quiz_settings` has **0 rows**, all 12 quizzes hang
+off the single lab, and **0 students are enrolled in more than one class** — so there is currently no
+`(quiz, class)` pair a student can reach that they could not reach legitimately. Every one of those
+three facts is a content-authoring accident, not a control. The first second class, second lab, or
+`class_quiz_settings` row makes this live.
+
+**Fix — code change on this branch**, committed alongside 031: resolve the quiz's experiment → lab and
+require a matching `class_labs` row before the answer-key read. Also hoists the service-role client so
+it is created only after all four gates have passed.
+
+---
+
+### M4 — `/api/dev/harvest` is an unauthenticated write of caller-supplied content to disk
+
+**CONFIRMED by inspection; not executed** (I did not attack a running server).
+
+`app/api/dev/harvest/route.ts:17-44` has no authentication whatsoever. Its only gate is
+`if (process.env.NODE_ENV === 'production') return 404`. It then writes attacker-supplied JSON to a
+fixed path inside the source tree, `lib/simulator/model/wokwi-art.generated.json`. `proxy.ts:17` also
+exempts `/api/dev(.*)` from Clerk in development.
+
+**What an attacker gains.** Nothing in production. In any non-production deployment — a staging build
+left at `NODE_ENV=development`, `NODE_ENV=test`, or a dev server bound to a LAN interface — it is an
+unauthenticated arbitrary-content write into the source tree, which on a machine running `next dev`
+means influencing code that the dev server will load.
+
+**Fix.** Delete the route, or gate it behind a shared secret in addition to `NODE_ENV`. It is a
+harvesting tool, not a product surface.
 
 ---
 
 ## LOW
 
-### L1 — `saveAttempt` does not validate `simulationId` against `classId` — confirmed still low
+**L1 — A student can move their enrollment row to another class while dropping it. CONFIRMED.**
+`enrollments: student drop own` has `with check ((student_id = auth_profile_id()) AND (status = 'dropped'))`
+— `class_id` is unconstrained.
+```
+ROLLBACK-PROBE-4 >> L2_move_enrollment_as_dropped=ACCEPTED (now class B? t)
+  | is_enrolled_in_class(B)=f | reactivate_own_enrollment=blocked:42501
+```
+It grants no access — the row lands `dropped`, and reactivation is blocked. The real (small) effect is
+that a student can erase themselves from a class roster. Fix: pin `class_id` in the `with check`.
 
-**[verified]** — the previously recorded assessment holds.
+**L2 — Join codes and invite tokens come from `Math.random()`.** `lib/actions/classes.ts:7-11`
+(3 + 4 base36 characters) and `:234-237`. Not cryptographically random and short. The join-code lookup
+in `lib/actions/enrollment.ts:32-40` is unthrottled and runs on the service-role client, and its error
+strings distinguish "no such code" from "class full/expired", forming an enumeration oracle. Use
+`crypto.randomUUID()`/`randomBytes` and add rate limiting. Note `class_invites` tokens currently have
+**no redemption path at all** — nothing in the codebase reads the table — so that half is inert today.
 
-`lib/actions/simulator.ts:62-94`. `studentContext()` (lines 32-56) re-derives the student from the
-Clerk session and requires an **active enrollment in `classId`** before anything is written. But
-`simulationId` is passed straight into the upsert, and the RLS backstop
-(`sim_attempts: student write own`, verified live) checks only `student_id = auth_profile_id()` and
-`auth_role() = 'student'`.
+**L3 — `anon` holds broad table grants; only the absence of anon-facing policies stops it.** Every
+table grants SELECT/INSERT/UPDATE/DELETE to `anon`. The only `{public}`-role policies are
+`experiments: read published` and `labs: public read published`, so the effective anon surface is the
+public catalogue. This is fail-closed but fragile: any future policy written without a `to authenticated`
+clause is immediately anon-readable. Revoke the unused grants.
 
-**What a student could actually falsify.** They can create or overwrite `sim_attempts` rows keyed
-`(their own student_id, any simulation_id in the database, a class they are genuinely enrolled in)`.
-Concretely: park an arbitrary circuit document and code bundle under a simulation belonging to a
-different lab or a different experiment, so a junk autosave appears in that class's
-`sim_attempts: educator read own classes` view for a simulation that is not part of that class's
-curriculum. That is the whole of it.
+**L4 — `/api/tinkercad-preview` interpolates unvalidated input into a server-side fetch.**
+`app/api/tinkercad-preview/route.ts:8-16`. The host is a fixed literal so this is not full SSRF, but
+`designId` is unencoded and can inject path segments and query/fragment characters, and the endpoint is
+an unrate-limited server-side fetch proxy. Validate the id and rate-limit.
 
-What they **cannot** do, each checked:
+**L5 — Admin actions mass-assign the client's object.** `lib/actions/admin.ts:79, 170, 518, 617` spread
+`...data` directly into `.update()`. Guarded by `requireAdmin()`, so this is defence-in-depth, not a
+hole. Whitelist the columns.
 
-- write to another student's row — `student_id` is pinned by both the action and RLS;
-- write into a class they are not enrolled in — `studentContext` refuses, and there is no other writer;
-- read anything new — `loadAttempt` (lines 103-158) reads `circuits` through the **RLS** client, which
-  gates on `can_read_experiment_content()`, so a foreign `simulationId` returns nothing;
-- reach a `role='reference'` circuit — `loadAttempt` filters `role='starter'` *and* RLS blocks it.
-
-Integrity only, own rows, no privilege gain and no content gain. **Low is still the right rating.**
-A `simulationId → experiment → lab → class_labs → classId` check in `studentContext` closes it
-cheaply, and the same helper would then cover `loadAttempt`.
-
-### L2 — A student can move their dropped enrollment to another class
-
-**[verified]** — `supabase/migrations/005_classes.sql:267-270`; live `with_check` is
-`((student_id = auth_profile_id()) AND (status = 'dropped'))`. The `USING` clause allows the update
-and the `WITH CHECK` pins only the owner and the status, so `class_id` is mutable. The result is
-always a `dropped` row, which grants no content access — `is_enrolled_in_class()` requires
-`status='active'`. Self-affecting; worth pinning `class_id` for tidiness.
-
-### L3 — Join codes and invite tokens come from `Math.random()`
-
-**[verified]** — `lib/actions/classes.ts:7-11` (join code: 3 + 4 base36 characters),
-`:234-237` (invite link token), `:281-284` (manual invite token). `Math.random()` is not a CSPRNG;
-V8's xorshift128+ internal state is recoverable from a small number of observed outputs, so an
-educator who has seen a handful of codes from one server process can predict others. This matters
-because a join code is the *only* gate on enrolling into a class, and enrollment is what unlocks all
-gated content (013). Use `crypto.randomBytes` / `crypto.randomUUID`.
-
-Related observation: nothing in the codebase ever redeems `class_invites.token` — the only enrollment
-path is `joinByCode` (`lib/actions/enrollment.ts`). The invite-link feature appears to be
-half-implemented, which is worth knowing before someone finishes it against these tokens.
-
-### L4 — `/api/tinkercad-preview` interpolates unvalidated input into a fetch URL
-
-**[verified]** — `app/api/tinkercad-preview/route.ts:8-21`. `designId` goes unvalidated into
-`` `https://www.tinkercad.com/things/${designId}` ``.
-
-Cross-host SSRF is **not** reachable: the authority component is terminated by the `/` before the
-interpolation point, so `@`, `:` and `../` cannot move the request off `www.tinkercad.com`. The route
-is also auth-gated (it is not in `isPublicRoute`, so `proxy.ts` applies `auth.protect()`).
-
-What remains is minor: a signed-in user can make the server fetch arbitrary *paths* on tinkercad.com
-and learn from the response whether they exist, plus one regex-extracted `og:image` value; and
-`next: { revalidate: 3600 }` mints a new data-cache entry per distinct id, which is unbounded.
-Validate with `/^[A-Za-z0-9_-]{1,64}$/`.
-
-### L5 — `anon` holds broad table grants; only the absence of anon-facing policies stops it
-
-**[verified]** — `supabase/schema.sql:1432` runs
-`grant all on all tables in schema public to anon, authenticated, service_role`. Live
-`information_schema.column_privileges` confirms `anon` holds INSERT, UPDATE and SELECT on every
-column of `profiles`, and INSERT/UPDATE on `quiz_questions`.
-
-Nothing is exploitable today, because every policy in the schema is written `to authenticated` and
-RLS denies by default when no policy matches a role. But it means the safety margin is one omitted
-`to authenticated` clause wide: the first policy someone writes without a role clause becomes
-anon-reachable immediately. `revoke insert, update, delete on all tables in schema public from anon;`
-costs nothing — the 013 revoke already proves the pattern works here.
-
-### L6 — Admin actions mass-assign the client's object into `.update()`
-
-**[verified]** — `lib/actions/admin.ts:79`, `:170`, `:518`, `:617` spread `...data` directly.
-Each is behind `requireAdmin()` and uses the RLS-scoped server client, so this is hardening rather
-than a hole; an admin can already write those columns. Worth an explicit allow-list if these ever
-gain an educator-callable sibling.
-
-### L7 — `proxy.ts` exempts a webhook path that does not exist
-
-**[verified]** — `proxy.ts:10` lists `/api/webhooks(.*)` in `isPublicRoute`, and `find app/api -type f`
-shows no such route. A dead matcher today; the hazard is that whoever adds a Clerk webhook handler
-lands on an unauthenticated path by default and has to remember to verify the Svix signature
-themselves. `CLERK_WEBHOOK_SECRET` is named in `PROJECT_CONTEXT.md:143` but exists in neither `.env`
-nor `.env.example`. Either remove the matcher or add the handler with signature verification.
+**L6 — `proxy.ts:10` exempts `/api/webhooks(.*)`, which does not exist.** A stale public exemption that
+will silently make the first webhook handler someone adds unauthenticated. Remove it until needed.
 
 ---
 
-## Observation (not a vulnerability)
+## Observations (not vulnerabilities)
 
-**Educators cannot read their own students' profile rows.** `profiles` carries five policies and none
-of them is an educator read (verified live). The gradebook embeds `profiles` through `enrollments`
-(`app/(educator)/educator/classes/[classId]/gradebook/page.tsx:134-151`), so `p` resolves to `null`
-and student names render as `'Unknown'` with empty emails. That is a functional consequence of the
-access model, not a security defect — flagged only because the obvious "fix" is to add an educator
-read policy on `profiles`, and that policy must be scoped to students actively enrolled in a class
-the educator owns, or it becomes a directory of every user on the platform.
+**O1 — `vendor/simulator/` is a second, tracked auth surface.** 30 tracked source files comprising a
+Vite app with its own Supabase client (`vendor/simulator/src/database/supabaseClient.ts`) that uses
+**Supabase Auth, not Clerk**, and reads/writes `circuits`. It is not part of the Next build and holds
+no hardcoded keys, but it is a parallel identity model pointed at the same project shape. Consider
+removing it from the repo.
 
-Related dead code: `ensureProfile()` (`lib/actions/profile.ts:29-72`) is never called. Its docblock
-says "Call this from authenticated layouts to bootstrap the profile on first sign-in", which is no
-longer true and is load-bearing for C1's exploitability.
+**O2 — Authorization outside `lib/actions/admin.ts` is layout-only.** Server Components under
+`app/(admin)/` carry no in-function check — including the service-role answer-key read at
+`app/(admin)/admin/labs/[labSlug]/experiments/[expSlug]/quiz/page.tsx:41`, which is authorized purely
+by `app/(admin)/layout.tsx` being composed above it. That holds today. It stops holding if a route is
+moved out of the group or reached through a parallel/intercepted route. Prefer an explicit
+`requireAdmin()` in any component that touches the service-role client.
 
 ---
 
 ## Checked and found clean
 
-Each of these was actively verified, not assumed.
+These were specifically attacked or audited and did **not** yield a finding. Recording them so they
+are not re-litigated:
 
-1. **RLS is enabled on all 21 public tables.** Live query over `pg_class.relrowsecurity` for
-   `relkind='r'` in `public`: 21 rows, all `true`, all with at least two policies. No table has RLS off.
-2. **No policy uses `USING (true)` or `WITH CHECK (true)`.** Live query over `pg_policies` filtering
-   for `qual = 'true' or with_check = 'true'` returned nothing. The `using (true)` policies that
-   001-004 originally shipped were all replaced by 013 and are gone from the live database.
-3. **The only `{public}`-role policies are the deliberate catalogue reads.** `labs: public read published`
-   and `experiments: read published`, both `(published = true)` — exactly what
-   `013_gate_content_on_enrollment.sql:23-25` says it is leaving public, and no experiment *content*
-   lives in either table.
-4. **`profiles: admin update all` has no `WITH CHECK`, and that is harmless.** Postgres falls back to
-   the `USING` expression, so the check is `auth_is_admin()` — caller-derived, always true for the
-   admin performing the write. It does not widen anything an admin does not already have.
-5. **Quiz answer keys are protected.** `information_schema.column_privileges` shows the
-   `authenticated` SELECT grant on `quiz_questions` covers 12 columns and **omits `correct_answer`
-   and `explanation`**; `anon` has **no SELECT at all** on that table. Confirmed at runtime by the
-   negative control in probe 2: `select correct_answer from quiz_questions` as an impersonated
-   student → `42501`. All three service-role readers are behind an authorisation check first —
-   `lib/actions/quiz.ts:152` (after identity *and* enrollment, lines 46-63 and 127-146),
-   `lib/actions/admin.ts:354` (after `requireAdmin()`), and the admin quiz page behind the `(admin)`
-   layout.
-6. **Migration 018 is still in force.** Live `profiles: own update` `with_check` reads
-   `((clerk_user_id = …) AND ((NOT is_admin) OR auth_is_admin()) AND (role = auth_role())
-   AND (approval_status = auth_approval_status()))`. The UPDATE-side escalation is genuinely closed.
-7. **Migration 019 is still in force.** `enrollments` has 6 live policies and
-   `enrollments: student insert own` is not among them. Students have SELECT (own) and UPDATE
-   (own, to `dropped`) and no INSERT.
-8. **No later migration reopened either.** `grep -niE 'create policy|drop policy|alter policy|enable row level|grant |revoke |security definer|create or replace function'`
-   across 016, 017 and 020-027 returns **zero matches** — those eight files are content seeding only.
-9. **The service-role key cannot reach the browser.** Only `lib/supabase/admin.ts:11` reads
-   `SUPABASE_SERVICE_ROLE_KEY`. Its five importers are all server modules and none carries
-   `'use client'` (checked individually). Grepping the built output for the literal key value: it
-   appears only under `.next/dev/cache/turbopack/` (server-side dev artifacts, gitignored) and
-   **nowhere under `.next/static/`**, which is what the browser is served. `next.config.ts` has no
-   `env` block re-exporting server variables.
-10. **No secrets are committed.** `git ls-files` matching env/secret/key patterns returns only
-    `.env.example`. `git log --all --diff-filter=A -- '.env' '.env.local' '.env.*' '*.pem'` shows the
-    example file as the only such file ever added. A `git grep` for live and test key shapes
-    (`sk_live`, `pk_live`, `sk_test_…`, Supabase JWT prefix, `sb_secret_…`) over all tracked files hits
-    only the placeholder line in `.env.example`. `.gitignore:28-33` covers `.env`, `.env*.local` and
-    `*.zip` ("archives — these have held copies of .env"), and `/.clerk/`.
-11. **The compile route is authenticated and validates its input.** `auth()` at
-    `app/api/compile/route.ts:67`, *plus* `proxy.ts` `auth.protect()` (the route is not in
-    `isPublicRoute`). `source` must be a string, `board` is checked against a closed two-value enum
-    (`isCompileBoard`), and the size cap is measured in **bytes** not UTF-16 units
-    (`route.ts:96`, `MAX_SOURCE_BYTES = 64 KB` at `build.ts:44`) — so astral-plane padding cannot walk
-    past it.
-12. **Path traversal into the compile route is not reachable.** No user-controlled value ever reaches
-    the host `fs` module. The only user data is the prepared `cpp` string, written to
-    `/build/sketch.cpp` inside Emscripten MEMFS (`build-worker.mjs:392-393`); every host-side
-    `fs.readFileSync` path is built from `process.cwd()` plus hard-coded constants. Verified the
-    sandbox is total: `grep -o 'NODEFS\|NODERAWFS\|mountNode'` over
-    `.cache/avr/wasm/package/tools/cc1plus.mjs` returns **zero** occurrences, so the WASM compiler has
-    no host filesystem mounted at all — `#include "/etc/passwd"` cannot resolve to anything, and
-    neither can any `..` sequence.
-13. **Compile output is never written to disk and cannot be read by a later request.** The only
-    persistence is the in-process `Map` at `build.ts:109`, keyed on
-    `sha256(board + ' ' + source)` (`build.ts:124-126`). Retrieving an entry requires already
-    possessing the exact bytes that produced it, so the shared cache leaks nothing between students.
-    The response carries `Cache-Control: no-store` (`route.ts:169`).
-14. **Compile time is genuinely bounded.** 20 s hard timeout with `worker.terminate()` on every path
-    (`build.ts:199-222`), running in a `worker_thread` precisely so synchronous WASM can be killed —
-    the reasoning is written out at `build-worker.mjs:3-11` and it is correct.
-15. **Every server action re-derives the caller and checks ownership.** All eight files in
-    `lib/actions/` start from `auth()` and none trusts a user id from the client. `admin.ts` gates all
-    21 exports behind `requireAdmin()` (`:10-24`). `classes.ts` re-verifies
-    `.eq('educator_id', profile.id)` on the class before every single mutation. `quiz.ts`,
-    `feedback.ts`, `progress.ts` and `simulator.ts` each verify an active enrollment in the named
-    class before writing. The gaps found above are in the **RLS backstop**, not in these actions.
-16. **Dev-only surfaces are double-gated.** `proxy.ts:16-18` exempts `/dev`, `/sim`, `/vendor` and
-    `/api/dev` only when `NODE_ENV === 'development'`, *and* both `(dev)` pages independently call
-    `notFound()` in production (`app/(dev)/dev/editor/page.tsx:13`, `app/(dev)/dev/sims/page.tsx:12`),
-    *and* `app/api/dev/harvest/route.ts:18-20` returns 404 in production. Its write target is a fixed
-    constant path (`:27`), not user-supplied.
-17. **Client-side Supabase usage is limited and safe.** Only `components/sections/QuizSection.tsx` and
-    `components/sections/FeedbackSection.tsx` use `useSupabaseClient`. Neither selects
-    `correct_answer` or `explanation` (`QuizSection.tsx:78`), and the column grant would refuse them
-    anyway.
-18. **Supabase security advisors show nothing new.** The only findings are the 18
-    SECURITY-DEFINER-executable warnings across the 9 RLS helpers — the exact warnings migration 014
-    documents as knowingly accepted, with the correct explanation that revoking `EXECUTE` from
-    `PUBLIC` breaks every gated read with `42501`. **Do not act on them.** No missing-RLS advisory, no
-    exposed `auth.users`, no SECURITY DEFINER view.
-19. **Live data was not mutated.** After all three probes:
-    `probe_profiles_left = 0`, `probe_submissions_left = 0`, `total_profiles = 10`, `admins = 4`,
-    `classes = 4`, `quiz_questions = 48`.
+- **Profile privilege escalation is fixed.** 028 holds. `CTRL_self_admin=blocked:42501` and
+  `CTRL_self_approve=blocked:42501` in probe 2. The INSERT `with check` now pins `is_admin = false`
+  and forbids `role='educator' AND approval_status='approved'`; the UPDATE `with check` pins
+  `role = auth_role()` and `approval_status = auth_approval_status()`. `clerk_user_id` is UNIQUE, so
+  the second-profile-row variant is closed too.
+- **The quiz answer key is not readable by students.** Migration 013's column-level revoke is real and
+  live: `authenticated` has no SELECT on `quiz_questions.correct_answer` or `.explanation`, `anon` has
+  no SELECT on the table at all, and a direct read returned `42501` in probe 1. `QuizSection.tsx:77-82`
+  also excludes both columns. (The one hole is M3's server-side route, not the client fetch.)
+- **Cross-tenant reads are solid.** As a student: 0 other students' `quiz_submissions`,
+  `student_progress`, `sim_attempts`, `feedback_responses`; 1 profile (self); 1 class (enrolled only);
+  1 enrollment (own); 0 `class_invites`. As an educator: 0 other educators' classes, 0 foreign
+  submissions, 1 profile.
+- **Self-enrollment is closed.** 019 holds — `CTRL_self_enroll=blocked:42501`.
+- **Grades are computed server-side.** `lib/actions/quiz.ts:177-192` grades against
+  `quiz_questions.correct_answer`; the client sends only `answers` (question id → option id) and
+  `timeTakenSeconds`. The client never supplies a score. (H1 is a bypass *of* this function, not a
+  flaw in it.)
+- **Every admin action is gated.** All 18 exports in `lib/actions/admin.ts` call `await requireAdmin()`
+  as their first statement (verified individually). `requireAdmin()` re-derives the Clerk id from the
+  session and reads `is_admin` through the RLS-bound client. `approveEducator`/`rejectEducator` add
+  `.eq('role','educator')` so they cannot touch a student row. These writes use the RLS-bound client,
+  not the service-role client — good defence in depth.
+- **All 21 tables have RLS enabled, and none has zero policies.** Full inventory in the appendix.
+- **The `accessToken()` seam in `lib/supabase/server.ts` is safe.** The `constructed` flag suppresses
+  exactly one call — the synchronous Realtime priming call inside `createClient()` — and is set `true`
+  before the function returns, so every PostgREST request that follows gets a live Clerk token. The
+  failure mode if it ever regressed is **fail-closed**, not a leak: a token-less request runs as `anon`,
+  and `anon` has policies on nothing but published labs and experiments, so it returns zero rows.
+- **Service-role call sites.** Five exist. `lib/actions/profile.ts:129` (`completeOnboarding`) —
+  identity from `auth()`, `clerk_user_id` server-derived so the upsert can only hit the caller's own
+  row, `is_admin` never in the payload, `approval_status` derived server-side. `lib/actions/enrollment.ts:18`
+  (`joinByCode`) — both ids server-derived, correct shape. `lib/actions/admin.ts:354` and the admin
+  quiz page — behind `requireAdmin()` / the admin layout. `lib/actions/quiz.ts:152` — the one with a
+  gap; see M3.
+- **Secrets.** No live secret value is committed. `git ls-files` tracks exactly one env file,
+  `.env.example`, containing placeholders only. The `NEXT_PUBLIC_*` surface is correct: only
+  `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`,
+  all of which are designed to be public. `SUPABASE_SERVICE_ROLE_KEY` and `CLERK_SECRET_KEY` are read
+  only from `process.env` in server modules. CI uses literal placeholder strings.
+
+## Could not test
+
+- **Whether Clerk is on production keys.** The previous audit flagged development keys locally; I have
+  no access to the deployed environment's variables. Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` starts
+  `pk_live_` in production. Development instances have relaxed session security and a shared domain.
+- **The compile route's rate limiting under load** (`app/api/compile/route.ts`). Its concurrency lock is
+  per-process, so it over-admits across serverless instances. Assessing the real effect needs a load
+  test against the deployment.
+- **`/api/dev/harvest` in a live non-production deployment** (M4) — inspection only; I did not attack a
+  running server.
 
 ---
 
-## Could not check
+## Advisors
 
-- **Vercel production environment variables.** I have no access to the Vercel project
-  (`prj_4L9YmL30JjFvSrGM6PsF9D6A00Zn`). M1 reports what is in the repository and the local `.env`;
-  whether production runs live Clerk keys is unverified either way.
-- **Clerk dashboard configuration** — whether sign-up is open or restricted to a domain, the allowed
-  redirect origins, and which Clerk domain the Supabase third-party-auth integration is configured to
-  trust. C1's ease of exploitation depends on sign-up being open; the hole exists regardless.
-- **Supabase dashboard settings outside the SQL surface** — whether the anon key is a legacy JWT or a
-  publishable key, PostgREST `max-rows` and exposed schemas, and network restrictions.
-- **No end-to-end HTTP exploit was performed.** C1, H1 and H2 were proved at the database
-  authorisation layer with impersonated, rolled-back transactions rather than by registering a real
-  Clerk user and driving PostgREST from a browser. The one remaining assumption is that a browser can
-  hold a Clerk token and reach `/rest/v1` with the anon key — which is precisely what
-  `lib/supabase/client.ts:40-58` does on every page of the app, and what migrations 018 and 019 were
-  both written in response to.
-- **M2's deployed behaviour under load** was not measured; the semaphore over-admission is a
-  code-inspection finding and the per-instance limitation is inferred from Vercel's execution model.
-- **`.env` was read for variable names and key prefixes only.** No secret value was printed, logged,
-  or transmitted.
+**Security advisors** returned 19 items, all `WARN`, and all of them are one of two things:
+
+- **18 × "SECURITY DEFINER function executable by `anon`/`authenticated`"** for the nine `auth_*` /
+  `can_read_*` / `is_*_of_class` helpers. These are **by design** — they are the helpers the RLS
+  policies are built from, they take no privileged action, and each one derives its answer from
+  `auth.jwt()->>'sub'` rather than from an argument, so calling one directly only ever tells you about
+  yourself. The three that take a UUID argument (`can_read_experiment_content`, `can_read_form_content`,
+  `can_read_quiz_content`, `is_educator_of_class`, `is_enrolled_in_class`) return only a boolean about
+  the caller's own access. All have `SET search_path TO 'public'` pinned (migration 014). **No action
+  needed**, though revoking EXECUTE from `anon` would silence the lint at no cost, since no
+  anon-facing policy uses them.
+- **1 × "Leaked password protection disabled."** **Not applicable** — Clerk is the identity provider;
+  Supabase Auth issues no passwords in this project.
+
+**Performance advisors** returned 75 items, none security-relevant: 43 × `multiple_permissive_policies`
+(WARN), 19 × `unindexed_foreign_keys` (INFO), 10 × `unused_index` (INFO), 3 × `auth_rls_initplan` (WARN).
+
+The 43 permissive-policy warnings are the notable ones, concentrated on the six class-scoped tables
+that carry four policies each (`classes`, `enrollments`, `class_labs`, `class_invites`,
+`class_quiz_settings`, `class_feedback_settings`, `invite_emails`). Postgres must evaluate every
+permissive policy for every row, and each of these calls a `SECURITY DEFINER` helper that itself
+queries `profiles`. That is a real cost at scale, but it is a **correctness-neutral** one — merging
+the admin and owner branches into a single policy per command would fix it. Note that 032 does not
+make this worse (it replaces policies rather than adding them); 033 splits two FOR ALL policies into
+INSERT + UPDATE, which does not increase the count evaluated for any single command.
+
+---
+
+## Migrations written (NOT applied)
+
+All four are in `supabase/migrations/`, unapplied. Each carries a full comment block explaining the
+bug, the probe output that proved it, and why the fix breaks nothing.
+
+| File | Fixes | Ships with code? | Safe to apply now? |
+|---|---|---|---|
+| `031_lock_quiz_submission_forgery.sql` | H1 | **Yes — `lib/actions/quiz.ts` must ship in the same deploy** | Yes, together with the code |
+| `032_enforce_educator_approval.sql` | H2 | Optional follow-up in `lib/actions/classes.ts` | Yes |
+| `033_bind_student_writes_to_enrollment.sql` | M1 | No | Yes |
+| `034_class_labs_published_only.sql` | M2 | No | **No — hold until labs are published** |
+
+**Ordering.** 032 creates `auth_is_approved_educator()`, which 034 uses. Apply 031 → 032 → 033, and
+034 only after publishing labs.
+
+**One deployment hazard to plan for:** 031 drops the policy the browser currently relies on. If the
+migration lands before the new `lib/actions/quiz.ts`, quiz submission fails closed (students see
+"Failed to save submission") until the code deploys. Ship them together, code first if you must split.
+
+---
+
+## Overall posture
+
+Better than the finding count suggests. The read side is genuinely well built: I attacked cross-tenant
+reads from a student and from an educator, and every single control came back empty — no student can
+see another student's grades, progress, attempts or feedback; no educator can see another educator's
+class; nobody but an admin can see another user's profile. Student PII is not exposed anywhere. The
+answer key is protected by a column-level revoke that actually works. The three prior privilege-escalation
+fixes (018, 019, 028) all hold under direct attack. `requireAdmin()` is applied consistently across all
+18 admin actions, and the service-role client is used sparingly with identity proven first in four of
+its five call sites.
+
+The weakness is systematic and has one signature: **write policies that authenticate the row's owner
+but never constrain the row's contents.** That is the same mistake 028 fixed on `profiles` and 019 fixed
+on `enrollments`, and it is still present, unfixed, on `quiz_submissions`, `student_progress`,
+`sim_attempts` and `feedback_responses` — every table where a student writes. The second theme is
+**authorization enforced in a React layout rather than in the database**, which is what makes the
+unapproved-educator hole work.
+
+Neither is exotic, and both are closed by the four migrations here. The thing I would fix this week is
+H1: it is a one-line REST call, it requires no special knowledge, the forged row is permanent and
+invisible to the educator, and it makes the gradebook — the product's core claim — untrustworthy.
+
+---
+
+# Appendix — full RLS inventory
+
+All 21 public tables: **RLS enabled on every one**, `relforcerowsecurity` false on every one (immaterial
+— no policy relies on it, and table owners do not serve traffic). 81 policies total. Every policy is
+`to authenticated` except the two marked `{public}`.
+
+| Table | RLS | # | Policies (cmd — expression) |
+|---|---|---|---|
+| `circuits` | on | 3 | ALL admin write — `auth_is_admin()` · SELECT educator read reference — class-ownership via simulations→experiments→class_labs→classes · SELECT read starter — `role='starter' AND can_read_experiment_content(...)` |
+| `class_feedback_settings` | on | 5 | ALL admin write all · ALL educator write own — `is_educator_of_class(class_id)` · SELECT admin read all · SELECT educator read own · SELECT student read enrolled — `is_enrolled_in_class(class_id)` |
+| `class_invites` | on | 4 | ALL admin write all · ALL educator write own — `is_educator_of_class(class_id)` · SELECT admin read all · SELECT educator read own |
+| `class_labs` | on | 6 | ALL admin write all · ALL educator write own — `is_educator_of_class(class_id)` · SELECT admin read all · SELECT educator read own (inline classes subquery) · SELECT educator read own classes (helper) · SELECT student read enrolled |
+| `class_quiz_settings` | on | 5 | ALL admin write all · ALL educator write own · SELECT admin read all · SELECT educator read own · SELECT student read enrolled |
+| `classes` | on | 5 | ALL admin write all · ALL educator write own — `educator_id = auth_profile_id() AND auth_role()='educator'` **(H2)** · SELECT admin read all · SELECT educator read own · SELECT student read enrolled |
+| `enrollments` | on | 6 | ALL admin write all · ALL educator write own classes · SELECT admin read all · SELECT educator read own classes · SELECT student read own · UPDATE student drop own — check `student_id = self AND status='dropped'` **(L1)** |
+| `experiment_sections` | on | 3 | ALL admin write · SELECT admin read all · SELECT read active — `status='active' AND can_read_experiment_content(experiment_id)` |
+| `experiments` | on | 3 | ALL admin write · SELECT admin read all · **SELECT read published `{public}`** — `published = true` |
+| `feedback_forms` | on | 2 | ALL admin write · SELECT read — `can_read_experiment_content(experiment_id)` |
+| `feedback_questions` | on | 3 | ALL admin write · SELECT admin read all · SELECT read active — `status='active' AND can_read_form_content(form_id)` |
+| `feedback_responses` | on | 4 | INSERT student insert own — `student_id = self AND auth_role()='student'` **(M1)** · SELECT admin read all · SELECT educator read own classes · SELECT student read own |
+| `invite_emails` | on | 4 | ALL admin write all · ALL educator write own (invite→class ownership) · SELECT admin read all · SELECT educator read own |
+| `labs` | on | 4 | ALL admin write · SELECT admin read all · SELECT educator read published — `published AND auth_role()='educator'` · **SELECT public read published `{public}`** |
+| `profiles` | on | 5 | INSERT insert own — pins `is_admin=false`, forbids self-approved educator **(028, holds)** · SELECT admin read all · SELECT own read · UPDATE admin update all · UPDATE own update — pins `is_admin`, `role`, `approval_status` **(018, holds)** |
+| `quiz_questions` | on | 3 | ALL admin write · SELECT admin read all · SELECT read active — `status='active' AND can_read_quiz_content(quiz_id)`. **Column-level revoke on `correct_answer` + `explanation` (013) — holds.** |
+| `quiz_submissions` | on | 4 | INSERT student insert own — `student_id = self AND auth_role()='student'` **(H1)** · SELECT admin read all · SELECT educator read own classes · SELECT student read own |
+| `quizzes` | on | 2 | ALL admin write · SELECT read — `can_read_experiment_content(experiment_id)` |
+| `sim_attempts` | on | 4 | **ALL** student write own — `student_id = self` / check adds `auth_role()='student'` **(M1)** · SELECT admin read all · SELECT educator read own classes · SELECT student read own |
+| `simulations` | on | 2 | ALL admin write · SELECT read — `can_read_experiment_content(experiment_id)` |
+| `student_progress` | on | 4 | **ALL** student write own — `student_id = self` / check adds `auth_role()='student'` **(M1)** · SELECT admin read all · SELECT educator read own classes · SELECT student read own |
+
+### Helper functions (all `STABLE SECURITY DEFINER`, `search_path` pinned to `public`)
+
+| Function | Returns |
+|---|---|
+| `auth_profile_id()` | caller's `profiles.id` from `auth.jwt()->>'sub'` |
+| `auth_role()` | caller's `profiles.role` |
+| `auth_is_admin()` | caller's `is_admin`, `coalesce(…, false)` |
+| `auth_approval_status()` | caller's `approval_status` |
+| `is_educator_of_class(uuid)` | caller owns that class |
+| `is_enrolled_in_class(uuid)` | caller has an **active** enrollment in that class |
+| `can_read_experiment_content(uuid)` | admin **or** active-enrolled student **or** owning educator **(no approval check — H2)** |
+| `can_read_form_content(uuid)` | delegates to `can_read_experiment_content` via the form's experiment |
+| `can_read_quiz_content(uuid)` | delegates to `can_read_experiment_content` via the quiz's experiment |
+| `set_updated_at()` | trigger, sets `updated_at = now()` |
+
+### Table grants
+
+`anon` and `authenticated` both hold `SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER, TRUNCATE` on
+all 21 tables, **except** `quiz_questions`, where table-level SELECT is revoked and replaced by a
+column-level grant to `authenticated` that omits `correct_answer` and `explanation` — and `anon` gets
+no SELECT on it at all. That single exception is the quiz-integrity control, and it works. See L3 on
+the breadth of the remaining grants.

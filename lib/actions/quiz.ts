@@ -66,7 +66,7 @@ export async function submitQuiz(
   const { data: quiz } = await supabase
     .from('quizzes')
     .select(
-      'id, default_max_attempts, default_passing_percentage, default_show_score, default_show_answers',
+      'id, experiment_id, default_max_attempts, default_passing_percentage, default_show_score, default_show_answers',
     )
     .eq('id', quizId)
     .single()
@@ -145,11 +145,51 @@ export async function submitQuiz(
     }
   }
 
+  // Enrollment proves the caller is in `classId`. It says nothing about
+  // `quizId`, which is a free parameter — so bind the two before the
+  // answer-key read below. Without this, an enrolled student could pass ANY
+  // quiz id on the platform and the service-role read would hand back its
+  // correct_answer and explanation, defeating migration 013's column revoke.
+  // It also stops a student sidestepping a class's max_attempts /
+  // show_answers by submitting under a different class they belong to, where
+  // no class_quiz_settings row exists and the quiz defaults apply instead.
+  const { data: experiment } = await supabase
+    .from('experiments')
+    .select('lab_id')
+    .eq('id', quiz.experiment_id)
+    .single()
+
+  const { data: labInClass } = experiment
+    ? await supabase
+        .from('class_labs')
+        .select('id')
+        .eq('class_id', classId)
+        .eq('lab_id', experiment.lab_id)
+        .maybeSingle()
+    : { data: null }
+
+  if (!labInClass) {
+    return {
+      success: false,
+      score: 0,
+      maxScore: 0,
+      percentage: 0,
+      passed: false,
+      attemptNumber: currentAttempts,
+      showAnswers: false,
+      error: 'This quiz is not part of this class.',
+    }
+  }
+
+  // The service-role client. Needed twice below, and it bypasses RLS, so it is
+  // created only after identity (line 46), attempt cap, active enrollment and
+  // the quiz-belongs-to-class check above have all passed.
+  const adminSupabase = createAdminSupabaseClient()
+
   // Fetch active questions with the answer key.
   // Migration 013 revokes SELECT on correct_answer/explanation from the
   // `authenticated` role, so grading must go through the service-role client.
-  // Identity and enrollment are both verified above before we reach here.
-  const { data: questions } = await createAdminSupabaseClient()
+  const { data: questions } = await adminSupabase
     .from('quiz_questions')
     .select('id, question_text, options, correct_answer, explanation, points, order_number')
     .eq('quiz_id', quizId)
@@ -207,8 +247,17 @@ export async function submitQuiz(
     isCorrect: (answers[q.id] ?? '') === q.correct_answer,
   }))
 
-  // Insert quiz submission
-  const { error: insertError } = await supabase.from('quiz_submissions').insert({
+  // Insert quiz submission through the service-role client.
+  //
+  // Migration 031 drops "quiz_submissions: student insert own", because that
+  // policy checked only student_id and let the browser POST its own score,
+  // percentage and passed straight to PostgREST. This action is now the only
+  // writer of the gradebook, and every value below is computed server-side:
+  // score/maxScore/percentage/passed come from the answer key above, student_id
+  // from the Clerk session, and attemptNumber from the counted attempts. The
+  // only client-supplied values that reach the row are the answers themselves
+  // and timeTakenSeconds.
+  const { error: insertError } = await adminSupabase.from('quiz_submissions').insert({
     quiz_id: quizId,
     class_id: classId,
     student_id: profile.id,
