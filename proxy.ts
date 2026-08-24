@@ -43,6 +43,8 @@ export const config = {
   matcher: [
     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
     '/(api|trpc)(.*)',
-    '/__clerk/(.*)',
+    // Clerk's auto-proxy path. `:path*` matches zero or more segments, so
+    // bare /__clerk is covered too; `/__clerk/(.*)` would require the slash.
+    '/__clerk/:path*',
   ],
 }
