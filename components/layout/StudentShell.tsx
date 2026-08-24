@@ -92,9 +92,6 @@ export function StudentShell({
                 <span className="hidden sm:inline">{INSTITUTION.tagline}</span>
                 <span className="sm:hidden">Virtual Laboratory</span>
               </span>
-              <span className="hidden truncate font-chrome text-[11px] uppercase tracking-[0.11em] text-vlab-muted md:block">
-                {INSTITUTION.department}
-              </span>
             </span>
           </Link>
 
