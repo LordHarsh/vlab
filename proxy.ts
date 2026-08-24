@@ -8,6 +8,9 @@ const isPublicRoute = createRouteMatcher([
   '/pending-approval',
   '/profile(.*)',
   '/api/webhooks(.*)',
+  // Clerk proxies its auth traffic through here on vercel.app domains.
+  // Gating it would redirect Clerk's own endpoints to sign-in.
+  '/__clerk(.*)',
   // Unauthenticated simulator harness, development only. The page itself also
   // calls notFound() outside development, so this matcher cannot expose
   // anything in a production deploy even if the two ever drift.

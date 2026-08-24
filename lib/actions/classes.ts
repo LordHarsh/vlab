@@ -3,6 +3,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import type { TablesUpdate } from '@/types/database'
 
 function generateJoinCode(): string {
   const letters = Math.random().toString(36).slice(2, 5).toUpperCase()
@@ -361,7 +362,8 @@ export async function updateEnrollment(
 
   // Only stamp dropped_at on the transition into 'dropped'. Re-activating a
   // student must not erase the record of when they were dropped.
-  const updateData: Record<string, string> = { status }
+  // supabase-js 2.112 rejects a loose index signature on .update().
+  const updateData: TablesUpdate<'enrollments'> = { status }
   if (status === 'dropped') {
     updateData.dropped_at = new Date().toISOString()
   }

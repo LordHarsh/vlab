@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next'
 import { ClerkProvider } from '@clerk/nextjs'
 import { Open_Sans, Raleway, Roboto_Slab } from 'next/font/google'
+import { Analytics } from '@vercel/analytics/next'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 import './globals.css'
 
 /*
@@ -53,7 +55,13 @@ export default function RootLayout({
         lang="en"
         className={`${openSans.variable} ${raleway.variable} ${robotoSlab.variable}`}
       >
-        <body className="antialiased">{children}</body>
+        <body className="antialiased">
+          {children}
+          {/* Mounted once here so every route group is covered. Inert off
+           * Vercel, so no env guard is needed. */}
+          <Analytics />
+          <SpeedInsights />
+        </body>
       </html>
     </ClerkProvider>
   )

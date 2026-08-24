@@ -62,3 +62,7 @@ next-env.d.ts
 
 # toolchain archives downloaded by scripts/build-avr-hex.mjs
 /.cache/
+
+# Local production env dumps (contain live secrets)
+.env.prod
+.env.*.prod

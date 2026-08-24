@@ -3,6 +3,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminSupabaseClient } from '@/lib/supabase/admin'
+import type { Json, TablesUpdate } from '@/types/database'
 import { revalidatePath } from 'next/cache'
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -243,9 +244,12 @@ export async function updateSection(
     await requireAdmin()
     const supabase = await createServerSupabaseClient()
 
-    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    // supabase-js 2.112 rejects a loose index signature on .update().
+    const updateData: TablesUpdate<'experiment_sections'> = {
+      updated_at: new Date().toISOString(),
+    }
     if (data.title !== undefined) updateData.title = data.title
-    if (data.content !== undefined) updateData.content = data.content
+    if (data.content !== undefined) updateData.content = data.content as Json
     if (data.order_index !== undefined) updateData.order_index = data.order_index
     if (data.is_required !== undefined) updateData.is_required = data.is_required
 
