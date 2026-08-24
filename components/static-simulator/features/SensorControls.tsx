@@ -11,7 +11,7 @@ import type { SensorControlSpec } from '../showreel/sensorOverrides'
  * a switch and not a second slider.
  *
  * SITS IN THE STATUS STRIP, NOT ON THE CANVAS. Tinkercad draws its own
- * equivalents ON the part's artwork (TINKERCAD_DEVICE_PARITY.md's photoresistor
+ * equivalents ON the part's artwork (docs/TINKERCAD_DEVICE_PARITY.md's photoresistor
  * and TMP36 sliders). That was tried here first and dropped: the read-only
  * canvas has no exposed hook for the view (pan/zoom transform) it fits itself
  * to on every resize, so an on-canvas control would either duplicate that

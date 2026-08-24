@@ -11,7 +11,7 @@
  * them an unreproducible binary blob: nobody could change the blink rate, fix a
  * sketch, or build a fourth. public/sim/traffic-mega.hex — the ATmega2560 image
  * experiment 11 runs — was produced by this script, and can be produced again by
- * anyone with node and a network connection. See AVR_COMPILE_FINDINGS.md.
+ * anyone with node and a network connection. See docs/AVR_COMPILE_FINDINGS.md.
  *
  * THIS IS A BUILD-TIME SCRIPT, NOT THE PRODUCT. It runs the WASM modules under
  * Node so the output is reproducible and reviewable in CI. The same four modules

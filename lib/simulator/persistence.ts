@@ -3,7 +3,7 @@
 /**
  * Local-first persistence for circuit documents.
  *
- * SIMULATOR_ARCHITECTURE.md §7 asks for IndexedDB write-through with a
+ * docs/SIMULATOR_ARCHITECTURE.md §7 asks for IndexedDB write-through with a
  * debounced sync to Supabase, and is blunt about why: campus wifi drops, and
  * "losing 40 minutes of wiring kills adoption harder than any missing feature".
  *

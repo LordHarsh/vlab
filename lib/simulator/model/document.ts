@@ -1,7 +1,7 @@
 /**
  * The circuit document, and the reducer that edits it.
  *
- * Serialises to the shape SIMULATOR_ARCHITECTURE.md §7 stores in
+ * Serialises to the shape docs/SIMULATOR_ARCHITECTURE.md §7 stores in
  * circuits.graph: parts[] + wires[], with nets DERIVED rather than stored.
  * Never persist nets — they are a pure function of parts and wires, and a
  * stored copy is a copy that can disagree.
@@ -67,7 +67,7 @@ export interface WireColor {
 
 /**
  * Tinkercad's shipped wire palette, verbatim from `BreadboardWire.ColorMap` in
- * its `circuits-compiled.js` bundle (WIRE_RENDERING_SPEC.md §5).
+ * its `circuits-compiled.js` bundle (docs/WIRE_RENDERING_SPEC.md §5).
  *
  * The two shades are AUTHORED, not derived. Deriving the casing by scaling the
  * core is what our renderer used to do, and no single factor works across a

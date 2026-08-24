@@ -12,7 +12,7 @@
  *   2. against the CONTINUOUS analytic solution to ~0.1 %, which the discrete
  *      form must approach as h shrinks.
  *
- * If the load-bearing capacitor sign (TRANSIENT_DESIGN.md §1.1) were flipped, the
+ * If the load-bearing capacitor sign (docs/TRANSIENT_DESIGN.md §1.1) were flipped, the
  * RC-charge test (§3.1) would rise the wrong way or diverge. It does neither.
  *
  * Run: npx tsx lib/simulator/__tests__/transient.test.ts

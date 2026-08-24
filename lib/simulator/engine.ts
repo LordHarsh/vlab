@@ -3,7 +3,7 @@
  *
  * This is where the two halves meet. `avr8js` owns the clock and executes the
  * actual .hex; `compile()` turns the student's document into a solvable circuit;
- * and the PinBridge (SIMULATOR_ARCHITECTURE.md §2.6) couples them — MCU pin
+ * and the PinBridge (docs/SIMULATOR_ARCHITECTURE.md §2.6) couples them — MCU pin
  * writes become Norton stamps, and the analog solution is memoised on the
  * pin-state vector so a blinking pin only ever costs two DC solves (§2.4).
  *
@@ -46,7 +46,7 @@ import type { NetId, SolveFault, SolveResult } from './types'
 
 export const CLOCK_HZ = 16_000_000
 
-// ─── Transient stepping (TRANSIENT_DESIGN.md §4) ─────────────────────────────
+// ─── Transient stepping (docs/TRANSIENT_DESIGN.md §4) ─────────────────────────────
 
 /**
  * Backward-Euler steps per time constant.
@@ -146,7 +146,7 @@ const PIN_MAX_CURRENT = 0.04
 export type PinDrive = 'low' | 'high' | 'float' | 'pullup'
 
 /**
- * Input thresholds, from SIMULATOR_ARCHITECTURE.md §2.6.
+ * Input thresholds, from docs/SIMULATOR_ARCHITECTURE.md §2.6.
  *
  * VIL 0.3*Vcc, VIH 0.6*Vcc, WITH HYSTERESIS from day one. Without the deadband
  * a node sitting near mid-rail chatters across the threshold on every re-solve,

@@ -3,7 +3,7 @@
  *
  * Source: @wokwi/elements 1.9.2, MIT, Copyright (c) 2020 Uri Shaked.
  * The harvested data lives in wokwi-art.generated.json — see
- * SIMULATOR_ARCHITECTURE.md §3, which calls for taking the SVG and pinInfo at
+ * docs/SIMULATOR_ARCHITECTURE.md §3, which calls for taking the SVG and pinInfo at
  * BUILD time rather than mounting the Lit components at runtime.
  *
  * The route that produced it (/api/dev/harvest) has been REMOVED. It wrote

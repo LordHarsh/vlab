@@ -1,7 +1,7 @@
 -- =============================================================================
 -- 015_native_simulator.sql
 --
--- Storage for the native circuit simulator (SIMULATOR_ARCHITECTURE.md §7).
+-- Storage for the native circuit simulator (docs/SIMULATOR_ARCHITECTURE.md §7).
 --
 -- Deliberately smaller than the document proposes: only `circuits` and
 -- `sim_attempts` land here. sim_checks / sim_submissions / sim_sessions belong

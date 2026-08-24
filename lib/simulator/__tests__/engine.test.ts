@@ -8,7 +8,7 @@
  * numbers can each be individually correct and still be published at the wrong
  * moment, or published forever after they stopped being true. Both bugs pinned
  * here are of that kind, and both returned ok:true with a plausible number
- * while doing it — the failure mode SIMULATOR_ARCHITECTURE.md §2.3 calls the
+ * while doing it — the failure mode docs/SIMULATOR_ARCHITECTURE.md §2.3 calls the
  * dangerous one.
  *
  *   BUG A  Reported currents and LED brightness were one pin-hold interval

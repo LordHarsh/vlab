@@ -1,7 +1,7 @@
 # What a student can DO with every component in Tinkercad Circuits
 
 Observed catalogue, produced for a device-by-device diff against
-`OUR_DEVICE_CAPABILITIES.md` (same shape, same seven fields per device).
+`docs/OUR_DEVICE_CAPABILITIES.md` (same shape, same seven fields per device).
 
 Date: 2026-07-25. Signed in as the design owner. Two sources, both first-hand:
 

@@ -95,7 +95,7 @@ export type CompileResult = CompileSuccess | CompileFailure
  * Under `-fpermissive` that is a warning rather than an error, so the sketch
  * builds and runs — but the warning points at a line the student never wrote
  * and cannot see, and cannot be acted on. Showing it would be a small version
- * of exactly the failure AVR_COMPILE_FINDINGS.md names as the risk of doing
+ * of exactly the failure docs/AVR_COMPILE_FINDINGS.md names as the risk of doing
  * this transformation at all: confusing messages about the student's own valid
  * code.
  *

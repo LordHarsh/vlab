@@ -63,7 +63,7 @@ import { LED_OPTIONS, WIRE_OPTIONS, type ColourSelection } from './colours'
  * Because that is the workbench these students have already seen, and a
  * reference figure that borrows its shape is read as "a circuit running in a
  * tool" rather than as a diagram someone pasted in. The layout follows the
- * observed product — see TINKERCAD_DEVICE_PARITY.md, which catalogues that
+ * observed product — see docs/TINKERCAD_DEVICE_PARITY.md, which catalogues that
  * editor's toolbar, rail and inspector from the live app.
  *
  * WHY THE EDIT TOOLS STAY GREYED EVEN WHEN THE STUDENT PRESSES STOP

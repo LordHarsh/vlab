@@ -7,7 +7,7 @@
  * experiments could therefore not be programmed, while the Pico half had a live
  * MicroPython editor. This file is the evidence that the asymmetry is gone.
  *
- * "IT COMPILED" IS NOT THE CLAIM WORTH TESTING, and AVR_COMPILE_FINDINGS.md
+ * "IT COMPILED" IS NOT THE CLAIM WORTH TESTING, and docs/AVR_COMPILE_FINDINGS.md
  * says why: a toolchain that emits a well-formed .hex full of subtly wrong code
  * loads, runs, prints nothing, and shows green everywhere. So the assertions
  * that matter here are behavioural and DIFFERENTIAL — two sketches that differ

@@ -15,7 +15,7 @@
  *   2. it HOISTS FUNCTION PROTOTYPES, which is why `loop()` may call a helper
  *      that is defined fifty lines further down.
  *
- * AVR_COMPILE_FINDINGS.md records both as Blocker 4 — "nothing converts .ino to
+ * docs/AVR_COMPILE_FINDINGS.md records both as Blocker 4 — "nothing converts .ino to
  * .cpp" — and warns that getting the transformation wrong "produces confusing
  * errors on the student's own valid code". That warning shapes every rule
  * below: when this file is not sure a thing is a function definition, it emits

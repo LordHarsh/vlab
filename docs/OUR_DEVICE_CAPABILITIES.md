@@ -1,7 +1,7 @@
 # What a student can currently DO with every device in our simulator
 
 Source-derived inventory of the VLab circuit simulator, produced for a
-device-by-device diff against `TINKERCAD_DEVICE_PARITY.md`. Every claim carries a
+device-by-device diff against `docs/TINKERCAD_DEVICE_PARITY.md`. Every claim carries a
 `file:line` citation. Nothing here was observed in a browser — this is read off
 the code.
 

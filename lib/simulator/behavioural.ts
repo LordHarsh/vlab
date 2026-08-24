@@ -1,5 +1,5 @@
 /**
- * Behavioural parts — tier 2 in SIMULATOR_ARCHITECTURE.md §7.1.
+ * Behavioural parts — tier 2 in docs/SIMULATOR_ARCHITECTURE.md §7.1.
  *
  * A resistor is data. A DHT11 is not: it is a state machine that talks a
  * bit-banged wire protocol with microsecond timing, so it needs code. These

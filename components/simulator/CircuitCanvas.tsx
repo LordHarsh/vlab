@@ -276,7 +276,7 @@ interface WireGesture {
  * Blue halo, darker casing, coloured core, invisible grab band — bottom to top.
  *
  * Every number is Tinkercad's, taken from its shipped `drawBendableWire` and
- * `BreadboardWire.prototype.draw` (WIRE_RENDERING_SPEC.md §3, §7). They
+ * `BreadboardWire.prototype.draw` (docs/WIRE_RENDERING_SPEC.md §3, §7). They
  * transfer one-for-one because our units and theirs are the same size: their
  * corner radius is 10 and so is our grid pitch.
  *
@@ -2664,7 +2664,7 @@ function conePath(target: TargetControl, cone: { halfAngleDeg: number; range: nu
  * A knob on a part's artwork: drag to turn, or focus it and use the arrow keys.
  *
  * Tinkercad has NO slider in its inspector — continuous values are canvas
- * interactions (DEVICE_CONTROLS_AUDIT.md §2) — and our inert potentiometer knob
+ * interactions (docs/DEVICE_CONTROLS_AUDIT.md §2) — and our inert potentiometer knob
  * was reported by a tester as a broken control. This is the fix, but not by
  * moving the value onto the canvas and off the panel: the panel slider stays,
  * both write the same document value, and either one alone would exclude
@@ -2778,7 +2778,7 @@ function Knob({
  * A handle on a track drawn on a part's artwork: drag it, or use the arrow keys.
  *
  * The photoresistor's light level is the case this exists for. Tinkercad has no
- * slider in its INSPECTOR (DEVICE_CONTROLS_AUDIT.md §2) because a continuously
+ * slider in its INSPECTOR (docs/DEVICE_CONTROLS_AUDIT.md §2) because a continuously
  * variable physical thing is adjusted where it lives — but an LDR has no shaft
  * to turn, so the affordance is a track rather than a knob.
  *

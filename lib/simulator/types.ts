@@ -9,7 +9,7 @@
  * constant. The header here used to say there was "no transient integration in
  * the hot loop"; that stopped being true and the stale line outlived it.
  *
- * SIMULATOR_ARCHITECTURE.md is design intent, not an as-built record — it
+ * docs/SIMULATOR_ARCHITECTURE.md is design intent, not an as-built record — it
  * describes several things that were never implemented. Trust this code.
  */
 
@@ -109,7 +109,7 @@ export interface Device {
 /**
  * A condition that is numerically fine but physically destructive.
  *
- * SIMULATOR_ARCHITECTURE.md §2.3 promises "a refusal, never a wrong number".
+ * docs/SIMULATOR_ARCHITECTURE.md §2.3 promises "a refusal, never a wrong number".
  * The solver is right that 5 V across a 1 mΩ wire is 5000 A — but returning
  * ok:true and a silent 25 kW is not an honest answer to a student who has just
  * shorted a rail. Faults are how the solver says "this would destroy the board"

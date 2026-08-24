@@ -24,20 +24,20 @@ Repo scale for context: 46.2k lines of source, 22.7k lines of tests, 1.4k lines 
 |---|---|
 | `README.md` | **Accurate** — one overstatement (§1.1) |
 | `docs/BUILD_NOTES.md` | **Accurate** |
-| `DESIGN.md` | **Accurate as a reference doc** |
-| `TRANSIENT_DESIGN.md` | **Accurate — spec that was built** |
-| `WIRE_RENDERING_SPEC.md` | **Accurate — spec that was built** |
-| `AVR_COMPILE_FINDINGS.md` | **Accurate** |
-| `PICO_TRACK_FINDINGS.md` | **Accurate** |
-| `PHASE0_RESULTS.md` | **Accurate** |
-| `TINKERCAD_DEVICE_PARITY.md` | **Stale-but-clearly-historical** |
-| `DESIGN_REFERENCE_SRMEEEVLAB.md` | **Stale-but-clearly-historical** |
-| `DEVICE_CONTROLS_AUDIT.md` | **Actively misleading** — gap list is mostly closed |
-| `OUR_DEVICE_CAPABILITIES.md` | **Actively misleading** — every citation is off by hundreds of lines |
-| `PROJECT_CONTEXT.md` | **Actively misleading** — and README sends you here first |
-| `SIMULATOR_ARCHITECTURE.md` | **Actively misleading** — already known, disclaimer is in the wrong file |
+| `docs/DESIGN.md` | **Accurate as a reference doc** |
+| `docs/TRANSIENT_DESIGN.md` | **Accurate — spec that was built** |
+| `docs/WIRE_RENDERING_SPEC.md` | **Accurate — spec that was built** |
+| `docs/AVR_COMPILE_FINDINGS.md` | **Accurate** |
+| `docs/PICO_TRACK_FINDINGS.md` | **Accurate** |
+| `docs/PHASE0_RESULTS.md` | **Accurate** |
+| `docs/TINKERCAD_DEVICE_PARITY.md` | **Stale-but-clearly-historical** |
+| `docs/DESIGN_REFERENCE_SRMEEEVLAB.md` | **Stale-but-clearly-historical** |
+| `docs/DEVICE_CONTROLS_AUDIT.md` | **Actively misleading** — gap list is mostly closed |
+| `docs/OUR_DEVICE_CAPABILITIES.md` | **Actively misleading** — every citation is off by hundreds of lines |
+| `docs/PROJECT_CONTEXT.md` | **Actively misleading** — and README sends you here first |
+| `docs/SIMULATOR_ARCHITECTURE.md` | **Actively misleading** — already known, disclaimer is in the wrong file |
 
-**Three docs are actively misleading.** A fourth (`DEVICE_CONTROLS_AUDIT.md`) is borderline
+**Three docs are actively misleading.** A fourth (`docs/DEVICE_CONTROLS_AUDIT.md`) is borderline
 and is counted above as the third of a related pair; see §1.11 for why I separate it.
 
 ---
@@ -93,7 +93,7 @@ Suggested wording: "…fails `compile.test.ts`", plus a note that the suites are
 
 ---
 
-## 1.2 `PROJECT_CONTEXT.md` — **actively misleading**
+## 1.2 `docs/PROJECT_CONTEXT.md` — **actively misleading**
 
 This is the highest-impact doc problem, because `README.md` labels it
 *"Project context, owner's aims, hard-won lessons — **read this first**"*. It is stamped
@@ -128,7 +128,7 @@ correctly. **[verified]**
 
 ---
 
-## 1.3 `SIMULATOR_ARCHITECTURE.md` — **actively misleading** (already known)
+## 1.3 `docs/SIMULATOR_ARCHITECTURE.md` — **actively misleading** (already known)
 
 You already knew this one. Confirming the specifics, and flagging a structural problem with
 how it is currently handled.
@@ -141,7 +141,7 @@ Verified contradictions with the shipped code:
 
 | Doc says | Code does | Evidence |
 |---|---|---|
-| §2.2 "Capacitors and inductors are handled by **first-order analytic relaxation, not companion-model stamping**" | Backward-Euler **companion stamping**, exactly what the doc rules out | `solver.ts:151` `transientStep()`; `TRANSIENT_DESIGN.md §1` **[verified]** |
+| §2.2 "Capacitors and inductors are handled by **first-order analytic relaxation, not companion-model stamping**" | Backward-Euler **companion stamping**, exactly what the doc rules out | `solver.ts:151` `transientStep()`; `docs/TRANSIENT_DESIGN.md §1` **[verified]** |
 | §4.1 "**Adjudication: no transient.** … Do not build a fixed-timestep transient co-simulator" | A transient loop exists and is driven from both engines | `engine.ts:961`, `pico/engine.ts:902` **[verified]** |
 | "ngspice-validated **in CI**" (§2.3, §3, §5, §6) | **There is no CI.** No `.github/`, no workflow, no hooks | **[verified]** |
 | ngspice as a live server-side oracle | ngspice appears in the repo only as **reference numbers in comments** — no binary, no build, no route | `devices.ts:1768`, `linalg.ts:6`, `parts.ts:1080` are all prose **[verified]** |
@@ -149,14 +149,14 @@ Verified contradictions with the shipped code:
 | Header: "Supersedes the Tinkercad iframe in `SimulationSection`" | Tinkercad is still the **default** `SimulationKind` and migration 015 calls it *"the permanent fallback … Never remove it"* | `SimulationSection.tsx:9,38` **[verified]** |
 
 **The structural problem:** the disclaimer lives in `README.md`
-("*`SIMULATOR_ARCHITECTURE.md` is design intent, not an as-built record*"), not in
-`SIMULATOR_ARCHITECTURE.md`. Anyone who opens the 57 KB file directly — which is what its own
+("*`docs/SIMULATOR_ARCHITECTURE.md` is design intent, not an as-built record*"), not in
+`docs/SIMULATOR_ARCHITECTURE.md`. Anyone who opens the 57 KB file directly — which is what its own
 "Audience: the engineer who will build this" invites — never sees it. A four-line status block
 at the top of the file itself would close this, and is the single cheapest doc fix available.
 
 ---
 
-## 1.4 `OUR_DEVICE_CAPABILITIES.md` — **actively misleading**
+## 1.4 `docs/OUR_DEVICE_CAPABILITIES.md` — **actively misleading**
 
 You specifically asked whether the quoted limitation strings still exist and whether the cited
 lines still point at them. Both halves were checked separately, and they give different answers.
@@ -204,7 +204,7 @@ aged fine).
 
 ---
 
-## 1.5 `DEVICE_CONTROLS_AUDIT.md` — **actively misleading** (as a gap list)
+## 1.5 `docs/DEVICE_CONTROLS_AUDIT.md` — **actively misleading** (as a gap list)
 
 Dated 2026-07-24, framed as *"Research and specification only."* Its §5 "Prioritised gap list"
 is the operative content, and **most of it has since been built**:
@@ -229,7 +229,7 @@ one-line status banner ("gaps #1–#6 closed as of `b37f685`") would fix it.
 
 ---
 
-## 1.6 `TRANSIENT_DESIGN.md` — accurate; a spec that was built
+## 1.6 `docs/TRANSIENT_DESIGN.md` — accurate; a spec that was built
 
 Prescriptive spec (*"Status: design, for implementation"*), and the implementation matches it.
 Verified: backward-Euler companions only, no trapezoidal (§0); `Geq = C/h`, `Ieq = Geq·v_prev`
@@ -238,7 +238,7 @@ sets `h` on every reactive device then runs the existing Newton solve, exactly a
 `transient.test.ts` (158 assertions) validates against closed-form theory as §3 demands, and
 passes. No contradiction found.
 
-## 1.7 `WIRE_RENDERING_SPEC.md` — accurate; a spec that was built
+## 1.7 `docs/WIRE_RENDERING_SPEC.md` — accurate; a spec that was built
 
 Verdict is *"straight polylines with small circular-arc fillets … radius 10 world units
 (= exactly one 0.1 in breadboard pitch)"*. Implemented in `lib/simulator/model/wire-path.ts` —
@@ -255,7 +255,7 @@ string matches the comment in `lib/simulator/avr/build.ts:1-8`, which is why tha
 re-test whether Turbopack still fails — that is the one claim here I did not independently
 reproduce. **[verified except as noted]**
 
-## 1.9 `AVR_COMPILE_FINDINGS.md` — accurate
+## 1.9 `docs/AVR_COMPILE_FINDINGS.md` — accurate
 
 Spike report, dated, every claim tagged `[observed]`/`[inferred]`. Its verdict — *works in the
 browser, but cannot lawfully be shipped there, so run it server-side* — is precisely what
@@ -263,7 +263,7 @@ browser, but cannot lawfully be shipped there, so run it server-side* — is pre
 name. The evidence artefacts it lists (`__spikes__/fixtures/wasm-{blink,dht11}.hex`) still
 exist and are consumed by `wasmhex.test.ts` (36 assertions, passing). **[verified]**
 
-## 1.10 `PICO_TRACK_FINDINGS.md` — accurate
+## 1.10 `docs/PICO_TRACK_FINDINGS.md` — accurate
 
 Verdict *"YES — via a Raspberry Pi Pico running MicroPython on `rp2040js`"* is implemented
 (`lib/simulator/pico/`, `pico.test.ts` 154 assertions passing). Its stated caveat — the Pico
@@ -272,7 +272,7 @@ but it is presented as a measurement with a method, and the honesty of the surro
 document is high. Its three referenced spikes (`p2-*.ts`) all exist. **[verified except the
 throughput numbers]**
 
-## 1.11 `PHASE0_RESULTS.md` — accurate, and unusually honest
+## 1.11 `docs/PHASE0_RESULTS.md` — accurate, and unusually honest
 
 Leads with a measurement warning that a re-run of P0-1 produced 0.81× where it had produced
 2.84×, and explains why (CPU stopped turboing). Marks **P0-3 "NOT STARTED"** and
@@ -284,7 +284,7 @@ this. Ran 7 of the 12 spikes (`p0-2`, `p0-5`, `lcd-font-proof`, `p1-adc`, `p1-pw
 `p1-engine`); **all exit 0**. The remaining 5 are long-running throughput benchmarks I skipped
 for time, not for suspicion. **[verified]**
 
-## 1.12 `DESIGN.md` — accurate as a reference doc
+## 1.12 `docs/DESIGN.md` — accurate as a reference doc
 
 Titled *"Design System Inspired by Airbnb"* and written in the third person about Airbnb's
 site, so it reads as a reference rather than an as-built record. The tokens it describes were
@@ -297,14 +297,14 @@ One divergence, and it is the correct one: the doc describes Airbnb Cereal VF; t
 system font stack (`globals.css:47`). That is a proprietary font that cannot be used, and the
 doc does not claim the app ships it.
 
-## 1.13 `TINKERCAD_DEVICE_PARITY.md` — stale-but-clearly-historical
+## 1.13 `docs/TINKERCAD_DEVICE_PARITY.md` — stale-but-clearly-historical
 
 A dated (2026-07-25), first-hand catalogue of a **third-party product**. Nothing in this repo
 can invalidate it, and it is explicitly framed as an observation log with every line tagged
 `[observed]`/`[inferred]`. Its counterpart file's staleness (§1.4) does not transfer to it.
 No action.
 
-## 1.14 `DESIGN_REFERENCE_SRMEEEVLAB.md` — stale-but-clearly-historical
+## 1.14 `docs/DESIGN_REFERENCE_SRMEEEVLAB.md` — stale-but-clearly-historical
 
 States its purpose in the first line: *"Reference material for restyling VLab … Compiled by
 fetching the live site's raw HTML/CSS/data."* Forward-looking research, not an as-built claim,
@@ -364,7 +364,7 @@ comments here are genuinely an asset and I am not proposing they be removed:
   codebase has already been bitten by twice.
 - **Only 3 section markers exist across 1,114 lines** (`:562`, `:1368`, `:1388`), so navigating
   it is scrolling, not jumping.
-- It is also the file whose line numbers `OUR_DEVICE_CAPABILITIES.md` cites most heavily (32
+- It is also the file whose line numbers `docs/OUR_DEVICE_CAPABILITIES.md` cites most heavily (32
   citations), and its 74 % growth is what broke them.
 
 The lowest-risk improvement is mechanical and preserves every comment: lift each `el.kind` arm
@@ -435,7 +435,7 @@ instructed.
 
 | Package | Where | Evidence |
 |---|---|---|
-| **`@supabase/ssr`** ^0.8.0 | `dependencies` (ships) | Zero imports. All three clients — `lib/supabase/server.ts`, `client.ts`, `admin.ts` — use `createClient` from `@supabase/supabase-js` directly (Clerk-native integration, not cookie-based SSR). Its only mention in the repo is `PROJECT_CONTEXT.md:62`, which is itself stale (§1.2). |
+| **`@supabase/ssr`** ^0.8.0 | `dependencies` (ships) | Zero imports. All three clients — `lib/supabase/server.ts`, `client.ts`, `admin.ts` — use `createClient` from `@supabase/supabase-js` directly (Clerk-native integration, not cookie-based SSR). Its only mention in the repo is `docs/PROJECT_CONTEXT.md:62`, which is itself stale (§1.2). |
 | **`dotenv`** ^17.2.3 | `devDependencies` | Zero references anywhere — not imported, not in any script, not in any config. `scripts/build-avr-hex.mjs` and `scripts/verify-schema.mjs` import only `node:` builtins. |
 
 **Checked and cleared — do not remove:**
@@ -498,7 +498,7 @@ You asked directly. **Yes, it should ship — but `fixtures/` is not optional.**
 - The `.ts` spikes are covered by `tsconfig.json`'s `**/*.ts`, so they are typechecked on every
   `npx tsc --noEmit` — and it passes. They are not rotting silently.
 - They still run. I executed 7 of 12; all exit 0.
-- They are the cited reproduction method for `PHASE0_RESULTS.md` and `PICO_TRACK_FINDINGS.md`.
+- They are the cited reproduction method for `docs/PHASE0_RESULTS.md` and `docs/PICO_TRACK_FINDINGS.md`.
   Deleting them would turn two accurate documents into unfalsifiable ones.
 
 The only thing I would change is the name: `__spikes__` reads as throwaway, and one directory

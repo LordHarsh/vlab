@@ -1,7 +1,7 @@
 /**
  * MNA DC operating-point solver with Newton-Raphson and gmin stepping.
  *
- * There is deliberately no time integration here. See SIMULATOR_ARCHITECTURE.md
+ * There is deliberately no time integration here. See docs/SIMULATOR_ARCHITECTURE.md
  * §2.1: every fidelity requirement in the product spec is a DC operating point,
  * and a fixed-timestep transient solver was rejected for being both too slow on
  * target hardware and capable of returning plausible wrong answers silently.
@@ -29,7 +29,7 @@ export class Circuit {
   /**
    * True once at least one capacitor or inductor has been added. The compiler
    * sets nothing directly — it just adds the devices; the engine reads this flag
-   * to decide whether a transient loop is needed (TRANSIENT_DESIGN.md §4).
+   * to decide whether a transient loop is needed (docs/TRANSIENT_DESIGN.md §4).
    */
   hasReactive = false
 
@@ -127,7 +127,7 @@ export class Circuit {
 
   /**
    * Reset every reactive device to its t=0 initial condition and discard the
-   * warm start. Call once before a transient run (TRANSIENT_DESIGN.md §2).
+   * warm start. Call once before a transient run (docs/TRANSIENT_DESIGN.md §2).
    * Leaves the DC solve() path completely untouched.
    */
   beginTransient(): void {

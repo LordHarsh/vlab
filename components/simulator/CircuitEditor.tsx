@@ -1602,7 +1602,7 @@ export function CircuitEditor({
    * reason six of twelve experiments could not be programmed.
    *
    * It stopped being true when the compiler moved to the SERVER rather than to
-   * the browser. AVR_COMPILE_FINDINGS.md showed the WebAssembly toolchain works
+   * the browser. docs/AVR_COMPILE_FINDINGS.md showed the WebAssembly toolchain works
    * and cannot be shipped — serving GPL-3.0 cc1plus.wasm to a student is
    * conveying under §6, and we cannot supply the Corresponding Source for
    * binaries somebody else built. Running that same toolchain in a worker
@@ -2236,7 +2236,7 @@ export function CircuitEditor({
           ATmega2560 does not fail — the image parses, the CPU runs it, and the
           pins it moves are whatever the 328P's register addresses happen to be
           on this part. That is the silent-wrong-answer failure
-          SIMULATOR_ARCHITECTURE.md §2.3 forbids, so the list is filtered by
+          docs/SIMULATOR_ARCHITECTURE.md §2.3 forbids, so the list is filtered by
           board rather than trusting the student to pick correctly.
 
           A board with nothing to offer still gets a statement of fact instead

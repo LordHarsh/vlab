@@ -6,7 +6,7 @@
  * written in closed form (diode chains), it is obtained by bisecting the exact
  * nonlinear scalar equation, which is an independent oracle, not the solver.
  *
- * Two extra independent oracles are used because SIMULATOR_ARCHITECTURE.md §5
+ * Two extra independent oracles are used because docs/SIMULATOR_ARCHITECTURE.md §5
  * names "a plausible but wrong number reported as success" as the failure mode
  * that matters:
  *
@@ -621,7 +621,7 @@ group('3 diode')
 }
 
 {
-  // LED sweep against the ngspice reference in SIMULATOR_ARCHITECTURE.md §5.5,
+  // LED sweep against the ngspice reference in docs/SIMULATOR_ARCHITECTURE.md §5.5,
   // and against the exact closed form of the same model.
   for (const [R, refmA] of [
     [220, 13.76],

@@ -7,7 +7,7 @@
  * Arduino track could not do. The three fixtures read here were built instead by
  * `cc1plus.wasm`, `avr-as.wasm`, `avr-ld.wasm` and `avr-objcopy.wasm` — the GNU
  * toolchain compiled to WebAssembly, the same four modules a browser Worker
- * would instantiate. AVR_COMPILE_FINDINGS.md records how, what it weighs, how
+ * would instantiate. docs/AVR_COMPILE_FINDINGS.md records how, what it weighs, how
  * long it takes and what it is licensed under.
  *
  * "It compiled" is not the claim worth testing. A toolchain that produces a

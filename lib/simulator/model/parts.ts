@@ -2,7 +2,7 @@
  * Part library.
  *
  * Parts are DATA, not code: geometry, pin positions and SVG markup are all
- * declarative. That is what makes SIMULATOR_ARCHITECTURE.md §7.1's promise
+ * declarative. That is what makes docs/SIMULATOR_ARCHITECTURE.md §7.1's promise
  * ("new analog parts are a JSON file") reachable later without a refactor —
  * this registry is already the shape such a loader would produce.
  *
@@ -203,7 +203,7 @@ export interface PartDefinition {
    * Tinkercad's inspector has no slider in it at all — its control vocabulary is
    * TEXT / READ_ONLY / VALUE_AND_UNIT / VALUE_UNIT_CHECK / VALUE_AND_FIXEDUNIT /
    * CHECKBOX / SELECTBOX / BUTTON — because a continuously variable physical
-   * thing is turned where it lives (DEVICE_CONTROLS_AUDIT.md §2). A knob that
+   * thing is turned where it lives (docs/DEVICE_CONTROLS_AUDIT.md §2). A knob that
    * cannot be turned reads as broken, and one QA tester reported exactly that.
    *
    * The panel control is NOT replaced by this. A pointer drag is unavailable to
@@ -226,7 +226,7 @@ export interface PartDefinition {
    *
    * A push button is a momentary switch and a checkbox cannot express one: it
    * has no press and no release, only a state that stays where it was put.
-   * DEVICE_CONTROLS_AUDIT.md §3 called that out as an interaction gap rather
+   * docs/DEVICE_CONTROLS_AUDIT.md §3 called that out as an interaction gap rather
    * than a missing field, and it is — a student debouncing a button, or reading
    * one inside a loop, needs to press and let go.
    *
@@ -239,7 +239,7 @@ export interface PartDefinition {
    * A draggable object OUT IN FRONT of a sensor, which is what the sensor reads.
    *
    * The last of Tinkercad's four canvas controls and the only one with no
-   * analogue anywhere in our code (TINKERCAD_DEVICE_PARITY.md §A, "the one
+   * analogue anywhere in our code (docs/TINKERCAD_DEVICE_PARITY.md §A, "the one
    * structural idea worth stealing"). A knob, a slider and a button are all
    * controls ON the part; this one is a control the part is POINTED AT, and the
    * difference is the whole teaching point — "how far away is the wall" stops
@@ -464,7 +464,7 @@ export const RESISTOR_DEFAULT_OHMS = 220
 
 /**
  * The SI ladder Tinkercad offers beside a resistance field, verbatim:
- * `pΩ nΩ μΩ mΩ Ω kΩ MΩ GΩ` (DEVICE_CONTROLS_AUDIT.md §6.1, observed).
+ * `pΩ nΩ μΩ mΩ Ω kΩ MΩ GΩ` (docs/DEVICE_CONTROLS_AUDIT.md §6.1, observed).
  *
  * `mul` is relative to the STORED unit, and `ohms` is stored in ohms, so `Ω`
  * is the entry with `mul: 1`.
@@ -1131,7 +1131,7 @@ export interface LedColour {
  *
  * RED IS THE HISTORIC CONSTANT, deliberately. `LED_RED` in devices.ts is
  * { is: 1e-20, n: 1.8 }, fitted to the ngspice reference solves in
- * SIMULATOR_ARCHITECTURE.md §5.5 (220 Ω → 13.76 mA against an ideal source).
+ * docs/SIMULATOR_ARCHITECTURE.md §5.5 (220 Ω → 13.76 mA against an ideal source).
  * ledSaturationCurrent(1.96) gives 1.0198e-20 — the same number to 2 %, which
  * is n·VT·ln(1.0198) = 0.91 mV of forward voltage — so red keeps the LITERAL
  * and every existing solver, engine and starter number stays exactly put.
@@ -2895,7 +2895,7 @@ export function getPart(type: string): PartDefinition {
 // ─── Free numeric entry, with a unit ──────────────────────────────────────────
 //
 // Tinkercad's VALUE_AND_UNIT is a free-text number beside an SI-prefix dropdown
-// (DEVICE_CONTROLS_AUDIT.md §2, §6.1). All of the arithmetic and all of the
+// (docs/DEVICE_CONTROLS_AUDIT.md §2, §6.1). All of the arithmetic and all of the
 // validation live here rather than in the React control, so both can be
 // asserted without mounting anything — and so the SAME rules apply wherever a
 // value is typed.

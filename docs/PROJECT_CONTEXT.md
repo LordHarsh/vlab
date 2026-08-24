@@ -92,7 +92,7 @@ Seeded content: 12 IoT experiments with sections, simulations, quizzes, feedback
 gets a stable `designId` and renders a preview image + launch flow, loading the iframe
 on demand.
 
-**Design:** Airbnb-inspired design system documented in `DESIGN.md`. Follow it for any
+**Design:** Airbnb-inspired design system documented in `docs/DESIGN.md`. Follow it for any
 UI work (font weights, button/input/select tokens were specifically normalized).
 
 ## 4. Hard-Won Lessons (don't repeat these)
@@ -163,7 +163,7 @@ Commands: `npm run dev` / `npm run build` / `npm run lint`.
 
 | Need | Location |
 |---|---|
-| Design system rules | `DESIGN.md` |
+| Design system rules | `docs/DESIGN.md` |
 | Schema (source of truth) | `supabase/migrations/` (001–014, in order) |
 | DB types | `types/database.ts` — must mirror migrations |
 | Auth + route protection | `proxy.ts` |

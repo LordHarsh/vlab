@@ -230,7 +230,7 @@ export class VoltageSource implements Device {
 /**
  * A Norton-form source: conductance G to `b`, in parallel with current I.
  *
- * This is how every MCU pin is stamped (SIMULATOR_ARCHITECTURE.md §2.6). Pins
+ * This is how every MCU pin is stamped (docs/SIMULATOR_ARCHITECTURE.md §2.6). Pins
  * are stamped permanently, so the sparsity pattern never changes between pin
  * states and the symbolic structure stays constant.
  */
@@ -1257,7 +1257,7 @@ export class SensorPort extends NortonPort {
 const MAX_CONDUCTANCE = 1 / MIN_RESISTANCE
 
 /**
- * Capacitor, backward-Euler companion (TRANSIENT_DESIGN.md §1.1).
+ * Capacitor, backward-Euler companion (docs/TRANSIENT_DESIGN.md §1.1).
  *
  *   i_C = C·dv/dt.  BE over one step h:  i_C(t) = (C/h)·v(t) − (C/h)·v_prev
  *
@@ -1349,7 +1349,7 @@ export class Capacitor implements ReactiveDevice {
 }
 
 /**
- * Inductor, backward-Euler companion (TRANSIENT_DESIGN.md §1.2).
+ * Inductor, backward-Euler companion (docs/TRANSIENT_DESIGN.md §1.2).
  *
  *   v = L·di/dt.  BE:  i_L(t) = i_L(t−h) + (h/L)·v(t)
  *
@@ -1766,7 +1766,7 @@ export const DIODE_1N4148: DiodeParams = {
 /**
  * Red LED. These parameters are not arbitrary — combined with a 2 Ω series
  * resistance they reproduce the ngspice reference numbers in
- * SIMULATOR_ARCHITECTURE.md §5.5 to within a fraction of a milliamp:
+ * docs/SIMULATOR_ARCHITECTURE.md §5.5 to within a fraction of a milliamp:
  *
  *   220 Ω → 13.76 mA,  1 kΩ → 3.12 mA,  10 kΩ → 0.32 mA,  none → 1419 mA
  */

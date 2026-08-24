@@ -1,7 +1,7 @@
 /**
  * P0-1 — avr8js throughput on REAL compiled firmware.
  *
- * The blocking spike from SIMULATOR_ARCHITECTURE.md §10. The original
+ * The blocking spike from docs/SIMULATOR_ARCHITECTURE.md §10. The original
  * architecture was budgeted on "163 Mcycle/s = 10.2x realtime", which the
  * adversarial verifier could not reproduce (§5.1). Every prior benchmark on
  * both sides used synthetic instruction loops; this one uses actual avr-gcc

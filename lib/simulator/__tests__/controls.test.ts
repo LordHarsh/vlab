@@ -2,7 +2,7 @@
  * Device-control tests — the logic behind the inspector and the canvas knob.
  *
  * These cover the three gaps closed against Tinkercad's inspector
- * (DEVICE_CONTROLS_AUDIT.md §5): free numeric entry with a unit selector, LED
+ * (docs/DEVICE_CONTROLS_AUDIT.md §5): free numeric entry with a unit selector, LED
  * colour as a per-instance property, and a potentiometer knob that turns on the
  * canvas. Every function under test is PURE and lives in model/parts.ts rather
  * than inside a React component, precisely so it can be asserted here without
@@ -306,7 +306,7 @@ console.log('\n3. LED colour')
 
   /**
    * RED KEEPS THE HISTORIC CONSTANT. `LED_RED` was fitted against the ngspice
-   * reference solves in SIMULATOR_ARCHITECTURE.md §5.5; if the colour table
+   * reference solves in docs/SIMULATOR_ARCHITECTURE.md §5.5; if the colour table
    * replaced it with its own derived figure, every existing starter number and
    * every solver reference would shift by a fraction of a milliamp for no
    * reason anybody could later explain.

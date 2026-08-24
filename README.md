@@ -137,18 +137,18 @@ Two guards worth knowing about, both written after real bugs:
 
 | | |
 |---|---|
-| **Project context, owner's aims, hard-won lessons** | [`PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md) — **read this first** |
-| Design system | [`DESIGN.md`](./DESIGN.md) |
+| **Project context, owner's aims, hard-won lessons** | [`docs/PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md) — **read this first** |
+| Design system | [`docs/DESIGN.md`](./DESIGN.md) |
 | Build gotchas | [`docs/BUILD_NOTES.md`](./docs/BUILD_NOTES.md) |
-| What our parts can do | [`OUR_DEVICE_CAPABILITIES.md`](./OUR_DEVICE_CAPABILITIES.md) |
-| Tinkercad feature comparison | [`TINKERCAD_DEVICE_PARITY.md`](./TINKERCAD_DEVICE_PARITY.md) |
+| What our parts can do | [`docs/OUR_DEVICE_CAPABILITIES.md`](./OUR_DEVICE_CAPABILITIES.md) |
+| Tinkercad feature comparison | [`docs/TINKERCAD_DEVICE_PARITY.md`](./TINKERCAD_DEVICE_PARITY.md) |
 | Schema (source of truth) | `supabase/migrations/` |
 | DB types (must mirror migrations) | `types/database.ts` |
 | Auth + route protection | `proxy.ts` (Next 16 exports middleware as `proxy`) |
 | Server actions | `lib/actions/` |
 | Supabase clients | `lib/supabase/` — `server`, `client`, `admin` (service role) |
 
-`SIMULATOR_ARCHITECTURE.md` is design intent, not an as-built record — it describes
+`docs/SIMULATOR_ARCHITECTURE.md` is design intent, not an as-built record — it describes
 things that were never implemented. Trust the code.
 
 ## Access model

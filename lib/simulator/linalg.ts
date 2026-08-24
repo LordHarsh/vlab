@@ -1,7 +1,7 @@
 /**
  * Dense LU decomposition with partial pivoting, on flat Float64Arrays.
  *
- * Dense is the right call here: SIMULATOR_ARCHITECTURE.md caps the interactive
+ * Dense is the right call here: docs/SIMULATOR_ARCHITECTURE.md caps the interactive
  * engine at ~15 analog unknowns, and below n≈50 a dense solve beats sparse
  * bookkeeping. ngspice (server-side, Sparse 1.3) handles anything larger.
  */

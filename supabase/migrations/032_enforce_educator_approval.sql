@@ -204,4 +204,4 @@ create policy "feedback_responses: educator read own classes"
 
 -- Also enforce it in the app layer, so the server actions refuse rather than
 -- silently writing zero rows: add an approval check to getEducatorProfile()
--- in lib/actions/classes.ts. See SECURITY_AUDIT.md.
+-- in lib/actions/classes.ts. See docs/SECURITY_AUDIT.md.

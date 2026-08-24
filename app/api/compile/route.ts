@@ -15,7 +15,7 @@ import {
  * student has always been able to type MicroPython and watch it run, because
  * the interpreter is on the board. An Arduino student could not, because C++
  * needs a compiler and there is no lawful one to put in the browser —
- * AVR_COMPILE_FINDINGS.md proved the WebAssembly toolchain WORKS and then
+ * docs/AVR_COMPILE_FINDINGS.md proved the WebAssembly toolchain WORKS and then
  * showed it cannot be shipped, since serving GPL-3.0 `cc1plus.wasm` to a
  * browser is conveying under §6 and obliges us to publish Corresponding Source
  * that upstream does not have. Running the identical toolchain here does not

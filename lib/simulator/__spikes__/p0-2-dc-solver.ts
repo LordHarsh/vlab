@@ -1,7 +1,7 @@
 /**
  * P0-2 — DC solver correctness + memoisation cost.
  *
- * Blocking spike from SIMULATOR_ARCHITECTURE.md §10. Two questions:
+ * Blocking spike from docs/SIMULATOR_ARCHITECTURE.md §10. Two questions:
  *
  *   1. Does the solver reproduce ngspice's numbers for the LED+resistor sweep?
  *      Reference (§5.5): 220Ω → 13.76 mA, 1kΩ → 3.12 mA, 10kΩ → 0.32 mA,
@@ -61,7 +61,7 @@ const REFERENCE = [
 
 console.log('P0-2  DC solver spike')
 console.log('='.repeat(72))
-console.log('\n1. LED + resistor sweep vs ngspice reference (SIMULATOR_ARCHITECTURE.md §5.5)\n')
+console.log('\n1. LED + resistor sweep vs ngspice reference (docs/SIMULATOR_ARCHITECTURE.md §5.5)\n')
 console.log('   R        expected     measured     err      iters  status')
 console.log('   ' + '-'.repeat(62))
 
