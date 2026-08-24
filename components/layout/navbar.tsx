@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs'
+import { Show, UserButton } from '@clerk/nextjs'
 import { Menu, X } from 'lucide-react'
 import { INSTITUTION } from '@/lib/institution'
 
@@ -47,7 +47,7 @@ export function Navbar() {
             List of Labs
           </Link>
 
-          <SignedOut>
+          <Show when="signed-out">
             <Link
               href="/sign-in"
               className="px-3 py-2 font-chrome text-sm font-semibold text-vlab-steel transition-colors hover:text-vlab-orange-ink"
@@ -60,9 +60,9 @@ export function Navbar() {
             >
               Register
             </Link>
-          </SignedOut>
+          </Show>
 
-          <SignedIn>
+          <Show when="signed-in">
             <Link
               href="/dashboard"
               className="ml-1 border border-vlab-600 bg-vlab-600 px-4 py-2 font-chrome text-sm font-semibold text-white transition-colors hover:border-vlab-700 hover:bg-vlab-700"
@@ -72,7 +72,7 @@ export function Navbar() {
             <span className="ml-2 flex items-center">
               <UserButton />
             </span>
-          </SignedIn>
+          </Show>
         </nav>
 
         <button
@@ -97,23 +97,23 @@ export function Navbar() {
             List of Labs
           </Link>
 
-          <SignedOut>
+          <Show when="signed-out">
             <Link href="/sign-in" onClick={() => setMenuOpen(false)} className="vlab-nav-link">
               Sign In
             </Link>
             <Link href="/sign-up" onClick={() => setMenuOpen(false)} className="vlab-nav-link">
               Register
             </Link>
-          </SignedOut>
+          </Show>
 
-          <SignedIn>
+          <Show when="signed-in">
             <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="vlab-nav-link">
               Dashboard
             </Link>
             <div className="px-4 py-2">
               <UserButton />
             </div>
-          </SignedIn>
+          </Show>
         </nav>
       )}
     </header>

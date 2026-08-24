@@ -22,15 +22,27 @@ const isPublicRoute = createRouteMatcher([
 ])
 
 // Next.js 16: Export middleware as 'proxy'
-export const proxy = clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    await auth.protect()
-  }
-})
+export const proxy = clerkMiddleware(
+  async (auth, request) => {
+    if (!isPublicRoute(request)) {
+      await auth.protect()
+    }
+  },
+  {
+    // vercel.app subdomains cannot hold Clerk's CNAMEs, so the production
+    // instance routes its Frontend API through /__clerk instead.
+    //
+    // Gated on the proxy URL being set: development uses a *.clerk.accounts.dev
+    // instance that is not proxied, and enabling this without the env var makes
+    // every request fail `host_invalid` because Clerk cannot attribute it.
+    frontendApiProxy: { enabled: Boolean(process.env.NEXT_PUBLIC_CLERK_PROXY_URL) },
+  },
+)
 
 export const config = {
   matcher: [
     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
     '/(api|trpc)(.*)',
+    '/__clerk/(.*)',
   ],
 }
