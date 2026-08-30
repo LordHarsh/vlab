@@ -21,7 +21,7 @@ export default async function EducatorLayout({
 
   if (!profile) redirect('/onboarding')
   if (!profile.profile_completed) redirect('/onboarding')
-  if (profile.role === 'student') redirect('/dashboard')
+  if (profile.role === 'student') redirect(profile.is_admin ? '/admin' : '/dashboard')
   if (profile.role !== 'educator') redirect('/admin')
   // Pending or rejected educators cannot access the dashboard
   if (profile.approval_status === 'pending') redirect('/pending-approval')

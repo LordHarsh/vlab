@@ -1,6 +1,7 @@
 'use server'
 
 import { auth, currentUser } from '@clerk/nextjs/server'
+import { revalidatePath } from 'next/cache'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createAdminSupabaseClient } from '@/lib/supabase/admin'
 import type { Tables, TablesUpdate } from '@/types/database'
@@ -141,6 +142,10 @@ export async function completeOnboarding(
     return { success: false, error: `Failed to save profile: ${error.message}` }
   }
 
+  // Every layout gates on profile_completed / role / approval_status. Without
+  // this the push that follows can render a cached tree built from the profile
+  // as it was a moment ago, bouncing the user straight back to onboarding.
+  revalidatePath('/', 'layout')
   return { success: true }
 }
 

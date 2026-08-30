@@ -30,9 +30,14 @@ export default async function StudentLayout({
     redirect('/onboarding')
   }
 
-  // Educators and admins should not use the student shell
-  if (profile.role === 'educator' || profile.is_admin) {
+  // Educators and admins should not use the student shell. Route each to the
+  // console it can actually enter: sending an admin whose role is still
+  // 'student' to /educator bounced it straight back here, looping forever.
+  if (profile.role === 'educator') {
     redirect('/educator')
+  }
+  if (profile.is_admin) {
+    redirect('/admin')
   }
 
   return (

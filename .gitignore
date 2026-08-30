@@ -66,3 +66,6 @@ next-env.d.ts
 # Local production env dumps (contain live secrets)
 .env.prod
 .env.*.prod
+
+# Vercel API token (local only, never commit)
+.vercel-token

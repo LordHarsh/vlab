@@ -50,7 +50,7 @@ export default async function ClassOverviewPage({
       id, name, description, status, join_code, join_code_expires_at,
       academic_year, semester, max_students, created_at,
       enrollments(id, status),
-      class_labs(id, lab_id, order_index, labs(id, title, slug))
+      class_labs(id, lab_id, order_index, unlock_at, labs(id, title, slug))
     `)
     .eq('id', classId)
     .eq('educator_id', profile.id)
@@ -64,8 +64,14 @@ export default async function ClassOverviewPage({
     id: string
     lab_id: string
     order_index: number
+    unlock_at: string | null
     labs: { id: string; title: string; slug: string } | null
   }[]) ?? []
+
+  const droppedStudents = enrollments.length - activeStudents
+  const availableLabs = classLabs.filter(
+    (l) => !l.unlock_at || new Date(l.unlock_at) <= new Date(),
+  ).length
 
   const tabs = [
     { href: `/educator/classes/${classId}/students`, label: 'Students', icon: Users },
@@ -133,15 +139,15 @@ export default async function ClassOverviewPage({
         />
         <StatCard
           icon={CheckCircle}
-          label="Active Labs"
-          value={classLabs.filter((l) => !l.labs).length || classLabs.length}
+          label="Open to Students"
+          value={availableLabs}
           color="text-green-600"
           bg="bg-green-50"
         />
         <StatCard
           icon={BookOpen}
-          label="Total Enrolled"
-          value={enrollments.length}
+          label="Dropped"
+          value={droppedStudents}
           color="text-orange-600"
           bg="bg-orange-50"
         />
