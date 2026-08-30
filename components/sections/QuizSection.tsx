@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { useSupabaseClient } from '@/lib/supabase/client'
-import { submitQuiz, type QuizResult } from '@/lib/actions/quiz'
+import { submitQuiz, getMyLatestSubmission, type QuizResult } from '@/lib/actions/quiz'
 import {
   Loader2,
   CheckCircle2,
@@ -135,6 +135,15 @@ export function QuizSection({
         .eq('student_id', profile.id)
 
       setExistingAttempts(count ?? 0)
+
+      // Re-show the last attempt instead of a bare "no attempts left" notice.
+      if ((count ?? 0) > 0) {
+        const previous = await getMyLatestSubmission(quizId, classId)
+        if (previous) {
+          setAnswers(previous.selectedAnswers)
+          setResult(previous)
+        }
+      }
     }
 
     countAttempts()
@@ -339,7 +348,10 @@ export function QuizSection({
               <div className="flex gap-1.5">
                 <dt className="text-vlab-muted">Attempt:</dt>
                 <dd className="font-semibold tabular-nums text-vlab-ink">
-                  {existingAttempts + 1} of {effectiveMaxAttempts}
+                  {/* Once the cap is reached there is no "next" attempt to
+                      number, and counting one past it read "2 of 1". */}
+                  {Math.min(existingAttempts + 1, effectiveMaxAttempts ?? Infinity)} of{' '}
+                  {effectiveMaxAttempts}
                 </dd>
               </div>
             )}

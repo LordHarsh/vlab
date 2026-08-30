@@ -21,6 +21,128 @@ export type QuizResult = {
   error?: string
 }
 
+/**
+ * The student's most recent submission, rebuilt for display.
+ *
+ * Once attempts run out the quiz UI had nothing to show but "you have used all
+ * allowed attempts" — the score and the answer review disappeared on reload and
+ * the student could never see how they did. Correct answers are revoked from
+ * `authenticated` (migration 013), so the key has to be re-read server-side,
+ * behind the same enrolment and quiz-belongs-to-class checks submitQuiz uses.
+ */
+export async function getMyLatestSubmission(
+  quizId: string,
+  classId: string,
+): Promise<(QuizResult & { selectedAnswers: Record<string, string> }) | null> {
+  const { userId } = await auth()
+  if (!userId) return null
+
+  const supabase = await createServerSupabaseClient()
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('clerk_user_id', userId)
+    .single()
+  if (!profile) return null
+
+  const { data: submission } = await supabase
+    .from('quiz_submissions')
+    .select('attempt_number, answers, score, max_score, percentage, passed')
+    .eq('quiz_id', quizId)
+    .eq('class_id', classId)
+    .eq('student_id', profile.id)
+    .order('attempt_number', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!submission) return null
+
+  const snapshot = (submission.answers ?? []) as unknown as Array<{
+    questionId: string
+    selectedAnswerId: string
+    isCorrect: boolean
+  }>
+  const selectedAnswers: Record<string, string> = {}
+  for (const a of snapshot) selectedAnswers[a.questionId] = a.selectedAnswerId
+
+  const base = {
+    success: true as const,
+    score: submission.score,
+    maxScore: submission.max_score,
+    percentage: submission.percentage,
+    passed: submission.passed,
+    attemptNumber: submission.attempt_number,
+    selectedAnswers,
+  }
+
+  const { data: quiz } = await supabase
+    .from('quizzes')
+    .select('experiment_id, default_show_answers')
+    .eq('id', quizId)
+    .single()
+
+  const { data: settings } = await supabase
+    .from('class_quiz_settings')
+    .select('show_answers')
+    .eq('quiz_id', quizId)
+    .eq('class_id', classId)
+    .single()
+
+  const effectiveShowAnswers =
+    settings?.show_answers ?? quiz?.default_show_answers ?? 'after_submission'
+  const showAnswers =
+    effectiveShowAnswers === 'after_submission' || effectiveShowAnswers === 'immediately'
+
+  if (!showAnswers || !quiz) return { ...base, showAnswers: false }
+
+  // Same two gates as submitQuiz, for the same reason: quizId is a free
+  // parameter, so it must be tied to a class this student is actually in
+  // before the service-role read below hands back the answer key.
+  const { data: enrollment } = await supabase
+    .from('enrollments')
+    .select('id')
+    .eq('class_id', classId)
+    .eq('student_id', profile.id)
+    .eq('status', 'active')
+    .single()
+  if (!enrollment) return { ...base, showAnswers: false }
+
+  const { data: experiment } = await supabase
+    .from('experiments')
+    .select('lab_id')
+    .eq('id', quiz.experiment_id)
+    .single()
+
+  const { data: labInClass } = experiment
+    ? await supabase
+        .from('class_labs')
+        .select('id')
+        .eq('class_id', classId)
+        .eq('lab_id', experiment.lab_id)
+        .maybeSingle()
+    : { data: null }
+
+  if (!labInClass) return { ...base, showAnswers: false }
+
+  const { data: questions } = await createAdminSupabaseClient()
+    .from('quiz_questions')
+    .select('id, correct_answer, explanation')
+    .eq('quiz_id', quizId)
+    .eq('status', 'active')
+
+  return {
+    ...base,
+    showAnswers: true,
+    answerDetails: (questions ?? []).map((q) => ({
+      questionId: q.id,
+      isCorrect: (selectedAnswers[q.id] ?? '') === q.correct_answer,
+      correctAnswerId: q.correct_answer,
+      explanation: q.explanation ?? undefined,
+    })),
+  }
+}
+
 export async function submitQuiz(
   quizId: string,
   classId: string,

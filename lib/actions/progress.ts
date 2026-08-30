@@ -37,14 +37,20 @@ async function enrolledProfileId(supabase: Supa, classId: string): Promise<strin
   return enrollment ? profile.id : null
 }
 
+/**
+ * Records a section visit. Resolves true when this call actually added the
+ * section, which is the caller's cue to refresh — the progress bar and the
+ * sidebar ticks live in the experiment LAYOUT, and Next keeps that mounted
+ * while only [sectionId] changes, so it never re-reads on its own.
+ */
 export async function markSectionVisited(
   experimentId: string,
   classId: string,
   sectionId: string,
-): Promise<void> {
+): Promise<boolean> {
   const supabase = await createServerSupabaseClient()
   const profileId = await enrolledProfileId(supabase, classId)
-  if (!profileId) return
+  if (!profileId) return false
 
   const { data: existing } = await supabase
     .from('student_progress')
@@ -60,9 +66,14 @@ export async function markSectionVisited(
 
   if (existing) {
     const completedIds: string[] = existing.completed_section_ids ?? []
-    const updated = completedIds.includes(sectionId)
-      ? completedIds
-      : [...completedIds, sectionId]
+    if (completedIds.includes(sectionId)) {
+      await supabase
+        .from('student_progress')
+        .update({ last_section_id: sectionId, last_accessed_at: now })
+        .eq('id', existing.id)
+      return false
+    }
+    const updated = [...completedIds, sectionId]
 
     // Seeing every active section is what finishing an experiment means. This
     // is the ONLY writer of completed_at — nothing else marks completion.
@@ -77,7 +88,11 @@ export async function markSectionVisited(
         ...(done ? { completed_at: existing.completed_at ?? now } : {}),
       })
       .eq('id', existing.id)
-    if (error) console.error('[markSectionVisited] update failed:', error.message)
+    if (error) {
+      console.error('[markSectionVisited] update failed:', error.message)
+      return false
+    }
+    return true
   } else {
     // UPSERT, not insert. The select above and this write are not atomic, so
     // two near-simultaneous visits (a fast section click, a double render, a
@@ -104,7 +119,11 @@ export async function markSectionVisited(
       },
       { onConflict: 'student_id,experiment_id,class_id', ignoreDuplicates: false },
     )
-    if (error) console.error('[markSectionVisited] upsert failed:', error.message)
+    if (error) {
+      console.error('[markSectionVisited] upsert failed:', error.message)
+      return false
+    }
+    return true
   }
 }
 

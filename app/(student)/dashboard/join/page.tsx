@@ -47,7 +47,10 @@ export default function JoinClassPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
+    // Not min-h-screen: this renders inside StudentShell, which already spends
+    // a header and a footer on the viewport, so a full-height child forced the
+    // whole page to scroll.
+    <div className="flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         {/* Back */}
         <Link

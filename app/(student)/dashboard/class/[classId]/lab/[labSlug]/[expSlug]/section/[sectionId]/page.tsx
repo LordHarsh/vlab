@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server'
 import { notFound, redirect } from 'next/navigation'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { markSectionVisited } from '@/lib/actions/progress'
+import { TrackSectionVisit } from '@/components/sections/TrackSectionVisit'
 
 // Section content components (server-side static ones)
 import { AimSection } from '@/components/sections/AimSection'
@@ -62,8 +62,8 @@ export default async function SectionPage({
 
   if (!section) notFound()
 
-  // Mark section as visited
-  await markSectionVisited(section.experiment_id, classId, sectionId)
+  // The visit is recorded by <TrackSectionVisit> below rather than here, so the
+  // layout's progress bar can refresh once the write lands.
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const content = section.content as any
@@ -224,6 +224,11 @@ export default async function SectionPage({
 
   return (
     <div>
+      <TrackSectionVisit
+        experimentId={section.experiment_id}
+        classId={classId}
+        sectionId={sectionId}
+      />
       <h1 className="vlab-page-title mb-5 border-b border-vlab-rule pb-3">{pageName}</h1>
       {renderSection()}
     </div>
