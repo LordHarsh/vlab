@@ -7,6 +7,7 @@ import { useClerk } from '@clerk/nextjs'
 import { Menu, X, LogOut, User, CircuitBoard, LayoutList } from 'lucide-react'
 import { InstitutionalFooter } from './InstitutionalFooter'
 import { INSTITUTION } from '@/lib/institution'
+import { InstitutionBrand } from './InstitutionBrand'
 
 type Profile = {
   id: string
@@ -84,15 +85,8 @@ export function StudentShell({
             <Menu className="h-6 w-6" />
           </button>
 
-          <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
-            <VLabMark />
-            <span className="min-w-0">
-              <span className="block truncate font-display text-base font-bold leading-tight text-vlab-600 sm:text-lg">
-                {INSTITUTION.platform.toUpperCase()} &middot;{' '}
-                <span className="hidden sm:inline">{INSTITUTION.tagline}</span>
-                <span className="sm:hidden">Virtual Laboratory</span>
-              </span>
-            </span>
+          <Link href="/dashboard" className="min-w-0">
+            <InstitutionBrand />
           </Link>
 
           <div className="ml-auto flex items-center gap-1">
@@ -151,9 +145,7 @@ export function StudentShell({
           `}
         >
           <div className="flex items-center justify-between border-b border-vlab-rule px-4 py-3 lg:hidden">
-            <span className="font-display text-sm font-bold text-vlab-600">
-              {INSTITUTION.platform.toUpperCase()}
-            </span>
+            <img src={INSTITUTION.logo} alt={INSTITUTION.name} className="h-8 w-auto" />
             <button
               aria-label="Close menu"
               className="rounded-sm p-1 text-vlab-muted hover:text-vlab-ink"
@@ -196,27 +188,5 @@ export function StudentShell({
         </div>
       </div>
     </div>
-  )
-}
-
-/**
- * Stand-in for the institutional crest that sits in the reference header. Drawn
- * as a resistor-and-node glyph rather than a generic flask, so it says
- * "electronics department" and not "science startup".
- */
-function VLabMark() {
-  return (
-    <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-vlab-200 bg-vlab-50">
-      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-        <path
-          d="M2 12h3.5l1.4-4.6 2.2 9.2 2.2-9.2 2.2 9.2 1.4-4.6H22"
-          fill="none"
-          stroke="var(--vlab-blue-600)"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
   )
 }

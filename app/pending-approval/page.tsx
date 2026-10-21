@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { Clock, XCircle, CheckCircle, LogOut } from 'lucide-react'
 import Link from 'next/link'
 import { SignOutButton } from '@clerk/nextjs'
+import { InstitutionBrand } from '@/components/layout/InstitutionBrand'
 
 export default async function PendingApprovalPage() {
   const { userId } = await auth()
@@ -39,7 +40,7 @@ export default async function PendingApprovalPage() {
       >
         {/* Logo */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          <span className="text-xl font-bold text-vlab-600">VLab</span>
+          <InstitutionBrand stacked />
         </div>
 
         {isRejected ? (

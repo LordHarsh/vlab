@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { SignOutButton } from '@clerk/nextjs'
 import { GraduationCap, LogOut, User, ShieldCheck } from 'lucide-react'
-import { INSTITUTION } from '@/lib/institution'
+import { InstitutionBrand } from '@/components/layout/InstitutionBrand'
 
 type Profile = {
   id: string
@@ -45,9 +45,7 @@ export function EducatorSidebar({ profile }: { profile: Profile }) {
     <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-vlab-rule bg-white">
       <div className="vlab-header-rule-thin px-4 py-3">
         <Link href="/educator" className="block">
-          <span className="block font-display text-base font-bold leading-tight text-vlab-600">
-            {INSTITUTION.platform.toUpperCase()}
-          </span>
+          <InstitutionBrand stacked />
           <span className="vlab-eyebrow">Educator Console</span>
         </Link>
       </div>

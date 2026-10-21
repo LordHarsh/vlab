@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { INSTITUTION } from '@/lib/institution'
+import { InstitutionBrand } from './InstitutionBrand'
 
 /**
  * Frame for the Clerk-hosted sign-in / sign-up / onboarding forms.
@@ -23,9 +24,7 @@ export function AuthShell({
       <header className="vlab-header-rule bg-white">
         <div className="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6">
           <Link href="/" className="min-w-0">
-            <span className="block font-display text-base font-bold leading-tight text-vlab-600 sm:text-lg">
-              {INSTITUTION.platform.toUpperCase()}
-            </span>
+            <InstitutionBrand />
           </Link>
         </div>
       </header>

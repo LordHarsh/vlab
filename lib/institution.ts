@@ -15,10 +15,20 @@
  * footer markup so that replacing them is a single edit and cannot drift
  * between the student, educator and admin shells.
  *
- * Nothing here claims affiliation with any specific real institution.
+ * The lab is published by SRM Institute of Science and Technology; `name` and
+ * `logo` drive the crest and title shown in every header.
  */
 
 export const INSTITUTION = {
+  /** Owning institute, used as the logo's alt text. */
+  name: 'SRM Institute of Science and Technology',
+
+  /** Institute logo (wide crest + wordmark, ~2.95:1), served from /public. */
+  logo: '/images/srm-logo.svg',
+
+  /** Lab title shown beside the logo in every header. */
+  title: 'Virtual Lab for Internet of Things',
+
   /** Product / lab-platform name, as it appears in the copyright line. */
   platform: 'VLab',
 
@@ -29,7 +39,7 @@ export const INSTITUTION = {
   programme: 'Virtual Labs initiative — open courseware for engineering education',
 
   /** Short banner subtitle used under the platform wordmark in the header. */
-  tagline: 'Virtual Laboratory for Electronics & Embedded Systems',
+  tagline: 'Virtual Lab for Internet of Things',
 } as const
 
 /**
