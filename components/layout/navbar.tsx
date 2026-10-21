@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { Show, UserButton } from '@clerk/nextjs'
 import { Menu, X } from 'lucide-react'
-import { INSTITUTION } from '@/lib/institution'
+import { InstitutionBrand } from './InstitutionBrand'
 
 /**
  * Public header.
@@ -21,22 +21,8 @@ export function Navbar() {
   return (
     <header className="vlab-header-rule sticky top-0 z-50 w-full bg-white">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:px-6">
-        <Link href="/" className="flex min-w-0 items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-vlab-200 bg-vlab-50">
-            <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-              <path
-                d="M2 12h3.5l1.4-4.6 2.2 9.2 2.2-9.2 2.2 9.2 1.4-4.6H22"
-                fill="none"
-                stroke="var(--vlab-blue-600)"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <span className="min-w-0 font-display text-base font-bold leading-tight text-vlab-600 sm:text-lg">
-            {INSTITUTION.platform.toUpperCase()}
-          </span>
+        <Link href="/" className="min-w-0">
+          <InstitutionBrand />
         </Link>
 
         <nav className="ml-auto hidden items-center gap-1 md:flex">

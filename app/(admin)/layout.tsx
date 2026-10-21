@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { LayoutDashboard, FlaskConical, Users, ChevronRight, ShieldCheck } from 'lucide-react'
 import { InstitutionalFooter } from '@/components/layout/InstitutionalFooter'
-import { INSTITUTION } from '@/lib/institution'
+import { InstitutionBrand } from '@/components/layout/InstitutionBrand'
 
 async function checkAdmin(): Promise<{ isAdmin: boolean; pendingCount: number }> {
   const { userId } = await auth()
@@ -46,9 +46,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           department ended up with across its three lab sub-sites. */}
       <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-vlab-rule bg-white">
         <div className="vlab-header-rule-thin px-4 py-3">
-          <span className="block font-display text-base font-bold leading-tight text-vlab-600">
-            {INSTITUTION.platform.toUpperCase()}
-          </span>
+          <InstitutionBrand stacked />
           <span className="vlab-eyebrow">Administration</span>
         </div>
 

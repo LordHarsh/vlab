@@ -32,9 +32,9 @@ const robotoSlab = Roboto_Slab({
 })
 
 export const metadata: Metadata = {
-  title: 'VLab — Virtual Laboratory for Electronics & Embedded Systems',
+  title: 'Virtual Lab for Internet of Things — SRM Institute of Science and Technology',
   description:
-    'An interactive virtual laboratory for electronics and embedded systems. Every experiment runs the full sequence: aim, theory, procedure, simulation, assessment and references.',
+    'An interactive virtual laboratory for the Internet of Things. Every experiment runs the full sequence: aim, theory, procedure, simulation, assessment and references.',
 }
 
 /* The reference sets a theme-color on every lab sub-page so mobile browser
